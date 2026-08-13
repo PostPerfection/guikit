@@ -1070,6 +1070,9 @@ body {
 .recent-delete:hover {
   opacity: 1;
 }
+.status-disk {
+  white-space: nowrap;
+}
 .recent-item:hover {
   background: var(--accent);
   color: #fff;
