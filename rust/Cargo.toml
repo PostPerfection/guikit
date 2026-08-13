@@ -1,0 +1,20 @@
+[package]
+name = "guikit"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+description = "Shared native backend for the PostPerfection wizard GUIs"
+
+[lib]
+name = "guikit"
+
+[dependencies]
+tauri = { version = "2", features = ["unstable"] }
+postkit = { git = "https://github.com/PostPerfection/postkit.git", features = [
+    "libmpv",
+] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+async-channel = "2"
+libc = "0.2"
