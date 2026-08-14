@@ -9,13 +9,13 @@
 use std::ffi::{c_char, c_void, CStr};
 use std::mem::size_of;
 use std::ptr;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use postkit::mpv_render::MpvRenderPlayer;
 use tauri::Manager;
 use windows::core::{w, Error, PCSTR, PCWSTR};
 use windows::Win32::Foundation::{HINSTANCE, HMODULE, HWND, LPARAM, LRESULT, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::{GetDC, HDC};
+use windows::Win32::Graphics::Gdi::{BeginPaint, EndPaint, GetDC, HDC, PAINTSTRUCT};
 use windows::Win32::Graphics::OpenGL::{
     glGetString, wglCreateContext, wglDeleteContext, wglGetProcAddress, wglMakeCurrent,
     ChoosePixelFormat, SetPixelFormat, SwapBuffers, GL_RENDERER, GL_VERSION, HGLRC,
@@ -23,9 +23,10 @@ use windows::Win32::Graphics::OpenGL::{
 };
 use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress, LoadLibraryW};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, LoadCursorW, RegisterClassExW,
-    SetWindowPos, CS_OWNDC, HWND_TOP, IDC_ARROW, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_SHOWWINDOW,
-    WINDOW_EX_STYLE, WNDCLASSEXW, WS_CHILD, WS_CLIPSIBLINGS,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, GetWindowLongPtrW, LoadCursorW,
+    RegisterClassExW, SetWindowLongPtrW, SetWindowPos, CS_OWNDC, GWLP_USERDATA, HWND_TOP,
+    IDC_ARROW, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_SHOWWINDOW, WINDOW_EX_STYLE, WM_ERASEBKGND,
+    WM_NCDESTROY, WM_PAINT, WNDCLASSEXW, WS_CHILD, WS_CLIPSIBLINGS,
 };
 
 const PREVIEW_WINDOW_CLASS: PCWSTR = w!("PostPerfectionEmbeddedPreview");
@@ -48,6 +49,11 @@ const COLOR_BITS: u8 = 32;
 /// render loop still answering.
 const HIDDEN_SURFACE_SIZE: i32 = 1;
 
+/// `WM_PAINT` is answered with zero, and `WM_ERASEBKGND` with non-zero to claim
+/// the background is already erased, which it is: the video covers every pixel.
+const MESSAGE_HANDLED: LRESULT = LRESULT(0);
+const BACKGROUND_ERASED: LRESULT = LRESULT(1);
+
 /// The window, its device context and its GL context, all created together and
 /// destroyed together.
 struct GlSurface {
@@ -68,6 +74,46 @@ impl Drop for GlSurface {
             let _ = wglDeleteContext(self.gl_context);
             let _ = DestroyWindow(self.window);
         }
+    }
+}
+
+/// What a repaint draws, reached from the window procedure through the window's
+/// own `GWLP_USERDATA` slot. Both references are weak so that the window, which
+/// owns this, cannot keep alive the surface whose teardown destroys it.
+struct PaintTarget {
+    surface: Weak<GlSurface>,
+    player: Weak<MpvRenderPlayer>,
+}
+
+/// Hand the window everything a repaint needs. The window owns it from here
+/// until `WM_NCDESTROY`, the last message it can ever be sent.
+fn install_paint_target(surface: &Arc<GlSurface>, player: &Arc<MpvRenderPlayer>) {
+    let target = Box::new(PaintTarget {
+        surface: Arc::downgrade(surface),
+        player: Arc::downgrade(player),
+    });
+    unsafe {
+        SetWindowLongPtrW(
+            surface.window,
+            GWLP_USERDATA,
+            Box::into_raw(target) as isize,
+        );
+    }
+}
+
+fn paint_target(window: HWND) -> Option<(Arc<GlSurface>, Arc<MpvRenderPlayer>)> {
+    let pointer = unsafe { GetWindowLongPtrW(window, GWLP_USERDATA) };
+    if pointer == 0 {
+        return None;
+    }
+    let target = unsafe { &*(pointer as *const PaintTarget) };
+    Some((target.surface.upgrade()?, target.player.upgrade()?))
+}
+
+fn release_paint_target(window: HWND) {
+    let pointer = unsafe { SetWindowLongPtrW(window, GWLP_USERDATA, 0) };
+    if pointer != 0 {
+        drop(unsafe { Box::from_raw(pointer as *mut PaintTarget) });
     }
 }
 
@@ -134,6 +180,8 @@ pub fn attach(window: &tauri::Window) -> Result<EmbeddedPreview, String> {
         gl_string(GL_RENDERER),
         gl_string(GL_VERSION)
     );
+
+    install_paint_target(&surface, &player);
 
     let app = window.app_handle().clone();
     // A weak player keeps the update callback, which the player itself owns,
@@ -267,15 +315,40 @@ fn module_handle() -> Result<HMODULE, String> {
         .map_err(|error| format!("GetModuleHandleW failed: {error}"))
 }
 
-/// The window takes no input and paints only from the render loop, so every
-/// message goes to the default handler.
+/// The window takes no input, so painting and the teardown of what painting
+/// reads are the only messages it answers itself.
 unsafe extern "system" fn preview_window_procedure(
     window: HWND,
     message: u32,
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
-    unsafe { DefWindowProcW(window, message, wparam, lparam) }
+    match message {
+        WM_PAINT => {
+            repaint(window);
+            MESSAGE_HANDLED
+        }
+        WM_ERASEBKGND => BACKGROUND_ERASED,
+        WM_NCDESTROY => {
+            release_paint_target(window);
+            unsafe { DefWindowProcW(window, message, wparam, lparam) }
+        }
+        _ => unsafe { DefWindowProcW(window, message, wparam, lparam) },
+    }
+}
+
+/// Redraw the frame mpv already has, for the window being uncovered or grown.
+/// `WM_PAINT` is delivered on the thread that owns the window, which is the
+/// main thread, so the render loop's threading rule already holds here.
+fn repaint(window: HWND) {
+    let mut paint = PAINTSTRUCT::default();
+    // The pair is what clears the update region. Skipping it leaves the region
+    // dirty and Windows sends WM_PAINT again forever.
+    let _ = unsafe { BeginPaint(window, &mut paint) };
+    if let Some((surface, player)) = paint_target(window) {
+        make_current_and_draw(&surface, &player);
+    }
+    let _ = unsafe { EndPaint(window, &paint) };
 }
 
 /// Move the surface to the page's placeholder, converting the CSS pixels the

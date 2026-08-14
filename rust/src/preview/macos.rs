@@ -1,18 +1,23 @@
-//! Hosts libmpv's OpenGL output in an `NSOpenGLView` layered over the webview.
+//! Hosts libmpv's OpenGL output in an `NSOpenGLView` subclass layered over the
+//! webview.
 //!
 //! The GL view is a sibling of tauri's WKWebView inside the window's content
 //! view, added last so it sits above it, and positioned from the page: the
 //! frontend reports where its placeholder element is and the view is moved to
-//! match. AppKit and mpv's renderer both demand the main thread, so every call
-//! that touches either goes through tauri's main-thread dispatcher.
+//! match. Drawing happens in `drawRect:` rather than straight off mpv's update
+//! callback, so a resize or an expose repaints the last frame even while
+//! playback is paused. AppKit and mpv's renderer both want the main thread, so
+//! everything that touches either goes through tauri's main-thread dispatcher.
 #![allow(deprecated)]
 
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::ptr::{self, NonNull};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use objc2::rc::Retained;
-use objc2::{AnyThread, MainThreadMarker, MainThreadOnly, Message};
+use objc2::{
+    define_class, msg_send, AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, Message,
+};
 use objc2_app_kit::{
     NSOpenGLContext, NSOpenGLPFAAccelerated, NSOpenGLPFAAlphaSize, NSOpenGLPFAColorSize,
     NSOpenGLPFADoubleBuffer, NSOpenGLPFAOpenGLProfile, NSOpenGLPixelFormat,
@@ -65,13 +70,68 @@ struct SurfaceRect {
     visible: bool,
 }
 
+struct PreviewViewIvars {
+    /// Weak so the view, which is never released, cannot keep mpv alive forever.
+    player: Weak<MpvRenderPlayer>,
+}
+
+define_class!(
+    // SAFETY:
+    // - NSOpenGLView asks only that a designated initializer be called, which
+    //   `PreviewView::new` does.
+    // - PreviewView does not implement Drop.
+    #[unsafe(super(NSOpenGLView))]
+    #[ivars = PreviewViewIvars]
+    struct PreviewView;
+
+    impl PreviewView {
+        // SAFETY: The signature matches NSView's drawRect:.
+        #[unsafe(method(drawRect:))]
+        fn draw_rect(&self, _dirty_rect: NSRect) {
+            let Some(player) = self.ivars().player.upgrade() else {
+                return;
+            };
+            let Some(context) = self.openGLContext() else {
+                return;
+            };
+            context.makeCurrentContext();
+            let pixels = self.convertRectToBacking(self.bounds());
+            if let Err(error) = player.render_opengl(
+                DEFAULT_FRAMEBUFFER,
+                pixels.size.width as i32,
+                pixels.size.height as i32,
+                FLIP_Y,
+            ) {
+                eprintln!("[preview] render failed: {error}");
+            }
+            context.flushBuffer();
+            player.report_swap();
+        }
+    }
+);
+
+impl PreviewView {
+    fn new(
+        mtm: MainThreadMarker,
+        pixel_format: &NSOpenGLPixelFormat,
+        player: &Arc<MpvRenderPlayer>,
+    ) -> Option<Retained<Self>> {
+        let this = Self::alloc(mtm).set_ivars(PreviewViewIvars {
+            player: Arc::downgrade(player),
+        });
+        // SAFETY: The signature of NSOpenGLView's designated initializer is
+        // correct, and it may return nil.
+        unsafe { msg_send![super(this), initWithFrame: HIDDEN_SURFACE, pixelFormat: pixel_format] }
+    }
+}
+
 /// The AppKit objects behind the preview. They are held as pointers, and
 /// retained for the life of the process, so that the preview can be `Send` and
 /// `Sync`, which is sound because they are only ever dereferenced by the
 /// closures below, all of which run on the main thread.
 struct PreviewSurface {
     container: *mut NSView,
-    gl_view: *mut NSOpenGLView,
+    gl_view: *mut PreviewView,
     context: *mut NSOpenGLContext,
 }
 
@@ -128,12 +188,9 @@ pub fn attach(window: &tauri::Window) -> Result<EmbeddedPreview, String> {
     }
     .ok_or("no OpenGL pixel format matches what the preview asks for")?;
 
-    let gl_view = NSOpenGLView::initWithFrame_pixelFormat(
-        NSOpenGLView::alloc(mtm),
-        HIDDEN_SURFACE,
-        Some(&*pixel_format),
-    )
-    .ok_or("the OpenGL view could not be created")?;
+    let player = Arc::new(MpvRenderPlayer::new()?);
+    let gl_view = PreviewView::new(mtm, &pixel_format, &player)
+        .ok_or("the OpenGL view could not be created")?;
     gl_view.setWantsBestResolutionOpenGLSurface(true);
     // Last subview is topmost, which is what puts the video over the webview.
     container.addSubview(&gl_view);
@@ -145,7 +202,6 @@ pub fn attach(window: &tauri::Window) -> Result<EmbeddedPreview, String> {
         .ok_or("the OpenGL view has no context")?;
     context.makeCurrentContext();
 
-    let player = Arc::new(MpvRenderPlayer::new()?);
     // mpv has no display handle to take on macOS, hardware decode is negotiated
     // by its own hwdec option instead.
     player.init_opengl(resolve_gl_symbol, ptr::null_mut(), None)?;
@@ -163,8 +219,7 @@ pub fn attach(window: &tauri::Window) -> Result<EmbeddedPreview, String> {
     let rect = Arc::new(Mutex::new(SurfaceRect::default()));
     let app_handle = window.app_handle().clone();
 
-    // A strong handle here would keep the player alive through its own update
-    // callback, and mpv would never be shut down.
+    // Weak because mpv owns this callback, and a strong handle would be a cycle.
     let waiting_player = Arc::downgrade(&player);
     player.set_update_callback({
         let surface = Arc::clone(&surface);
@@ -174,7 +229,7 @@ pub fn attach(window: &tauri::Window) -> Result<EmbeddedPreview, String> {
                 return;
             };
             let surface = Arc::clone(&surface);
-            let _ = app_handle.run_on_main_thread(move || draw(&surface, &player));
+            let _ = app_handle.run_on_main_thread(move || request_redraw(&surface, &player));
         }
     });
 
@@ -188,25 +243,14 @@ pub fn attach(window: &tauri::Window) -> Result<EmbeddedPreview, String> {
 
 /// The main-thread half of the render loop. Advanced control makes calling
 /// `wants_redraw` after every update callback mandatory, and it has to happen on
-/// the render thread with the context current, never inside the callback.
-fn draw(surface: &PreviewSurface, player: &MpvRenderPlayer) {
+/// the render thread with the context current, never inside the callback. The
+/// drawing itself is left to AppKit, which also repaints on its own.
+fn request_redraw(surface: &PreviewSurface, player: &MpvRenderPlayer) {
     let context = unsafe { &*surface.context };
-    let gl_view = unsafe { &*surface.gl_view };
     context.makeCurrentContext();
-    if !player.wants_redraw() {
-        return;
+    if player.wants_redraw() {
+        unsafe { &*surface.gl_view }.setNeedsDisplay(true);
     }
-    let pixels = gl_view.convertRectToBacking(gl_view.bounds());
-    if let Err(error) = player.render_opengl(
-        DEFAULT_FRAMEBUFFER,
-        pixels.size.width as i32,
-        pixels.size.height as i32,
-        FLIP_Y,
-    ) {
-        eprintln!("[preview] render failed: {error}");
-    }
-    context.flushBuffer();
-    player.report_swap();
 }
 
 fn apply_rect(surface: &PreviewSurface, rect: SurfaceRect) {
@@ -220,6 +264,7 @@ fn apply_rect(surface: &PreviewSurface, rect: SurfaceRect) {
     };
     gl_view.setFrame(frame);
     gl_view.update();
+    gl_view.setNeedsDisplay(true);
 }
 
 /// The page measures its placeholder down from the top of the webview, so the y
