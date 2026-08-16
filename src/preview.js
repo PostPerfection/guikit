@@ -225,7 +225,7 @@ function startScrubberPolling() {
       if (meta.position != null && meta.duration != null && meta.duration > 0) {
         const pct = meta.position / meta.duration;
         updatePlayhead(pct);
-        updateTimecode(meta.position, meta.duration);
+        updateTimecode(meta.position, meta.duration, meta.container_fps);
         updatePlayBtn(meta.paused);
       }
     } catch {
@@ -248,12 +248,12 @@ function updatePlayhead(pct) {
   }
 }
 
-function updateTimecode(pos, dur) {
+function updateTimecode(pos, dur, fps) {
   const posLabel = document.getElementById('timeline-position');
   const durLabel = document.getElementById('timeline-duration');
-  if (posLabel) posLabel.textContent = formatTimecode(pos);
+  if (posLabel) posLabel.textContent = formatTimecode(pos, fps);
   if (durLabel) {
-    durLabel.textContent = formatTimecode(dur);
+    durLabel.textContent = formatTimecode(dur, fps);
     durLabel.dataset.raw = String(dur);
   }
 }
@@ -281,12 +281,16 @@ function updatePlayBtn(paused) {
   }
 }
 
-function formatTimecode(seconds) {
+const FALLBACK_TIMECODE_FPS = 24;
+
+// the frame field counts at the container's rate, or 24 until mpv reports one
+function formatTimecode(seconds, fps) {
   if (!seconds || seconds < 0) return '00:00:00:00';
+  const rate = fps > 0 ? fps : FALLBACK_TIMECODE_FPS;
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = Math.floor(seconds % 60);
-  const f = Math.floor((seconds % 1) * 24); // Assume 24fps for frame display
+  const f = Math.floor((seconds % 1) * rate);
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}:${String(f).padStart(2, '0')}`;
 }
 
