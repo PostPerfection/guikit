@@ -6,8 +6,20 @@ let scrubberInterval = null;
 let isSeeking = false;
 let isEmbedded = false;
 let reportSurface = () => {};
+let qcControls = null;
+
+const OVERLAY_CONTROLS_ID = 'preview-controls';
+
+// What the backend draws over the picture, sent whole on every change.
+const overlays = {
+  safe_area_percent: null,
+  aspect_mask: null,
+  centre_cross: false,
+  thirds_grid: false,
+};
 
 export function initPreview() {
+  initQcControls();
   initEmbeddedSurface();
 
   // Initialize scrubber
@@ -29,6 +41,97 @@ export function previewSeekAbsolute(seconds) {
 export function isPreviewVisible() {
   const panel = document.getElementById('preview-panel');
   return !!panel && !panel.hidden;
+}
+
+// The QC strip lives in the panel header, built here so an app needs no markup
+// of its own for it.
+function initQcControls() {
+  const panel = document.getElementById('preview-panel');
+  const header = panel?.querySelector('.preview-panel-header');
+  if (!header || document.getElementById(OVERLAY_CONTROLS_ID)) return;
+
+  const strip = document.createElement('div');
+  strip.id = OVERLAY_CONTROLS_ID;
+  strip.className = 'preview-controls';
+  strip.innerHTML = `
+    <label>Safe
+      <select id="preview-safe-area">
+        <option value="">off</option>
+        <option value="95">95%</option>
+        <option value="90">90%</option>
+      </select>
+    </label>
+    <label>Aspect
+      <select id="preview-aspect-mask">
+        <option value="">off</option>
+        <option value="1.85">1.85</option>
+        <option value="1.9">1.90</option>
+        <option value="2.39">2.39</option>
+      </select>
+    </label>
+    <button id="preview-centre-cross" class="btn-sm" title="Centre cross">Cross</button>
+    <button id="preview-thirds-grid" class="btn-sm" title="Rule of thirds grid">Thirds</button>
+    <label>Decode
+      <select id="preview-decode-scale">
+        <option value="full">Full</option>
+        <option value="half">Half</option>
+        <option value="quarter">Quarter</option>
+      </select>
+    </label>
+    <span id="preview-hud" class="preview-hud"></span>`;
+  header.insertBefore(strip, document.getElementById('preview-close'));
+
+  qcControls = {
+    safeArea: strip.querySelector('#preview-safe-area'),
+    aspectMask: strip.querySelector('#preview-aspect-mask'),
+    centreCross: strip.querySelector('#preview-centre-cross'),
+    thirdsGrid: strip.querySelector('#preview-thirds-grid'),
+    decodeScale: strip.querySelector('#preview-decode-scale'),
+    hud: strip.querySelector('#preview-hud'),
+  };
+
+  qcControls.safeArea.addEventListener('change', () => {
+    overlays.safe_area_percent = qcControls.safeArea.value ? Number(qcControls.safeArea.value) : null;
+    applyOverlays();
+  });
+  qcControls.aspectMask.addEventListener('change', () => {
+    overlays.aspect_mask = qcControls.aspectMask.value ? Number(qcControls.aspectMask.value) : null;
+    applyOverlays();
+  });
+  bindOverlayToggle(qcControls.centreCross, 'centre_cross');
+  bindOverlayToggle(qcControls.thirdsGrid, 'thirds_grid');
+  qcControls.decodeScale.addEventListener('change', () => {
+    invoke('preview_set_decode_scale', { scale: qcControls.decodeScale.value }).catch((e) => {
+      console.error('[preview] Failed to set decode scale:', e);
+    });
+  });
+}
+
+function bindOverlayToggle(button, field) {
+  button.addEventListener('click', () => {
+    overlays[field] = !overlays[field];
+    button.classList.toggle('primary', overlays[field]);
+    applyOverlays();
+  });
+}
+
+function applyOverlays() {
+  invoke('preview_set_overlays', { overlays }).catch((e) => {
+    console.error('[preview] Failed to set overlays:', e);
+  });
+}
+
+function resetOverlays() {
+  if (!qcControls) return;
+  overlays.safe_area_percent = null;
+  overlays.aspect_mask = null;
+  overlays.centre_cross = false;
+  overlays.thirds_grid = false;
+  qcControls.safeArea.value = '';
+  qcControls.aspectMask.value = '';
+  qcControls.centreCross.classList.remove('primary');
+  qcControls.thirdsGrid.classList.remove('primary');
+  applyOverlays();
 }
 
 // The video is a native surface the app draws over #preview-surface, so the
@@ -59,6 +162,7 @@ async function initEmbeddedSurface() {
 
   document.getElementById('preview-close')?.addEventListener('click', () => {
     invoke('preview_stop').catch(() => {});
+    resetOverlays();
     panel.hidden = true;
     report();
   });
@@ -117,6 +221,7 @@ function startScrubberPolling() {
     try {
       const resp = await invoke('preview_get_metadata');
       const meta = JSON.parse(resp);
+      updateHud(meta);
       if (meta.position != null && meta.duration != null && meta.duration > 0) {
         const pct = meta.position / meta.duration;
         updatePlayhead(pct);
@@ -151,6 +256,21 @@ function updateTimecode(pos, dur) {
     durLabel.textContent = formatTimecode(dur);
     durLabel.dataset.raw = String(dur);
   }
+}
+
+function updateHud(meta) {
+  if (!qcControls) return;
+  const parts = [];
+  if (meta.position != null && meta.container_fps > 0) {
+    const frame = Math.floor(meta.position * meta.container_fps) + 1;
+    const total = meta.duration > 0 ? Math.round(meta.duration * meta.container_fps) : null;
+    parts.push(total ? `frame ${frame}/${total}` : `frame ${frame}`);
+  }
+  if (meta.decoder_fps != null) parts.push(`${meta.decoder_fps.toFixed(2)} fps`);
+  if (meta.cache_seconds != null) parts.push(`buffer ${meta.cache_seconds.toFixed(1)}s`);
+  if (meta.dropped_frames != null) parts.push(`dropped ${meta.dropped_frames}`);
+  if (meta.delayed_frames) parts.push(`delayed ${meta.delayed_frames}`);
+  qcControls.hud.textContent = parts.join('  ');
 }
 
 function updatePlayBtn(paused) {

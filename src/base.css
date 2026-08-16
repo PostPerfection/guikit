@@ -615,6 +615,38 @@ body {
   color: var(--text-muted);
 }
 
+/* QC strip: overlay and decode controls plus the playback counters. The panel
+   header holds it, and preview.js builds it. */
+.preview-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  font-size: 11px;
+}
+
+.preview-controls label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+}
+
+.preview-controls select {
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-alt);
+  color: var(--text);
+  font-size: 11px;
+}
+
+.preview-hud {
+  font-family: 'JetBrains Mono', 'SF Mono', 'Cascadia Code', monospace;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
 /* Video is painted over this element by the app, not by the page. */
 .preview-surface {
   height: 360px;
