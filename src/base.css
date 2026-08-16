@@ -558,6 +558,11 @@ body {
   color: #fff;
 }
 
+.btn-sm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* Split panels */
 .split-panels {
   display: grid;

@@ -33,9 +33,21 @@ build compiles postkit once.
 
 `preview.js` builds a control strip into the preview panel header, so an app
 needs no markup of its own for it: safe area (95% or 90%), aspect mask (1.85,
-1.90, 2.39), centre cross, rule of thirds, decode resolution, and the counters.
-An app only has to register `preview_set_overlays` and `preview_set_decode_scale`
-beside the other commands.
+1.90, 2.39), centre cross, rule of thirds, crop, decode resolution, subtitles,
+captions, and the counters. An app only has to register `preview_set_overlays`,
+`preview_set_decode_scale`, `preview_set_subtitle_file` and
+`preview_set_subtitle_visibility` beside the other commands.
+
+Crop, Sub and CC start disabled, because they have nothing to show until the
+page hands them one. `setPreviewCrop({ left, right, top, bottom })` gives the
+crop overlay the pixels the job takes off each edge of the source picture, and
+`setPreviewCrop(null)` takes it away. `setPreviewSubtitleFile(path)` and
+`setPreviewCaptionFile(path)` load a file into mpv's primary and secondary
+subtitle slots, the secondary one rendering at the top of the frame, and null
+drops the track. Only what libass reads natively works: SRT, ASS or SSA and
+WebVTT, so the wizards convert their subtitle XML to SRT first. The clip has to
+be loaded before the track goes on it, and loading another clip drops both
+tracks.
 
 The overlays are one mpv filter chain. `overlay_filter_chain` builds it from a
 `PreviewOverlays` struct and `preview_set_overlays` sets it on mpv's `vf`
@@ -45,6 +57,12 @@ any frame size and any decode resolution. The aspect mask draws four boxes, two
 per orientation, and switches off the pair that does not apply with `enable`,
 because a drawbox sized zero covers the whole frame instead of nothing.
 
+The crop is the one overlay measured in pixels rather than in fractions of the
+frame, so it is the one the decode scale reaches: the filters run on the decoded
+frame, and the crop divides its pixel values by 2 per lowres level. The player
+keeps the scale the page last asked for, and the page sends the overlays again
+after a scale change so the chain is rebuilt for the new frame size.
+
 `preview_set_decode_scale` takes `full`, `half` or `quarter` and sets
 libavcodec's `lowres` to 0, 1 or 2 through mpv's `vd-lavc-o`. The decoder reads
 lowres when it opens, so the command reloads the current file at the position
@@ -52,6 +70,12 @@ and pause state it had. JPEG 2000 reaches half and quarter by discarding DWT
 levels, so a reduced scale costs a fraction of a full decode. Other codecs
 honour lowres only where their decoder implements it, h264 among them, and the
 control is offered for them all the same.
+
+That reload takes the external subtitle tracks with it, and a `sub-add` sent
+straight after a `loadfile` is refused because the file is not loaded yet. So
+the reload carries the subtitle files as per-file options instead, `sub-files`
+with `sid` and `secondary-sid`, which puts the same files back under the same
+ids they had.
 
 `preview_get_metadata` carries the counters beside position and duration:
 `dropped_frames` (mpv `frame-drop-count`), `delayed_frames`

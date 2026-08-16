@@ -16,7 +16,12 @@ const overlays = {
   aspect_mask: null,
   centre_cross: false,
   thirds_grid: false,
+  crop: null,
+  crop_visible: false,
 };
+
+// The two subtitle slots mpv renders, keyed by the name the backend takes.
+const SUBTITLE_TRACKS = ['subtitle', 'caption'];
 
 export function initPreview() {
   initQcControls();
@@ -71,6 +76,7 @@ function initQcControls() {
     </label>
     <button id="preview-centre-cross" class="btn-sm" title="Centre cross">Cross</button>
     <button id="preview-thirds-grid" class="btn-sm" title="Rule of thirds grid">Thirds</button>
+    <button id="preview-crop" class="btn-sm" title="Crop the job applies" disabled>Crop</button>
     <label>Decode
       <select id="preview-decode-scale">
         <option value="full">Full</option>
@@ -78,6 +84,8 @@ function initQcControls() {
         <option value="quarter">Quarter</option>
       </select>
     </label>
+    <button id="preview-subtitles" class="btn-sm" title="Subtitles" disabled>Sub</button>
+    <button id="preview-captions" class="btn-sm" title="Closed captions" disabled>CC</button>
     <span id="preview-hud" class="preview-hud"></span>`;
   header.insertBefore(strip, document.getElementById('preview-close'));
 
@@ -86,7 +94,12 @@ function initQcControls() {
     aspectMask: strip.querySelector('#preview-aspect-mask'),
     centreCross: strip.querySelector('#preview-centre-cross'),
     thirdsGrid: strip.querySelector('#preview-thirds-grid'),
+    crop: strip.querySelector('#preview-crop'),
     decodeScale: strip.querySelector('#preview-decode-scale'),
+    trackToggles: {
+      subtitle: strip.querySelector('#preview-subtitles'),
+      caption: strip.querySelector('#preview-captions'),
+    },
     hud: strip.querySelector('#preview-hud'),
   };
 
@@ -100,10 +113,18 @@ function initQcControls() {
   });
   bindOverlayToggle(qcControls.centreCross, 'centre_cross');
   bindOverlayToggle(qcControls.thirdsGrid, 'thirds_grid');
-  qcControls.decodeScale.addEventListener('change', () => {
-    invoke('preview_set_decode_scale', { scale: qcControls.decodeScale.value }).catch((e) => {
+  bindOverlayToggle(qcControls.crop, 'crop_visible');
+  for (const track of SUBTITLE_TRACKS) bindTrackToggle(track);
+  qcControls.decodeScale.addEventListener('change', async () => {
+    try {
+      await invoke('preview_set_decode_scale', { scale: qcControls.decodeScale.value });
+    } catch (e) {
       console.error('[preview] Failed to set decode scale:', e);
-    });
+      return;
+    }
+    // the crop overlay is drawn in decoded pixels, so its chain is built again
+    // for the scale the decoder now runs at
+    applyOverlays();
   });
 }
 
@@ -115,10 +136,60 @@ function bindOverlayToggle(button, field) {
   });
 }
 
+function bindTrackToggle(track) {
+  const button = qcControls.trackToggles[track];
+  button.addEventListener('click', () => {
+    const visible = !button.classList.contains('primary');
+    invoke('preview_set_subtitle_visibility', { track, visible })
+      .then(() => button.classList.toggle('primary', visible))
+      .catch((e) => console.error('[preview] Failed to set subtitle visibility:', e));
+  });
+}
+
 function applyOverlays() {
   invoke('preview_set_overlays', { overlays }).catch((e) => {
     console.error('[preview] Failed to set overlays:', e);
   });
+}
+
+/// Show the crop the job will apply, as pixels off each edge of the source
+/// picture, or null for none. Setting the first crop switches the overlay on,
+/// clearing it switches it off, and in between the Crop button rules.
+export function setPreviewCrop(crop) {
+  if (!crop) {
+    overlays.crop_visible = false;
+  } else if (!overlays.crop) {
+    overlays.crop_visible = true;
+  }
+  overlays.crop = crop;
+  if (qcControls) {
+    qcControls.crop.disabled = !crop;
+    qcControls.crop.classList.toggle('primary', overlays.crop_visible);
+  }
+  applyOverlays();
+}
+
+/// Render a subtitle file over playback as the bottom track, or null to drop it.
+/// Only what libass reads natively: SRT, ASS or SSA and WebVTT, so a wizard
+/// converts its subtitle XML to SRT first. The clip has to be loaded already.
+export function setPreviewSubtitleFile(filePath) {
+  setTrackFile('subtitle', filePath);
+}
+
+/// The same for a caption file, which mpv renders at the top of the frame.
+export function setPreviewCaptionFile(filePath) {
+  setTrackFile('caption', filePath);
+}
+
+function setTrackFile(track, filePath) {
+  invoke('preview_set_subtitle_file', { track, filePath })
+    .then(() => {
+      if (!qcControls) return;
+      const button = qcControls.trackToggles[track];
+      button.disabled = !filePath;
+      button.classList.toggle('primary', !!filePath);
+    })
+    .catch((e) => console.error('[preview] Failed to set subtitle file:', e));
 }
 
 function resetOverlays() {
@@ -127,11 +198,24 @@ function resetOverlays() {
   overlays.aspect_mask = null;
   overlays.centre_cross = false;
   overlays.thirds_grid = false;
+  overlays.crop = null;
+  overlays.crop_visible = false;
   qcControls.safeArea.value = '';
   qcControls.aspectMask.value = '';
   qcControls.centreCross.classList.remove('primary');
   qcControls.thirdsGrid.classList.remove('primary');
+  qcControls.crop.classList.remove('primary');
+  qcControls.crop.disabled = true;
   applyOverlays();
+}
+
+// The backend drops the subtitle tracks with the file they were added to.
+function resetTrackToggles() {
+  if (!qcControls) return;
+  for (const track of SUBTITLE_TRACKS) {
+    qcControls.trackToggles[track].classList.remove('primary');
+    qcControls.trackToggles[track].disabled = true;
+  }
 }
 
 // The video is a native surface the app draws over #preview-surface, so the
@@ -163,6 +247,7 @@ async function initEmbeddedSurface() {
   document.getElementById('preview-close')?.addEventListener('click', () => {
     invoke('preview_stop').catch(() => {});
     resetOverlays();
+    resetTrackToggles();
     panel.hidden = true;
     report();
   });
@@ -300,6 +385,7 @@ export function previewFile(filePath) {
   invoke('preview_load', { filePath }).catch((e) => {
     console.error('[preview] Failed to load:', e);
   });
+  resetTrackToggles();
   startScrubberPolling();
 }
 
@@ -309,5 +395,6 @@ export function previewDcp(dirPath) {
   invoke('preview_load_dcp', { dirPath }).catch((e) => {
     console.error('[preview] Failed to load DCP:', e);
   });
+  resetTrackToggles();
   startScrubberPolling();
 }

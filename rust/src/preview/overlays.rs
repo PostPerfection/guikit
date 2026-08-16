@@ -6,14 +6,28 @@
 
 use serde::Deserialize;
 
+use super::DecodeScale;
+
 const SAFE_AREA_COLOUR: &str = "white@0.8";
 const ASPECT_MASK_COLOUR: &str = "black@0.6";
 const CENTRE_CROSS_COLOUR: &str = "white@0.8";
 const THIRDS_GRID_COLOUR: &str = "white@0.4";
+const CROP_BAND_COLOUR: &str = "red@0.35";
+const CROP_OUTLINE_COLOUR: &str = "red@0.9";
 
 const SAFE_AREA_THICKNESS_PIXELS: u32 = 2;
 const CENTRE_CROSS_THICKNESS_PIXELS: u32 = 2;
 const THIRDS_GRID_THICKNESS_PIXELS: u32 = 1;
+const CROP_OUTLINE_THICKNESS_PIXELS: u32 = 2;
+
+/// What the job's crop takes off each edge, in source pixels.
+#[derive(Clone, Copy, Deserialize)]
+pub struct PreviewCrop {
+    pub left: u32,
+    pub right: u32,
+    pub top: u32,
+    pub bottom: u32,
+}
 
 /// Which overlays the page asked for. All off is the default, and produces an
 /// empty chain.
@@ -23,14 +37,21 @@ pub struct PreviewOverlays {
     pub aspect_mask: Option<f64>,
     pub centre_cross: bool,
     pub thirds_grid: bool,
+    pub crop: Option<PreviewCrop>,
+    pub crop_visible: bool,
 }
 
-/// The value for mpv's `vf` property, empty when no overlay is on.
-pub fn overlay_filter_chain(overlays: &PreviewOverlays) -> String {
+/// The value for mpv's `vf` property, empty when no overlay is on. The crop is
+/// the one overlay in pixels rather than in fractions of the frame, so it takes
+/// the decode scale the filters run at.
+pub fn overlay_filter_chain(overlays: &PreviewOverlays, decode_scale: DecodeScale) -> String {
     let mut filters: Vec<String> = Vec::new();
     // the mask is a fill, so it draws first or it covers the lines
     if let Some(aspect) = overlays.aspect_mask {
         filters.extend(aspect_mask_filters(aspect));
+    }
+    if let Some(crop) = overlays.crop.filter(|_| overlays.crop_visible) {
+        filters.extend(crop_filters(crop, decode_scale));
     }
     if let Some(percent) = overlays.safe_area_percent {
         filters.push(safe_area_filter(percent));
@@ -83,6 +104,54 @@ fn aspect_mask_filters(aspect: f64) -> [String; 4] {
     ]
 }
 
+/// The bands the crop discards, as fills, plus an outline around what it keeps.
+/// The filters run on the decoded frame, so every pixel value is divided by what
+/// the decode scale shrank that frame by.
+fn crop_filters(crop: PreviewCrop, decode_scale: DecodeScale) -> Vec<String> {
+    let divisor = decode_scale.frame_divisor();
+    let left = f64::from(crop.left) / divisor;
+    let right = f64::from(crop.right) / divisor;
+    let top = f64::from(crop.top) / divisor;
+    let bottom = f64::from(crop.bottom) / divisor;
+    let mut filters = Vec::new();
+    // a drawbox sized zero covers the whole frame, so an edge with no crop on
+    // it gets no band at all
+    if left > 0.0 {
+        filters.push(format!(
+            "drawbox=x=0:y=0:w={left}:h=ih:color={CROP_BAND_COLOUR}:t=fill"
+        ));
+    }
+    if right > 0.0 {
+        filters.push(format!(
+            "drawbox=x=iw-{right}:y=0:w={right}:h=ih:color={CROP_BAND_COLOUR}:t=fill"
+        ));
+    }
+    if top > 0.0 {
+        filters.push(format!(
+            "drawbox=x=0:y=0:w=iw:h={top}:color={CROP_BAND_COLOUR}:t=fill"
+        ));
+    }
+    if bottom > 0.0 {
+        filters.push(format!(
+            "drawbox=x=0:y=ih-{bottom}:w=iw:h={bottom}:color={CROP_BAND_COLOUR}:t=fill"
+        ));
+    }
+    let kept_width = frame_dimension_less("iw", left + right);
+    let kept_height = frame_dimension_less("ih", top + bottom);
+    filters.push(format!(
+        "drawbox=x={left}:y={top}:w={kept_width}:h={kept_height}:color={CROP_OUTLINE_COLOUR}:t={CROP_OUTLINE_THICKNESS_PIXELS}"
+    ));
+    filters
+}
+
+fn frame_dimension_less(dimension: &str, pixels: f64) -> String {
+    if pixels > 0.0 {
+        format!("{dimension}-{pixels}")
+    } else {
+        dimension.to_string()
+    }
+}
+
 fn centre_cross_filters() -> [String; 2] {
     [
         format!(
@@ -102,17 +171,30 @@ fn thirds_grid_filter() -> String {
 mod tests {
     use super::*;
 
+    const LEFT_CROP: PreviewCrop = PreviewCrop {
+        left: 138,
+        right: 0,
+        top: 0,
+        bottom: 0,
+    };
+
     #[test]
     fn nothing_on_clears_the_chain() {
-        assert_eq!(overlay_filter_chain(&PreviewOverlays::default()), "");
+        assert_eq!(
+            overlay_filter_chain(&PreviewOverlays::default(), DecodeScale::Full),
+            ""
+        );
     }
 
     #[test]
     fn safe_area_is_a_centred_outline() {
-        let chain = overlay_filter_chain(&PreviewOverlays {
-            safe_area_percent: Some(95),
-            ..Default::default()
-        });
+        let chain = overlay_filter_chain(
+            &PreviewOverlays {
+                safe_area_percent: Some(95),
+                ..Default::default()
+            },
+            DecodeScale::Full,
+        );
         assert_eq!(
             chain,
             "lavfi=[drawbox=x=iw*0.025:y=ih*0.025:w=iw*0.95:h=ih*0.95:color=white@0.8:t=2]"
@@ -121,10 +203,13 @@ mod tests {
 
     #[test]
     fn safe_area_takes_the_percent_it_is_given() {
-        let chain = overlay_filter_chain(&PreviewOverlays {
-            safe_area_percent: Some(90),
-            ..Default::default()
-        });
+        let chain = overlay_filter_chain(
+            &PreviewOverlays {
+                safe_area_percent: Some(90),
+                ..Default::default()
+            },
+            DecodeScale::Full,
+        );
         assert_eq!(
             chain,
             "lavfi=[drawbox=x=iw*0.05:y=ih*0.05:w=iw*0.9:h=ih*0.9:color=white@0.8:t=2]"
@@ -133,10 +218,13 @@ mod tests {
 
     #[test]
     fn aspect_mask_covers_both_band_pairs() {
-        let chain = overlay_filter_chain(&PreviewOverlays {
-            aspect_mask: Some(2.39),
-            ..Default::default()
-        });
+        let chain = overlay_filter_chain(
+            &PreviewOverlays {
+                aspect_mask: Some(2.39),
+                ..Default::default()
+            },
+            DecodeScale::Full,
+        );
         assert_eq!(
             chain,
             "lavfi=[drawbox=x=0:y=0:w=(iw-ih*2.39)/2:h=ih:color=black@0.6:t=fill:enable='gt(w/h,2.39)',\
@@ -148,10 +236,13 @@ mod tests {
 
     #[test]
     fn centre_cross_is_two_lines_through_the_middle() {
-        let chain = overlay_filter_chain(&PreviewOverlays {
-            centre_cross: true,
-            ..Default::default()
-        });
+        let chain = overlay_filter_chain(
+            &PreviewOverlays {
+                centre_cross: true,
+                ..Default::default()
+            },
+            DecodeScale::Full,
+        );
         assert_eq!(
             chain,
             "lavfi=[drawbox=x=(iw-2)/2:y=0:w=2:h=ih:color=white@0.8:t=fill,\
@@ -161,27 +252,139 @@ mod tests {
 
     #[test]
     fn thirds_grid_divides_the_frame() {
-        let chain = overlay_filter_chain(&PreviewOverlays {
-            thirds_grid: true,
-            ..Default::default()
-        });
+        let chain = overlay_filter_chain(
+            &PreviewOverlays {
+                thirds_grid: true,
+                ..Default::default()
+            },
+            DecodeScale::Full,
+        );
         assert_eq!(chain, "lavfi=[drawgrid=w=iw/3:h=ih/3:color=white@0.4:t=1]");
     }
 
     #[test]
+    fn crop_shades_the_cropped_edge_and_outlines_what_is_kept() {
+        let chain = overlay_filter_chain(
+            &PreviewOverlays {
+                crop: Some(LEFT_CROP),
+                crop_visible: true,
+                ..Default::default()
+            },
+            DecodeScale::Full,
+        );
+        assert_eq!(
+            chain,
+            "lavfi=[drawbox=x=0:y=0:w=138:h=ih:color=red@0.35:t=fill,\
+             drawbox=x=138:y=0:w=iw-138:h=ih:color=red@0.9:t=2]"
+        );
+    }
+
+    #[test]
+    fn crop_halves_with_the_decode_scale() {
+        let chain = overlay_filter_chain(
+            &PreviewOverlays {
+                crop: Some(LEFT_CROP),
+                crop_visible: true,
+                ..Default::default()
+            },
+            DecodeScale::Half,
+        );
+        assert_eq!(
+            chain,
+            "lavfi=[drawbox=x=0:y=0:w=69:h=ih:color=red@0.35:t=fill,\
+             drawbox=x=69:y=0:w=iw-69:h=ih:color=red@0.9:t=2]"
+        );
+    }
+
+    #[test]
+    fn crop_quarters_with_the_decode_scale() {
+        let chain = overlay_filter_chain(
+            &PreviewOverlays {
+                crop: Some(LEFT_CROP),
+                crop_visible: true,
+                ..Default::default()
+            },
+            DecodeScale::Quarter,
+        );
+        assert_eq!(
+            chain,
+            "lavfi=[drawbox=x=0:y=0:w=34.5:h=ih:color=red@0.35:t=fill,\
+             drawbox=x=34.5:y=0:w=iw-34.5:h=ih:color=red@0.9:t=2]"
+        );
+    }
+
+    #[test]
+    fn crop_shades_every_edge_it_takes_pixels_off() {
+        let chain = overlay_filter_chain(
+            &PreviewOverlays {
+                crop: Some(PreviewCrop {
+                    left: 10,
+                    right: 20,
+                    top: 30,
+                    bottom: 40,
+                }),
+                crop_visible: true,
+                ..Default::default()
+            },
+            DecodeScale::Full,
+        );
+        assert_eq!(
+            chain,
+            "lavfi=[drawbox=x=0:y=0:w=10:h=ih:color=red@0.35:t=fill,\
+             drawbox=x=iw-20:y=0:w=20:h=ih:color=red@0.35:t=fill,\
+             drawbox=x=0:y=0:w=iw:h=30:color=red@0.35:t=fill,\
+             drawbox=x=0:y=ih-40:w=iw:h=40:color=red@0.35:t=fill,\
+             drawbox=x=10:y=30:w=iw-30:h=ih-70:color=red@0.9:t=2]"
+        );
+    }
+
+    #[test]
+    fn a_crop_nobody_asked_to_see_draws_nothing() {
+        let chain = overlay_filter_chain(
+            &PreviewOverlays {
+                crop: Some(LEFT_CROP),
+                crop_visible: false,
+                ..Default::default()
+            },
+            DecodeScale::Full,
+        );
+        assert_eq!(chain, "");
+    }
+
+    #[test]
+    fn the_crop_toggle_draws_nothing_without_a_crop() {
+        let chain = overlay_filter_chain(
+            &PreviewOverlays {
+                crop: None,
+                crop_visible: true,
+                ..Default::default()
+            },
+            DecodeScale::Full,
+        );
+        assert_eq!(chain, "");
+    }
+
+    #[test]
     fn every_overlay_at_once_masks_first() {
-        let chain = overlay_filter_chain(&PreviewOverlays {
-            safe_area_percent: Some(95),
-            aspect_mask: Some(1.85),
-            centre_cross: true,
-            thirds_grid: true,
-        });
+        let chain = overlay_filter_chain(
+            &PreviewOverlays {
+                safe_area_percent: Some(95),
+                aspect_mask: Some(1.85),
+                centre_cross: true,
+                thirds_grid: true,
+                crop: Some(LEFT_CROP),
+                crop_visible: true,
+            },
+            DecodeScale::Full,
+        );
         assert_eq!(
             chain,
             "lavfi=[drawbox=x=0:y=0:w=(iw-ih*1.85)/2:h=ih:color=black@0.6:t=fill:enable='gt(w/h,1.85)',\
              drawbox=x=(iw+ih*1.85)/2:y=0:w=(iw-ih*1.85)/2:h=ih:color=black@0.6:t=fill:enable='gt(w/h,1.85)',\
              drawbox=x=0:y=0:w=iw:h=(ih-iw/1.85)/2:color=black@0.6:t=fill:enable='lt(w/h,1.85)',\
              drawbox=x=0:y=(ih+iw/1.85)/2:w=iw:h=(ih-iw/1.85)/2:color=black@0.6:t=fill:enable='lt(w/h,1.85)',\
+             drawbox=x=0:y=0:w=138:h=ih:color=red@0.35:t=fill,\
+             drawbox=x=138:y=0:w=iw-138:h=ih:color=red@0.9:t=2,\
              drawbox=x=iw*0.025:y=ih*0.025:w=iw*0.95:h=ih*0.95:color=white@0.8:t=2,\
              drawbox=x=(iw-2)/2:y=0:w=2:h=ih:color=white@0.8:t=fill,\
              drawbox=x=0:y=(ih-2)/2:w=iw:h=2:color=white@0.8:t=fill,\
