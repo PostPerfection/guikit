@@ -2,14 +2,17 @@
 // queue that starts the next package when the player reaches the end of the one
 // before it. The queue lasts as long as the session and nothing writes it down.
 import {
+  closePreview,
   previewDcp,
   previewPlayPause,
+  stopPreview,
   watchPreviewLoads,
   watchPreviewMetadata,
 } from './preview.js';
 
-// The queue in play order: { directory, title }, the title being the directory's
-// name until the package plays and mpv reports its composition title.
+// The queue in play order: { directory, title }, the title being whatever the app
+// queued the row under until the package plays and mpv reports its composition
+// title.
 const playlist = [];
 
 let panel = null;
@@ -18,9 +21,12 @@ let panel = null;
 let loadPackage = previewDcp;
 let playingIndex = -1;
 // Set from the moment a row is handed to the player until the player reports it
-// loaded, which is both the guard against advancing twice over one end of file
-// and what tells the queue to start the row playing.
+// loaded, which is what tells the queue to start the row playing.
 let startingRow = false;
+// Set once a poll has reported the end of the row playing now, which is the
+// advance decision: mpv's eof-reached can be cleared by a property change
+// elsewhere, so nothing may need it to still be true on a later poll.
+let reachedEnd = false;
 // The directory the queue has just handed to the player, which is how a load it
 // made is told apart from one the app made.
 let expectedDirectory = null;
@@ -41,9 +47,12 @@ export function initPlaylist(container, options = {}) {
 }
 
 /// Queue a DCP or IMP directory as the last row. Nothing starts playing: a row
-/// plays when it is clicked, or when the queue reaches it.
-export function addToPlaylist(directory) {
-  playlist.push({ directory, title: directoryName(directory) });
+/// plays when it is clicked, or when the queue reaches it. `title` is what to call
+/// the row, for an app that has a better name for the package than its directory,
+/// which is the fallback; either way mpv's composition title replaces it once the
+/// row plays.
+export function addToPlaylist(directory, title) {
+  playlist.push({ directory, title: title || directoryName(directory) });
   renderPlaylist();
 }
 
@@ -77,12 +86,27 @@ function handlePanelClick(e) {
 }
 
 function removeRow(index) {
+  // the row playing is also the row that put what is on screen there, since the
+  // queue lets go of the marker on any load it did not make itself
+  const removedWhatIsPlaying = index === playingIndex;
   playlist.splice(index, 1);
-  // the marker stays on the package it was on, and the queue lets go of the
-  // playing package when that is the row taken out
-  if (index === playingIndex) playingIndex = -1;
+  if (removedWhatIsPlaying) letGoOfPlayback();
   else if (index < playingIndex) playingIndex -= 1;
   renderPlaylist();
+  if (!removedWhatIsPlaying) return;
+  // with no rows left there is nothing to click either, so the panel goes with
+  // the package rather than leaving a stopped picture behind
+  if (playlist.length === 0) closePreview();
+  else stopPreview();
+}
+
+// Nothing in the queue owns what the player holds any more: the marker goes and
+// no end of file advances anything until a row is clicked.
+function letGoOfPlayback() {
+  playingIndex = -1;
+  startingRow = false;
+  reachedEnd = false;
+  expectedDirectory = null;
 }
 
 function moveRow(index, target) {
@@ -97,6 +121,7 @@ function moveRow(index, target) {
 async function playRow(index) {
   playingIndex = index;
   startingRow = true;
+  reachedEnd = false;
   // the loader is handed the row's own string, and the load hook reports back
   // whatever it passed on, so the two only match while it goes through unchanged
   expectedDirectory = playlist[index].directory;
@@ -114,8 +139,7 @@ function handleLoad(path) {
   const ours = path === expectedDirectory;
   expectedDirectory = null;
   if (ours) return;
-  playingIndex = -1;
-  startingRow = false;
+  letGoOfPlayback();
   renderPlaylist();
 }
 
@@ -131,7 +155,10 @@ function handleMetadata(meta) {
     if (meta.paused) previewPlayPause();
   }
   useReportedTitle(meta.filename);
-  if (meta.eof) playNextRow();
+  if (meta.eof && !reachedEnd) {
+    reachedEnd = true;
+    playNextRow();
+  }
 }
 
 // The composition title, which is only known once the package is loaded. A

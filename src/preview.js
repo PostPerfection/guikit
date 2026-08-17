@@ -259,16 +259,28 @@ async function initEmbeddedSurface() {
   window.addEventListener('resize', report);
   document.addEventListener('scroll', report, true);
 
-  document.getElementById('preview-close')?.addEventListener('click', () => {
-    invoke('preview_stop').catch(() => {});
-    resetOverlays();
-    resetTrackToggles();
-    panel.hidden = true;
-    report();
-  });
+  document.getElementById('preview-close')?.addEventListener('click', closePreview);
 
   reportSurface = report;
   report();
+}
+
+/// Stop the player, leaving the panel where it is. The tracks go with the file
+/// the backend drops.
+export function stopPreview() {
+  invoke('preview_stop').catch(() => {});
+  resetTrackToggles();
+}
+
+/// Stop the player and take the panel off the page, which is what the panel's own
+/// ✕ does. The playlist calls it when the last of its rows goes, so nothing keeps
+/// playing behind a hidden panel.
+export function closePreview() {
+  stopPreview();
+  resetOverlays();
+  const panel = document.getElementById('preview-panel');
+  if (panel) panel.hidden = true;
+  reportSurface();
 }
 
 export function showEmbeddedPanel() {

@@ -7,6 +7,7 @@ Shared code for the PostPerfection wizard GUIs, frontend and native.
 - `src/shortcuts.js`: keyboard shortcut handling and the shortcuts dialog
 - `src/base.css`: the shared stylesheet
 - `rust/`: the `guikit` crate, holding the native side of the preview
+- `test/`: the headless harness for the playlist queue
 
 ## The guikit crate
 
@@ -112,8 +113,10 @@ the player with `keep-open` on; guikit sets nothing for it.
 `playlist.js` plays queued packages one after another, for the session only:
 nothing is written down and there is no file format.
 `initPlaylist(container, options)` renders the panel into an element the app
-supplies, and `addToPlaylist(directory)` queues a DCP or IMP directory as the
-last row.
+supplies, and `addToPlaylist(directory, title)` queues a DCP or IMP directory as
+the last row. The title is what to call the row, for an app queueing a package
+the user picked by name; leave it out and the directory's name stands in until
+the package plays.
 
 `options.loadPackage` is the app's own loader for a package directory, async or
 not, and rows play through it instead of `previewDcp` when it is given. A wizard
@@ -126,25 +129,39 @@ app's. It may leave the package playing or paused, either way round.
 
 A row shows its position, its title, and buttons to move it up or down or take
 it out. Clicking a row plays the queue from there, and the row playing carries a
-marker. The title is the directory's name until the package plays, and mpv's
-composition title after that, which the metadata poll reports as `filename`.
+marker. The title is whatever the row was queued under until the package plays,
+and mpv's composition title after that, which the metadata poll reports as
+`filename`.
+
+Taking a row out that is not the one playing changes nothing else. Taking out the
+row playing stops the player, and when that was the last row the panel goes too,
+through `closePreview`, so no package keeps playing behind a hidden panel. A
+queue that has let go of playback takes nothing with it: the rows are just rows
+then, and removing them leaves whatever the app is previewing alone.
 
 The queue rides on the scrubber's metadata poll rather than a timer of its own:
 `watchPreviewMetadata` hands it every poll, and it loads the next row when the
-poll reports `eof`. mpv is paused on the last frame by then and that pause
-outlives the load, so the new row is started with one `preview_play_pause` once
-the poll shows it loaded, unless it is playing already, which a loader of the
-app's own may have seen to. Waiting for the load is also what stops one end of
-file advancing the queue twice. A manual
-pause never advances it, because `eof-reached` is only true at the end of the
-file. On the last row, or with nothing queued, the end of a package is what it
-was before.
+poll reports `eof`. That decision is latched: the first poll reporting the end of
+the row playing makes it, and no later poll can unmake it or make it twice, since
+a property change elsewhere can clear mpv's `eof-reached` while the row still
+sits on its last frame. mpv is paused on that frame and the pause outlives the
+load, so the new row is started with one `preview_play_pause` once the poll shows
+it loaded, unless it is playing already, which a loader of the app's own may have
+seen to. A manual pause never advances the queue, because `eof-reached` is only
+true at the end of the file. On the last row, or with nothing queued, the end of
+a package is what it was before, and a row queued after that end waits to be
+clicked.
 
 `watchPreviewLoads` reports every load `previewFile` and `previewDcp` are asked
 for. The queue compares each one against the directory it just handed over, and
 anything else means the app loaded something of its own: the rows stay rendered,
 the marker goes, and no end of file advances anything until a row is clicked
 again.
+
+`test/playlist.test.mjs` drives the queue headless, with `test/preview-stub.mjs`
+standing in for the player: `node --test 'test/*.test.mjs'`, no dependencies and
+nothing to build. It is the whole JS test suite, and CI runs it beside the syntax
+check.
 
 ## Consumers
 
