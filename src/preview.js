@@ -7,6 +7,8 @@ let isSeeking = false;
 let isEmbedded = false;
 let reportSurface = () => {};
 let qcControls = null;
+let metadataWatcher = () => {};
+let loadWatcher = () => {};
 
 const OVERLAY_CONTROLS_ID = 'preview-controls';
 
@@ -41,6 +43,19 @@ export function previewSeek(seconds) {
 
 export function previewSeekAbsolute(seconds) {
   invoke('preview_seek_absolute', { seconds }).catch(() => {});
+}
+
+/// Read every metadata poll, one watcher at a time. The playlist takes the
+/// end-of-file flag and the composition title from it, so it needs no timer.
+export function watchPreviewMetadata(watcher) {
+  metadataWatcher = watcher;
+}
+
+/// Read every load the page asks for, one watcher at a time, as the file or
+/// directory handed over. The playlist lets go of its queue on a load it did not
+/// make itself.
+export function watchPreviewLoads(watcher) {
+  loadWatcher = watcher;
 }
 
 export function isPreviewVisible() {
@@ -307,6 +322,7 @@ function startScrubberPolling() {
       const resp = await invoke('preview_get_metadata');
       const meta = JSON.parse(resp);
       updateHud(meta);
+      metadataWatcher(meta);
       if (meta.position != null && meta.duration != null && meta.duration > 0) {
         const pct = meta.position / meta.duration;
         updatePlayhead(pct);
@@ -384,6 +400,7 @@ function formatTimecode(seconds, fps) {
 /// Load a file into the preview player
 export function previewFile(filePath) {
   showEmbeddedPanel();
+  loadWatcher(filePath);
   invoke('preview_load', { filePath }).catch((e) => {
     console.error('[preview] Failed to load:', e);
   });
@@ -394,6 +411,7 @@ export function previewFile(filePath) {
 /// Load a DCP directory into the preview player
 export function previewDcp(dirPath) {
   showEmbeddedPanel();
+  loadWatcher(dirPath);
   invoke('preview_load_dcp', { dirPath }).catch((e) => {
     console.error('[preview] Failed to load DCP:', e);
   });

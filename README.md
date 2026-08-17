@@ -3,6 +3,7 @@
 Shared code for the PostPerfection wizard GUIs, frontend and native.
 
 - `src/preview.js`: mpv-backed preview player and scrubber
+- `src/playlist.js`: the queue that plays packages one after another
 - `src/shortcuts.js`: keyboard shortcut handling and the shortcuts dialog
 - `src/base.css`: the shared stylesheet
 - `rust/`: the `guikit` crate, holding the native side of the preview
@@ -88,6 +89,38 @@ ids they had.
 `decoder_fps` (`estimated-vf-fps`) and `container_fps` (`container-fps`). Each
 is null until mpv has a value for it. The scrubber poll reads them, so the HUD
 costs no second timer.
+
+It also carries `eof`, mpv's `eof-reached`, which is what the playlist advances
+on. mpv only holds that true, paused on the last frame, because postkit starts
+the player with `keep-open` on; guikit sets nothing for it.
+
+## Playlist
+
+`playlist.js` plays queued packages one after another, for the session only:
+nothing is written down and there is no file format. `initPlaylist(container)`
+renders the panel into an element the app supplies, and
+`addToPlaylist(directory)` queues a DCP or IMP directory as the last row.
+
+A row shows its position, its title, and buttons to move it up or down or take
+it out. Clicking a row plays the queue from there, and the row playing carries a
+marker. The title is the directory's name until the package plays, and mpv's
+composition title after that, which the metadata poll reports as `filename`.
+
+The queue rides on the scrubber's metadata poll rather than a timer of its own:
+`watchPreviewMetadata` hands it every poll, and it loads the next row through
+the same `previewDcp` the wizards call when the poll reports `eof`. mpv is
+paused on the last frame by then and that pause outlives the load, so the new
+row is started with one `preview_play_pause` once the poll shows it loaded,
+which is also what stops one end of file advancing the queue twice. A manual
+pause never advances it, because `eof-reached` is only true at the end of the
+file. On the last row, or with nothing queued, the end of a package is what it
+was before.
+
+`watchPreviewLoads` reports every load `previewFile` and `previewDcp` are asked
+for. The queue compares each one against the directory it just handed over, and
+anything else means the app loaded something of its own: the rows stay rendered,
+the marker goes, and no end of file advances anything until a row is clicked
+again.
 
 ## Consumers
 

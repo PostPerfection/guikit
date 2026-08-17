@@ -658,6 +658,51 @@ body {
   background: #000;
 }
 
+/* Playlist: the queued packages, which playlist.js renders into a container the
+   app supplies. */
+.playlist {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.playlist-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.playlist-row:hover {
+  background: var(--surface-hover);
+}
+
+.playlist-row.playing {
+  border-color: var(--accent);
+}
+
+.playlist-marker {
+  width: 10px;
+  color: var(--accent);
+}
+
+.playlist-order {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.playlist-title {
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 /* Transport / Scrubber */
 .timeline-transport {
   display: flex;
