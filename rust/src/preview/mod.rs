@@ -8,7 +8,7 @@ use serde::Deserialize;
 use tauri::Manager;
 
 mod overlays;
-use overlays::overlay_filter_chain;
+use overlays::{overlay_filter_chain, SourceSize};
 pub use overlays::{PreviewCrop, PreviewOverlays};
 
 /// mpv's video filter chain, which only the overlays use.
@@ -18,6 +18,14 @@ const DECODER_OPTIONS_PROPERTY: &str = "vd-lavc-o";
 /// The file mpv currently has loaded, which a decode scale change reloads.
 const PATH_PROPERTY: &str = "path";
 const PAUSE_PROPERTY: &str = "pause";
+/// The picture size the demuxer reports for the current video track, which is
+/// what the container declares rather than what came out of the decoder.
+const SOURCE_WIDTH_PROPERTY: &str = "current-tracks/video/demux-w";
+const SOURCE_HEIGHT_PROPERTY: &str = "current-tracks/video/demux-h";
+/// The size of the frame the decoder emitted, which the decode scale shrinks
+/// only where the decoder implements lowres.
+const DECODED_WIDTH_PROPERTY: &str = "video-params/w";
+const DECODED_HEIGHT_PROPERTY: &str = "video-params/h";
 /// How many tracks the loaded file has, all types counted together.
 const TRACK_COUNT_PROPERTY: &str = "track-list/count";
 /// The external subtitle files a reload has to load again, as a per-file option.
@@ -63,12 +71,13 @@ enum PreviewSurface {
 }
 
 /// The player and what the page has set on it that mpv itself does not keep for
-/// us: the decode scale the crop overlay sizes against, and the subtitle files a
-/// reload has to load again.
+/// us: the decode scale, the subtitle files a reload has to load again, and the
+/// size of the picture the crop overlay is measured against.
 pub struct PreviewPlayer {
     surface: PreviewSurface,
     decode_scale: Mutex<DecodeScale>,
     subtitle_tracks: Mutex<SubtitleTracks>,
+    source_size: Mutex<Option<SourceSize>>,
 }
 
 impl PreviewPlayer {
@@ -77,7 +86,21 @@ impl PreviewPlayer {
             surface,
             decode_scale: Mutex::new(DecodeScale::default()),
             subtitle_tracks: Mutex::new(SubtitleTracks::default()),
+            source_size: Mutex::new(None),
         }
+    }
+
+    /// The size the crop overlay measures against, read again every time so a
+    /// reloaded track is measured as itself. mpv reports no size at all for the
+    /// moment a reload takes, and the page sends the overlays inside it, so the
+    /// last size read stands until another one arrives.
+    fn source_size(&self, player: &MpvRenderPlayer) -> Option<SourceSize> {
+        let decode_scale = *self.decode_scale.lock().unwrap();
+        let mut remembered = self.source_size.lock().unwrap();
+        if let Some(size) = read_source_size(player, decode_scale) {
+            *remembered = Some(size);
+        }
+        *remembered
     }
 
     fn player(&self) -> Result<&MpvRenderPlayer, String> {
@@ -88,9 +111,11 @@ impl PreviewPlayer {
     }
 
     /// Loading or stopping takes mpv's external subtitle tracks with it, so the
-    /// track ids held here would name tracks that no longer exist.
-    fn forget_subtitle_tracks(&self) {
+    /// track ids held here would name tracks that no longer exist, and the size
+    /// held here would be another file's.
+    fn forget_loaded_file(&self) {
         *self.subtitle_tracks.lock().unwrap() = SubtitleTracks::default();
+        *self.source_size.lock().unwrap() = None;
     }
 }
 
@@ -140,7 +165,7 @@ pub fn preview_load(
     state: tauri::State<'_, PreviewPlayer>,
 ) -> Result<(), String> {
     let player = state.player()?;
-    state.forget_subtitle_tracks();
+    state.forget_loaded_file();
     player.load_file(&file_path)
 }
 
@@ -165,7 +190,7 @@ pub fn preview_seek_absolute(
 #[tauri::command]
 pub fn preview_stop(state: tauri::State<'_, PreviewPlayer>) -> Result<(), String> {
     let player = state.player()?;
-    state.forget_subtitle_tracks();
+    state.forget_loaded_file();
     player.stop()
 }
 
@@ -197,7 +222,7 @@ pub fn preview_load_dcp(
     state: tauri::State<'_, PreviewPlayer>,
 ) -> Result<(), String> {
     let player = state.player()?;
-    state.forget_subtitle_tracks();
+    state.forget_loaded_file();
     player.load_package_dir(&dir_path)
 }
 
@@ -207,11 +232,46 @@ pub fn preview_set_overlays(
     overlays: PreviewOverlays,
     state: tauri::State<'_, PreviewPlayer>,
 ) -> Result<(), String> {
-    let decode_scale = *state.decode_scale.lock().unwrap();
-    state.player()?.set_property(
+    let player = state.player()?;
+    let source_size = state.source_size(player);
+    player.set_property(
         VIDEO_FILTER_PROPERTY,
-        &overlay_filter_chain(&overlays, decode_scale),
+        &overlay_filter_chain(&overlays, source_size),
     )
+}
+
+fn read_source_size(player: &MpvRenderPlayer, decode_scale: DecodeScale) -> Option<SourceSize> {
+    resolve_source_size(
+        read_size(player, SOURCE_WIDTH_PROPERTY, SOURCE_HEIGHT_PROPERTY),
+        read_size(player, DECODED_WIDTH_PROPERTY, DECODED_HEIGHT_PROPERTY),
+        decode_scale,
+    )
+}
+
+/// The size the crop is measured against: what the container declares, which no
+/// decode scale changes, or the decoded frame where it declares nothing.
+fn resolve_source_size(
+    demuxed: Option<SourceSize>,
+    decoded: Option<SourceSize>,
+    decode_scale: DecodeScale,
+) -> Option<SourceSize> {
+    if demuxed.is_some() {
+        return demuxed;
+    }
+    // nothing declared for this source, so take the decoded frame as having
+    // been shrunk by the decode scale, which only holds for a decoder that
+    // implements lowres
+    decoded?.scaled_by(decode_scale.frame_divisor())
+}
+
+fn read_size(
+    player: &MpvRenderPlayer,
+    width_property: &str,
+    height_property: &str,
+) -> Option<SourceSize> {
+    let width = player.get_property_f64(width_property).ok()?;
+    let height = player.get_property_f64(height_property).ok()?;
+    SourceSize::new(width, height)
 }
 
 /// How much of the picture the decoder reconstructs. JPEG 2000 drops DWT levels
@@ -239,9 +299,8 @@ impl DecodeScale {
         format!("lowres={}", self.lowres_level())
     }
 
-    /// What the decoded frame is smaller than the source by, which the overlays
-    /// divide their pixel sizes down by.
-    pub(crate) fn frame_divisor(self) -> f64 {
+    /// What a decoder that implements lowres makes the frame smaller by.
+    fn frame_divisor(self) -> f64 {
         f64::from(1u32 << self.lowres_level())
     }
 }
@@ -487,6 +546,64 @@ mod tests {
         assert_eq!(DecodeScale::Full.frame_divisor(), 1.0);
         assert_eq!(DecodeScale::Half.frame_divisor(), 2.0);
         assert_eq!(DecodeScale::Quarter.frame_divisor(), 4.0);
+    }
+
+    /// The crop the job applies, in pixels off the edges of a 1920x1080 source.
+    const JOB_CROP: PreviewCrop = PreviewCrop {
+        left: 200,
+        right: 0,
+        top: 100,
+        bottom: 60,
+    };
+
+    const JOB_CROP_ON_HD: &str = "lavfi=[drawbox=x=0:y=0:w=iw*0.1042:h=ih:color=red@0.35:t=fill,\
+        drawbox=x=0:y=0:w=iw:h=ih*0.0926:color=red@0.35:t=fill,\
+        drawbox=x=0:y=ih*0.9444:w=iw:h=ih*0.0556:color=red@0.35:t=fill,\
+        drawbox=x=iw*0.1042:y=ih*0.0926:w=iw*0.8958:h=ih*0.8519:color=red@0.9:t=2]";
+
+    fn crop_chain(source_size: Option<SourceSize>) -> String {
+        overlay_filter_chain(
+            &PreviewOverlays {
+                crop: Some(JOB_CROP),
+                crop_visible: true,
+                ..Default::default()
+            },
+            source_size,
+        )
+    }
+
+    #[test]
+    fn the_crop_draws_the_same_bands_at_every_decode_scale() {
+        let hd = SourceSize::new(1920.0, 1080.0);
+        // a decoder that implements lowres hands back a smaller frame at each
+        // step, and one that does not hands back the same frame every time
+        for (decode_scale, decoded_width, decoded_height) in [
+            (DecodeScale::Full, 1920.0, 1080.0),
+            (DecodeScale::Half, 960.0, 540.0),
+            (DecodeScale::Half, 1920.0, 1080.0),
+            (DecodeScale::Quarter, 480.0, 270.0),
+            (DecodeScale::Quarter, 1920.0, 1080.0),
+        ] {
+            let source_size = resolve_source_size(
+                hd,
+                SourceSize::new(decoded_width, decoded_height),
+                decode_scale,
+            );
+            assert_eq!(crop_chain(source_size), JOB_CROP_ON_HD);
+        }
+    }
+
+    #[test]
+    fn a_source_that_declares_no_size_falls_back_to_the_decoded_frame() {
+        let source_size =
+            resolve_source_size(None, SourceSize::new(960.0, 540.0), DecodeScale::Half);
+        assert_eq!(crop_chain(source_size), JOB_CROP_ON_HD);
+    }
+
+    #[test]
+    fn a_crop_is_left_out_while_nothing_reports_a_size() {
+        assert!(resolve_source_size(None, None, DecodeScale::Full).is_none());
+        assert_eq!(crop_chain(None), "");
     }
 
     #[test]

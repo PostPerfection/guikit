@@ -122,8 +122,8 @@ function initQcControls() {
       console.error('[preview] Failed to set decode scale:', e);
       return;
     }
-    // the crop overlay is drawn in decoded pixels, so its chain is built again
-    // for the scale the decoder now runs at
+    // a source that declares no picture size has its crop measured from the
+    // decoded frame, so the chain is built again for the scale now in force
     applyOverlays();
   });
 }

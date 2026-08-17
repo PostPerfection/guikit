@@ -57,19 +57,24 @@ any frame size and any decode resolution. The aspect mask draws four boxes, two
 per orientation, and switches off the pair that does not apply with `enable`,
 because a drawbox sized zero covers the whole frame instead of nothing.
 
-The crop is the one overlay measured in pixels rather than in fractions of the
-frame, so it is the one the decode scale reaches: the filters run on the decoded
-frame, and the crop divides its pixel values by 2 per lowres level. The player
-keeps the scale the page last asked for, and the page sends the overlays again
-after a scale change so the chain is rebuilt for the new frame size.
+The crop is the one overlay the page gives in pixels, off each edge of the
+source picture, so it is drawn as a fraction of the frame the source size turns
+those pixels into. That size is `current-tracks/video/demux-w` and `demux-h`,
+what the container declares, rather than the decoded frame: libavcodec's
+`lowres` shrinks only the decoders that implement it, so at Half a JPEG 2000
+frame comes back half size and an h264 frame comes back whole. A source that
+reports no demuxer size falls back to `video-params/w` and `h` multiplied by the
+decode scale, which is that same assumption. The player keeps the last size it
+read, because a reload leaves a moment where mpv reports none and the page sends
+the overlays again inside it.
 
 `preview_set_decode_scale` takes `full`, `half` or `quarter` and sets
 libavcodec's `lowres` to 0, 1 or 2 through mpv's `vd-lavc-o`. The decoder reads
 lowres when it opens, so the command reloads the current file at the position
 and pause state it had. JPEG 2000 reaches half and quarter by discarding DWT
 levels, so a reduced scale costs a fraction of a full decode. Other codecs
-honour lowres only where their decoder implements it, h264 among them, and the
-control is offered for them all the same.
+honour lowres only where their decoder implements it, which h264, HEVC and
+ProRes do not, and the control is offered for them all the same.
 
 That reload takes the external subtitle tracks with it, and a `sub-add` sent
 straight after a `loadfile` is refused because the file is not loaded yet. So
