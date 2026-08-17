@@ -347,8 +347,10 @@ function updateHud(meta) {
   if (!qcControls) return;
   const parts = [];
   if (meta.position != null && meta.container_fps > 0) {
-    const frame = Math.floor(meta.position * meta.container_fps) + 1;
+    const counted = Math.floor(meta.position * meta.container_fps) + 1;
     const total = meta.duration > 0 ? Math.round(meta.duration * meta.container_fps) : null;
+    // at the end mpv reports the whole duration, which counts as the frame after the last one
+    const frame = total ? Math.min(counted, total) : counted;
     parts.push(total ? `frame ${frame}/${total}` : `frame ${frame}`);
   }
   if (meta.decoder_fps != null) parts.push(`${meta.decoder_fps.toFixed(2)} fps`);
