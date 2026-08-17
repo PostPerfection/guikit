@@ -48,6 +48,12 @@ const HUD_COUNTER_PROPERTIES: [(&str, &str); 5] = [
     ("container_fps", "container-fps"),
 ];
 
+/// The metadata field the page's playlist advances on, and the mpv property
+/// behind it. mpv only holds this true, paused on the last frame, because
+/// postkit's player starts mpv with `keep-open` on.
+const EOF_FIELD: &str = "eof";
+const EOF_PROPERTY: &str = "eof-reached";
+
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
@@ -204,16 +210,23 @@ pub fn preview_get_duration(state: tauri::State<'_, PreviewPlayer>) -> Result<f6
     state.player()?.get_duration()
 }
 
-/// Playback position and the HUD counters as one JSON object, polled by the
-/// page every quarter second.
+/// Playback position, the HUD counters and the end-of-file flag as one JSON
+/// object, polled by the page every quarter second.
 #[tauri::command]
 pub fn preview_get_metadata(state: tauri::State<'_, PreviewPlayer>) -> Result<String, String> {
-    let player = state.player()?;
-    let counters: Vec<(&str, Option<f64>)> = HUD_COUNTER_PROPERTIES
+    player_metadata(state.player()?)
+}
+
+fn player_metadata(player: &MpvRenderPlayer) -> Result<String, String> {
+    let mut fields: Vec<(&str, String)> = HUD_COUNTER_PROPERTIES
         .iter()
-        .map(|(field, property)| (*field, player.get_property_f64(property).ok()))
+        .map(|(field, property)| (*field, json_number(player.get_property_f64(property).ok())))
         .collect();
-    with_hud_counters(&player.get_metadata()?, &counters)
+    fields.push((
+        EOF_FIELD,
+        json_bool(player.get_property_bool(EOF_PROPERTY).ok()),
+    ));
+    with_extra_fields(&player.get_metadata()?, &fields)
 }
 
 #[tauri::command]
@@ -500,20 +513,17 @@ fn read_track_number(player: &MpvRenderPlayer, property: &str) -> Result<i64, St
         .map_err(|_| format!("property {property} is not a number: {value}"))
 }
 
-/// Append the HUD counters to the metadata postkit produced, which owns the
-/// position and pause fields the transport bar reads.
-fn with_hud_counters(
-    metadata_json: &str,
-    counters: &[(&str, Option<f64>)],
-) -> Result<String, String> {
+/// Append fields, already rendered as JSON values, to the metadata postkit
+/// produced, which owns the position and pause fields the transport bar reads.
+fn with_extra_fields(metadata_json: &str, fields: &[(&str, String)]) -> Result<String, String> {
     let base = metadata_json
         .strip_suffix('}')
         .ok_or_else(|| format!("metadata is not a JSON object: {metadata_json}"))?;
-    let counter_fields: String = counters
+    let appended: String = fields
         .iter()
-        .map(|(name, value)| format!(", \"{name}\": {}", json_number(*value)))
+        .map(|(name, value)| format!(", \"{name}\": {value}"))
         .collect();
-    Ok(format!("{base}{counter_fields}}}"))
+    Ok(format!("{base}{appended}}}"))
 }
 
 fn json_number(value: Option<f64>) -> String {
@@ -522,6 +532,16 @@ fn json_number(value: Option<f64>) -> String {
         _ => "null".to_string(),
     }
 }
+
+fn json_bool(value: Option<bool>) -> String {
+    match value {
+        Some(flag) => flag.to_string(),
+        None => "null".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod end_of_file_tests;
 
 #[cfg(test)]
 mod tests {
@@ -652,26 +672,30 @@ mod tests {
 
     #[test]
     fn counters_are_null_until_mpv_reports_them() {
-        let counters: Vec<(&str, Option<f64>)> = HUD_COUNTER_PROPERTIES
+        let fields: Vec<(&str, String)> = HUD_COUNTER_PROPERTIES
             .iter()
-            .map(|(field, _)| (*field, None))
+            .map(|(field, _)| (*field, json_number(None)))
+            .chain(std::iter::once((EOF_FIELD, json_bool(None))))
             .collect();
-        let metadata = with_hud_counters(
+        let metadata = with_extra_fields(
             r#"{"position": null, "duration": null, "paused": null, "filename": null}"#,
-            &counters,
+            &fields,
         )
         .unwrap();
         assert_eq!(
             metadata,
-            r#"{"position": null, "duration": null, "paused": null, "filename": null, "dropped_frames": null, "delayed_frames": null, "cache_seconds": null, "decoder_fps": null, "container_fps": null}"#
+            r#"{"position": null, "duration": null, "paused": null, "filename": null, "dropped_frames": null, "delayed_frames": null, "cache_seconds": null, "decoder_fps": null, "container_fps": null, "eof": null}"#
         );
     }
 
     #[test]
     fn counters_carry_the_values_mpv_reports() {
-        let metadata = with_hud_counters(
+        let metadata = with_extra_fields(
             r#"{"position": 1.5}"#,
-            &[("dropped_frames", Some(3.0)), ("cache_seconds", Some(1.25))],
+            &[
+                ("dropped_frames", json_number(Some(3.0))),
+                ("cache_seconds", json_number(Some(1.25))),
+            ],
         )
         .unwrap();
         assert_eq!(
@@ -681,7 +705,18 @@ mod tests {
     }
 
     #[test]
+    fn the_end_of_file_flag_is_a_json_boolean() {
+        let at_the_end =
+            with_extra_fields(r#"{"position": 2}"#, &[(EOF_FIELD, json_bool(Some(true)))]).unwrap();
+        assert_eq!(at_the_end, r#"{"position": 2, "eof": true}"#);
+        let playing =
+            with_extra_fields(r#"{"position": 1}"#, &[(EOF_FIELD, json_bool(Some(false)))])
+                .unwrap();
+        assert_eq!(playing, r#"{"position": 1, "eof": false}"#);
+    }
+
+    #[test]
     fn metadata_that_is_not_an_object_fails() {
-        assert!(with_hud_counters("not json", &[]).is_err());
+        assert!(with_extra_fields("not json", &[]).is_err());
     }
 }
