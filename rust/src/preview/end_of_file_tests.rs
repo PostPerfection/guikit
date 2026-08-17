@@ -32,7 +32,7 @@ const RESUMED_POSITION_SECONDS: f64 = 0.1;
 const PLAYBACK_TIMEOUT: Duration = Duration::from_secs(30);
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
-fn have_ffmpeg() -> bool {
+pub(super) fn have_ffmpeg() -> bool {
     std::process::Command::new("ffmpeg")
         .arg("-version")
         .output()

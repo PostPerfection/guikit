@@ -1,5 +1,13 @@
 //! Video preview drawn inside the app window, plus the tauri commands the page
 //! drives it with. Each platform supplies its own host behind `attach`.
+//!
+//! Every command that talks to the player is `(async)`, which is what keeps its
+//! body off the app's main thread: a plain tauri command runs inline on the
+//! thread that dispatches the webview's IPC, and that is the thread the surface
+//! renders on. libmpv forbids a call that waits on its core from the thread
+//! driving the render context, and breaking that rule freezes both threads for
+//! good, because the core hands the decoder's buffer allocation to the render
+//! thread while the render thread waits for the core.
 
 use std::sync::Mutex;
 
@@ -165,7 +173,7 @@ pub fn preview_is_embedded(state: tauri::State<'_, PreviewPlayer>) -> bool {
     matches!(&state.surface, PreviewSurface::Embedded(_))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn preview_load(
     file_path: String,
     state: tauri::State<'_, PreviewPlayer>,
@@ -175,17 +183,17 @@ pub fn preview_load(
     player.load_file(&file_path)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn preview_play_pause(state: tauri::State<'_, PreviewPlayer>) -> Result<(), String> {
     state.player()?.play_pause()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn preview_seek(seconds: f64, state: tauri::State<'_, PreviewPlayer>) -> Result<(), String> {
     state.player()?.seek(seconds)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn preview_seek_absolute(
     seconds: f64,
     state: tauri::State<'_, PreviewPlayer>,
@@ -193,26 +201,26 @@ pub fn preview_seek_absolute(
     state.player()?.seek_absolute(seconds)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn preview_stop(state: tauri::State<'_, PreviewPlayer>) -> Result<(), String> {
     let player = state.player()?;
     state.forget_loaded_file();
     player.stop()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn preview_get_position(state: tauri::State<'_, PreviewPlayer>) -> Result<f64, String> {
     state.player()?.get_position()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn preview_get_duration(state: tauri::State<'_, PreviewPlayer>) -> Result<f64, String> {
     state.player()?.get_duration()
 }
 
 /// Playback position, the HUD counters and the end-of-file flag as one JSON
 /// object, polled by the page every quarter second.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn preview_get_metadata(state: tauri::State<'_, PreviewPlayer>) -> Result<String, String> {
     player_metadata(state.player()?)
 }
@@ -229,7 +237,7 @@ fn player_metadata(player: &MpvRenderPlayer) -> Result<String, String> {
     with_extra_fields(&player.get_metadata()?, &fields)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn preview_load_dcp(
     dir_path: String,
     state: tauri::State<'_, PreviewPlayer>,
@@ -240,7 +248,7 @@ pub fn preview_load_dcp(
 }
 
 /// Draw the requested QC overlays over playback, or none of them.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn preview_set_overlays(
     overlays: PreviewOverlays,
     state: tauri::State<'_, PreviewPlayer>,
@@ -318,7 +326,7 @@ impl DecodeScale {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn preview_set_decode_scale(
     scale: DecodeScale,
     state: tauri::State<'_, PreviewPlayer>,
@@ -434,7 +442,7 @@ struct SubtitleTrackState {
 /// by passing no path. Only the formats libass reads natively work: SRT, ASS or
 /// SSA and WebVTT, so a wizard converts its subtitle XML to SRT first. A file
 /// has to be playing, since the track is added to it.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn preview_set_subtitle_file(
     track: SubtitleTrackSlot,
     file_path: Option<String>,
@@ -453,7 +461,7 @@ pub fn preview_set_subtitle_file(
 }
 
 /// Render or hide one of the subtitle slots, which leaves the track loaded.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn preview_set_subtitle_visibility(
     track: SubtitleTrackSlot,
     visible: bool,
@@ -542,6 +550,9 @@ fn json_bool(value: Option<bool>) -> String {
 
 #[cfg(test)]
 mod end_of_file_tests;
+
+#[cfg(all(test, target_os = "linux"))]
+mod render_thread_tests;
 
 #[cfg(test)]
 mod tests {
@@ -718,5 +729,29 @@ mod tests {
     #[test]
     fn metadata_that_is_not_an_object_fails() {
         assert!(with_extra_fields("not json", &[]).is_err());
+    }
+
+    /// The commands only expand into their real bodies where a handler is built,
+    /// so the app is otherwise the first place a bad signature shows up.
+    #[test]
+    fn every_preview_command_builds_into_a_handler() {
+        let _handler: Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync> =
+            Box::new(tauri::generate_handler![
+                preview_set_surface,
+                preview_is_embedded,
+                preview_load,
+                preview_play_pause,
+                preview_seek,
+                preview_seek_absolute,
+                preview_stop,
+                preview_get_position,
+                preview_get_duration,
+                preview_get_metadata,
+                preview_load_dcp,
+                preview_set_overlays,
+                preview_set_decode_scale,
+                preview_set_subtitle_file,
+                preview_set_subtitle_visibility,
+            ]);
     }
 }
