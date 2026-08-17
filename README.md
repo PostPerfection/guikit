@@ -97,9 +97,19 @@ the player with `keep-open` on; guikit sets nothing for it.
 ## Playlist
 
 `playlist.js` plays queued packages one after another, for the session only:
-nothing is written down and there is no file format. `initPlaylist(container)`
-renders the panel into an element the app supplies, and
-`addToPlaylist(directory)` queues a DCP or IMP directory as the last row.
+nothing is written down and there is no file format.
+`initPlaylist(container, options)` renders the panel into an element the app
+supplies, and `addToPlaylist(directory)` queues a DCP or IMP directory as the
+last row.
+
+`options.loadPackage` is the app's own loader for a package directory, async or
+not, and rows play through it instead of `previewDcp` when it is given. A wizard
+has one already: it attaches the packaged subtitle and caption tracks and clears
+the crop overlay, none of which a bare `previewDcp` knows about, so a queued row
+would otherwise play with the crop of whatever came before it drawn over it and
+no timed text. The loader has to pass the directory it is given through
+unchanged, because that string is what tells the queue's own loads apart from the
+app's. It may leave the package playing or paused, either way round.
 
 A row shows its position, its title, and buttons to move it up or down or take
 it out. Clicking a row plays the queue from there, and the row playing carries a
@@ -107,11 +117,12 @@ marker. The title is the directory's name until the package plays, and mpv's
 composition title after that, which the metadata poll reports as `filename`.
 
 The queue rides on the scrubber's metadata poll rather than a timer of its own:
-`watchPreviewMetadata` hands it every poll, and it loads the next row through
-the same `previewDcp` the wizards call when the poll reports `eof`. mpv is
-paused on the last frame by then and that pause outlives the load, so the new
-row is started with one `preview_play_pause` once the poll shows it loaded,
-which is also what stops one end of file advancing the queue twice. A manual
+`watchPreviewMetadata` hands it every poll, and it loads the next row when the
+poll reports `eof`. mpv is paused on the last frame by then and that pause
+outlives the load, so the new row is started with one `preview_play_pause` once
+the poll shows it loaded, unless it is playing already, which a loader of the
+app's own may have seen to. Waiting for the load is also what stops one end of
+file advancing the queue twice. A manual
 pause never advances it, because `eof-reached` is only true at the end of the
 file. On the last row, or with nothing queued, the end of a package is what it
 was before.

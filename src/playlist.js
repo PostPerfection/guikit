@@ -13,6 +13,9 @@ import {
 const playlist = [];
 
 let panel = null;
+// What a row is played with, which an app replaces to bring its own package
+// loading along.
+let loadPackage = previewDcp;
 let playingIndex = -1;
 // Set from the moment a row is handed to the player until the player reports it
 // loaded, which is both the guard against advancing twice over one end of file
@@ -23,9 +26,13 @@ let startingRow = false;
 let expectedDirectory = null;
 
 /// Render the playlist panel into a container element of the app's choosing and
-/// take over end-of-file handling from there.
-export function initPlaylist(container) {
+/// take over end-of-file handling from there. `options.loadPackage` plays a row
+/// in place of `previewDcp`, for an app whose own loading puts the packaged
+/// subtitle tracks and the crop overlay in order with it. It is handed the
+/// directory the row holds, and may leave the package playing or paused.
+export function initPlaylist(container, options = {}) {
   panel = container;
+  loadPackage = options.loadPackage ?? previewDcp;
   panel.classList.add('playlist');
   panel.addEventListener('click', handlePanelClick);
   watchPreviewMetadata(handleMetadata);
@@ -87,12 +94,18 @@ function moveRow(index, target) {
   renderPlaylist();
 }
 
-function playRow(index) {
+async function playRow(index) {
   playingIndex = index;
   startingRow = true;
+  // the loader is handed the row's own string, and the load hook reports back
+  // whatever it passed on, so the two only match while it goes through unchanged
   expectedDirectory = playlist[index].directory;
-  previewDcp(expectedDirectory);
   renderPlaylist();
+  try {
+    await loadPackage(expectedDirectory);
+  } catch (e) {
+    console.error('[playlist] Failed to load package:', e);
+  }
 }
 
 // The app previewing something of its own means the user has gone elsewhere, so
