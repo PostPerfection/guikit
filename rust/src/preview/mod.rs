@@ -609,6 +609,9 @@ fn json_bool(value: Option<bool>) -> String {
 #[cfg(test)]
 mod end_of_file_tests;
 
+#[cfg(test)]
+mod overlay_placement_tests;
+
 #[cfg(all(test, target_os = "linux"))]
 mod render_thread_tests;
 
