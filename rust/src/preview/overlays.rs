@@ -58,7 +58,7 @@ const SMALLEST_MASK_BAND_PIXELS: f64 = 1.0;
 
 /// The picture size the container declares, which every drawing is measured
 /// against. Built only by reading it off the player, so it is never zero.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy)]
 pub struct SourceSize {
     width: f64,
     height: f64,
@@ -80,7 +80,7 @@ impl SourceSize {
 
 /// Where mpv put the picture on the surface it last rendered: the size of that
 /// surface and the bars left around the picture, mpv's `osd-dimensions`.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy)]
 pub struct OsdRectangle {
     pub width: f64,
     pub height: f64,
@@ -91,7 +91,7 @@ pub struct OsdRectangle {
 }
 
 /// What the page asked to see. All off is the default, and draws nothing.
-#[derive(Clone, Default, Deserialize)]
+#[derive(Default, Deserialize)]
 pub struct PreviewOverlays {
     pub safe_area_percent: Option<u8>,
     pub aspect_mask: Option<f64>,
