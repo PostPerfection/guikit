@@ -50,24 +50,37 @@ WebVTT, so the wizards convert their subtitle XML to SRT first. The clip has to
 be loaded before the track goes on it, and loading another clip drops both
 tracks.
 
-The overlays are one mpv filter chain. `overlay_filter_chain` builds it from a
-`PreviewOverlays` struct and `preview_set_overlays` sets it on mpv's `vf`
-property, so each change replaces the whole chain and an empty chain clears it.
-Sizes are ffmpeg expressions over `iw` and `ih`, which keeps one chain right for
-any frame size and any decode resolution. The aspect mask draws four boxes, two
-per orientation, and switches off the pair that does not apply with `enable`,
-because a drawbox sized zero covers the whole frame instead of nothing.
+The overlays are one ASS overlay on mpv's OSD. `overlay_drawing` builds it from
+a `PreviewOverlays` struct as one dialogue event per overlay, each a filled path
+in the source picture's own pixels, and `preview_set_overlays` installs it
+through postkit's `set_osd_overlay`. Nothing goes through a video filter any
+more: libass composites the drawings, so no frame passes through the CPU for
+them and switching one on is not a filter reconfiguration, which is what used to
+clear mpv's `eof-reached` under the playlist and cost frame rate while playing.
 
-The crop is the one overlay the page gives in pixels, off each edge of the
-source picture, so it is drawn as a fraction of the frame the source size turns
-those pixels into. That size is `current-tracks/video/demux-w` and `demux-h`,
-what the container declares, rather than the decoded frame: libavcodec's
-`lowres` shrinks only the decoders that implement it, so at Half a JPEG 2000
-frame comes back half size and an h264 frame comes back whole. A source that
-reports no demuxer size falls back to `video-params/w` and `h` multiplied by the
-decode scale, which is that same assumption. The player keeps the last size it
-read, because a reload leaves a moment where mpv reports none and the page sends
-the overlays again inside it.
+mpv stretches an overlay's PlayRes canvas over the whole rendered surface, black
+bars included. So the canvas is the surface's shape written in source pixels and
+the drawing is shifted onto where the picture sits, both worked out from
+`osd-dimensions`, which is what puts a 95% safe area on 95% of the picture
+rather than 95% of the panel. The preview surface is a full-width box of a fixed
+height, so that shift is the normal case, not an edge one.
+
+The picture size everything is measured against is
+`current-tracks/video/demux-w` and `demux-h`, what the container declares,
+rather than the decoded frame: libavcodec's `lowres` shrinks only the decoders
+that implement it, so at Half a JPEG 2000 frame comes back half size and an h264
+frame comes back whole. A source that reports no demuxer size falls back to
+`video-params/w` and `h` multiplied by the decode scale, which is that same
+assumption. The player keeps the last size it read, because a reload leaves a
+moment where mpv reports none and the page sends the overlays again inside it.
+The crop is the one overlay the page gives in pixels, off each edge of the source
+picture, and it is drawn in those same pixels.
+
+`preview_get_metadata` installs the overlay again whenever the picture or the
+surface has moved under it, since nothing tells the page when either happens: a
+load, a resized window and a decode scale change all move it. The drawing
+already on the player is remembered, so a poll that finds nothing moved sends
+nothing.
 
 `preview_set_decode_scale` takes `full`, `half` or `quarter` and sets
 libavcodec's `lowres` to 0, 1 or 2 through mpv's `vd-lavc-o`. The decoder reads

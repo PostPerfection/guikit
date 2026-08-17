@@ -10,7 +10,9 @@ use std::time::{Duration, Instant};
 use postkit::mpv_render::MpvRenderPlayer;
 use postkit::packaging::{ns, AssetMap, AssetMapAsset, DcpCpl, DcpCplReel};
 
-use super::player_metadata;
+use super::{
+    apply_overlays, player_metadata, PreviewCrop, PreviewOverlays, PreviewPlayer, PreviewSurface,
+};
 
 /// Picture file name, asset uuid and clip length in seconds, per reel.
 const REELS: [(&str, &str, u32); 2] = [
@@ -181,6 +183,85 @@ fn a_package_played_to_its_end_reports_eof_in_the_metadata() {
     assert!(
         (position - duration).abs() < POSITION_TOLERANCE_SECONDS,
         "stopped at {position}s of a {duration}s package"
+    );
+}
+
+/// Every overlay at once, which is the most a page can ask to have drawn.
+fn every_overlay() -> PreviewOverlays {
+    PreviewOverlays {
+        safe_area_percent: Some(95),
+        aspect_mask: Some(2.39),
+        centre_cross: true,
+        thirds_grid: true,
+        crop: Some(PreviewCrop {
+            left: 100,
+            right: 100,
+            top: 20,
+            bottom: 20,
+        }),
+        crop_visible: true,
+    }
+}
+
+/// The state the commands keep, with no surface behind it: the overlays are put
+/// on the player handed to `apply_overlays`, which is the player the test drives.
+fn overlay_state(overlays: PreviewOverlays) -> PreviewPlayer {
+    let state = PreviewPlayer::new(PreviewSurface::Unavailable(
+        "no surface in a test".to_string(),
+    ));
+    *state.overlays.lock().unwrap() = overlays;
+    state
+}
+
+/// Overlays going on while a package plays and coming off at the end of it, which
+/// is where the page's playlist is deciding whether to advance. A `vf` change here
+/// cleared mpv's `eof-reached` for good, which is why the overlays are drawn on
+/// the OSD instead; nothing about the drawing may reach the flag or stall
+/// playback. The rule about the render thread is held in `render_thread_tests`.
+#[test]
+fn overlays_drawn_over_a_package_leave_the_end_of_file_flag_alone() {
+    if !have_ffmpeg() {
+        eprintln!("skipping: ffmpeg not available");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    write_package(dir.path());
+    let player = loaded_player(dir.path());
+    let state = overlay_state(every_overlay());
+
+    // playing, so a frame has been rendered and mpv knows where the picture is
+    pump_until(&player, |_| player.get_position().unwrap_or(0.0) > 0.0)
+        .unwrap_or_else(|last| panic!("the package never started playing, last read {last}"));
+    apply_overlays(&player, &state).unwrap();
+    assert!(
+        state.drawn_overlay.lock().unwrap().is_some(),
+        "no overlay was drawn over the playing package"
+    );
+
+    let metadata = play_to_the_end(&player);
+    assert!(
+        metadata.contains(AT_THE_END),
+        "the package did not report eof with the overlays on: {metadata}"
+    );
+
+    // the page sends the overlays again on every poll, which must not disturb
+    // anything either
+    apply_overlays(&player, &state).unwrap();
+    assert!(
+        player_metadata(&player).unwrap().contains(AT_THE_END),
+        "drawing the overlays again at the end cleared the flag"
+    );
+
+    *state.overlays.lock().unwrap() = PreviewOverlays::default();
+    apply_overlays(&player, &state).unwrap();
+    assert!(
+        state.drawn_overlay.lock().unwrap().is_none(),
+        "the overlay stayed on the player after every overlay went off"
+    );
+    let metadata = player_metadata(&player).unwrap();
+    assert!(
+        metadata.contains(AT_THE_END),
+        "clearing the overlays at the end cleared the flag: {metadata}"
     );
 }
 

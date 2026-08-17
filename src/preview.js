@@ -138,7 +138,7 @@ function initQcControls() {
       return;
     }
     // a source that declares no picture size has its crop measured from the
-    // decoded frame, so the chain is built again for the scale now in force
+    // decoded frame, so the drawing is measured again for the scale now in force
     applyOverlays();
   });
 }

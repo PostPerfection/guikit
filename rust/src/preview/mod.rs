@@ -11,16 +11,25 @@
 
 use std::sync::Mutex;
 
-use postkit::mpv_render::MpvRenderPlayer;
+use postkit::mpv_render::{MpvRenderPlayer, OsdAssOverlay};
 use serde::Deserialize;
 use tauri::Manager;
 
 mod overlays;
-use overlays::{overlay_filter_chain, SourceSize};
+use overlays::{overlay_drawing, OsdRectangle, OverlayDrawing, SourceSize};
 pub use overlays::{PreviewCrop, PreviewOverlays};
 
-/// mpv's video filter chain, which only the overlays use.
-const VIDEO_FILTER_PROPERTY: &str = "vf";
+/// The OSD overlay the QC drawings occupy. Ids belong to the libmpv client, so
+/// this one is the app's alone.
+const QC_OVERLAY_ID: i64 = 1;
+/// Where mpv drew the picture on the surface it last rendered: the size of that
+/// surface, and the bars it left around the picture.
+const OSD_WIDTH_PROPERTY: &str = "osd-dimensions/w";
+const OSD_HEIGHT_PROPERTY: &str = "osd-dimensions/h";
+const OSD_MARGIN_LEFT_PROPERTY: &str = "osd-dimensions/ml";
+const OSD_MARGIN_TOP_PROPERTY: &str = "osd-dimensions/mt";
+const OSD_MARGIN_RIGHT_PROPERTY: &str = "osd-dimensions/mr";
+const OSD_MARGIN_BOTTOM_PROPERTY: &str = "osd-dimensions/mb";
 /// Options handed to the libavcodec decoder when it opens.
 const DECODER_OPTIONS_PROPERTY: &str = "vd-lavc-o";
 /// The file mpv currently has loaded, which a decode scale change reloads.
@@ -85,13 +94,16 @@ enum PreviewSurface {
 }
 
 /// The player and what the page has set on it that mpv itself does not keep for
-/// us: the decode scale, the subtitle files a reload has to load again, and the
-/// size of the picture the crop overlay is measured against.
+/// us: the decode scale, the subtitle files a reload has to load again, the size
+/// of the picture the overlays are measured against, the overlays the page asked
+/// for and the drawing they are on the player as.
 pub struct PreviewPlayer {
     surface: PreviewSurface,
     decode_scale: Mutex<DecodeScale>,
     subtitle_tracks: Mutex<SubtitleTracks>,
     source_size: Mutex<Option<SourceSize>>,
+    overlays: Mutex<PreviewOverlays>,
+    drawn_overlay: Mutex<Option<OverlayDrawing>>,
 }
 
 impl PreviewPlayer {
@@ -101,13 +113,15 @@ impl PreviewPlayer {
             decode_scale: Mutex::new(DecodeScale::default()),
             subtitle_tracks: Mutex::new(SubtitleTracks::default()),
             source_size: Mutex::new(None),
+            overlays: Mutex::new(PreviewOverlays::default()),
+            drawn_overlay: Mutex::new(None),
         }
     }
 
-    /// The size the crop overlay measures against, read again every time so a
-    /// reloaded track is measured as itself. mpv reports no size at all for the
-    /// moment a reload takes, and the page sends the overlays inside it, so the
-    /// last size read stands until another one arrives.
+    /// The size the overlays measure against, read again every time so a reloaded
+    /// track is measured as itself. mpv reports no size at all for the moment a
+    /// reload takes, and the page sends the overlays inside it, so the last size
+    /// read stands until another one arrives.
     fn source_size(&self, player: &MpvRenderPlayer) -> Option<SourceSize> {
         let decode_scale = *self.decode_scale.lock().unwrap();
         let mut remembered = self.source_size.lock().unwrap();
@@ -220,9 +234,14 @@ pub fn preview_get_duration(state: tauri::State<'_, PreviewPlayer>) -> Result<f6
 
 /// Playback position, the HUD counters and the end-of-file flag as one JSON
 /// object, polled by the page every quarter second.
+///
+/// The poll is also where the overlays follow the picture: nothing tells the page
+/// when a load or a resized surface has moved it under them.
 #[tauri::command(async)]
 pub fn preview_get_metadata(state: tauri::State<'_, PreviewPlayer>) -> Result<String, String> {
-    player_metadata(state.player()?)
+    let player = state.player()?;
+    apply_overlays(player, &state)?;
+    player_metadata(player)
 }
 
 fn player_metadata(player: &MpvRenderPlayer) -> Result<String, String> {
@@ -254,11 +273,50 @@ pub fn preview_set_overlays(
     state: tauri::State<'_, PreviewPlayer>,
 ) -> Result<(), String> {
     let player = state.player()?;
-    let source_size = state.source_size(player);
-    player.set_property(
-        VIDEO_FILTER_PROPERTY,
-        &overlay_filter_chain(&overlays, source_size),
-    )
+    *state.overlays.lock().unwrap() = overlays;
+    apply_overlays(player, &state)
+}
+
+/// Put the overlays the page asked for on the player, measured against the
+/// picture and where it sits on the surface as they are now. The drawing already
+/// installed is remembered, so a poll that finds nothing moved sends nothing.
+fn apply_overlays(player: &MpvRenderPlayer, state: &PreviewPlayer) -> Result<(), String> {
+    let overlays = state.overlays.lock().unwrap();
+    let mut drawn = state.drawn_overlay.lock().unwrap();
+    if !overlays.any() && drawn.is_none() {
+        return Ok(());
+    }
+    let wanted = overlay_drawing(
+        &overlays,
+        state.source_size(player),
+        read_osd_rectangle(player),
+    );
+    if *drawn == wanted {
+        return Ok(());
+    }
+    player.set_osd_overlay(
+        QC_OVERLAY_ID,
+        wanted.as_ref().map(|drawing| OsdAssOverlay {
+            events: &drawing.events,
+            play_res_x: drawing.play_res_x,
+            play_res_y: drawing.play_res_y,
+        }),
+    )?;
+    *drawn = wanted;
+    Ok(())
+}
+
+/// Where mpv put the picture on the surface, which it only knows once it has
+/// rendered a frame there.
+fn read_osd_rectangle(player: &MpvRenderPlayer) -> Option<OsdRectangle> {
+    Some(OsdRectangle {
+        width: player.get_property_f64(OSD_WIDTH_PROPERTY).ok()?,
+        height: player.get_property_f64(OSD_HEIGHT_PROPERTY).ok()?,
+        margin_left: player.get_property_f64(OSD_MARGIN_LEFT_PROPERTY).ok()?,
+        margin_top: player.get_property_f64(OSD_MARGIN_TOP_PROPERTY).ok()?,
+        margin_right: player.get_property_f64(OSD_MARGIN_RIGHT_PROPERTY).ok()?,
+        margin_bottom: player.get_property_f64(OSD_MARGIN_BOTTOM_PROPERTY).ok()?,
+    })
 }
 
 fn read_source_size(player: &MpvRenderPlayer, decode_scale: DecodeScale) -> Option<SourceSize> {
@@ -587,25 +645,31 @@ mod tests {
         bottom: 60,
     };
 
-    const JOB_CROP_ON_HD: &str = "lavfi=[drawbox=x=0:y=0:w=iw*0.1042:h=ih:color=red@0.35:t=fill,\
-        drawbox=x=0:y=0:w=iw:h=ih*0.0926:color=red@0.35:t=fill,\
-        drawbox=x=0:y=ih*0.9444:w=iw:h=ih*0.0556:color=red@0.35:t=fill,\
-        drawbox=x=iw*0.1042:y=ih*0.0926:w=iw*0.8958:h=ih*0.8519:color=red@0.9:t=2]";
+    /// The band that crop leaves on the left of an HD picture, which is the one
+    /// part of the drawing a wrongly measured source size would move.
+    const JOB_CROP_LEFT_BAND_ON_HD: &str = "m 0 0 l 200 0 l 200 1080 l 0 1080";
 
-    fn crop_chain(source_size: Option<SourceSize>) -> String {
-        overlay_filter_chain(
+    fn crop_drawing(source_size: Option<SourceSize>) -> Option<OverlayDrawing> {
+        overlay_drawing(
             &PreviewOverlays {
                 crop: Some(JOB_CROP),
                 crop_visible: true,
                 ..Default::default()
             },
             source_size,
+            None,
         )
     }
 
     #[test]
     fn the_crop_draws_the_same_bands_at_every_decode_scale() {
         let hd = SourceSize::new(1920.0, 1080.0);
+        let on_hd = crop_drawing(hd).unwrap();
+        assert!(
+            on_hd.events.contains(JOB_CROP_LEFT_BAND_ON_HD),
+            "{}",
+            on_hd.events
+        );
         // a decoder that implements lowres hands back a smaller frame at each
         // step, and one that does not hands back the same frame every time
         for (decode_scale, decoded_width, decoded_height) in [
@@ -620,7 +684,7 @@ mod tests {
                 SourceSize::new(decoded_width, decoded_height),
                 decode_scale,
             );
-            assert_eq!(crop_chain(source_size), JOB_CROP_ON_HD);
+            assert!(crop_drawing(source_size) == Some(on_hd.clone()));
         }
     }
 
@@ -628,13 +692,19 @@ mod tests {
     fn a_source_that_declares_no_size_falls_back_to_the_decoded_frame() {
         let source_size =
             resolve_source_size(None, SourceSize::new(960.0, 540.0), DecodeScale::Half);
-        assert_eq!(crop_chain(source_size), JOB_CROP_ON_HD);
+        let drawing = crop_drawing(source_size).unwrap();
+        assert!(
+            drawing.events.contains(JOB_CROP_LEFT_BAND_ON_HD),
+            "{}",
+            drawing.events
+        );
+        assert_eq!((drawing.play_res_x, drawing.play_res_y), (1920, 1080));
     }
 
     #[test]
     fn a_crop_is_left_out_while_nothing_reports_a_size() {
         assert!(resolve_source_size(None, None, DecodeScale::Full).is_none());
-        assert_eq!(crop_chain(None), "");
+        assert!(crop_drawing(None).is_none());
     }
 
     #[test]
