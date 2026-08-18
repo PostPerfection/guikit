@@ -333,6 +333,9 @@ function initScrubber() {
   startScrubberPolling();
 }
 
+// the last poll failure, so a repeating one logs once instead of four times a second
+let lastPollError = '';
+
 function startScrubberPolling() {
   if (scrubberInterval) return;
   scrubberInterval = setInterval(async () => {
@@ -340,16 +343,21 @@ function startScrubberPolling() {
     try {
       const resp = await invoke('preview_get_metadata');
       const meta = JSON.parse(resp);
+      lastPollError = '';
       updateHud(meta);
       metadataWatcher(meta);
       if (meta.position != null && meta.duration != null && meta.duration > 0) {
         const pct = meta.position / meta.duration;
         updatePlayhead(pct);
         updateTimecode(meta.position, meta.duration, meta.container_fps);
-        updatePlayBtn(meta.paused);
       }
-    } catch {
-      // mpv not running — that's fine
+      updatePlayBtn(meta.paused);
+    } catch (error) {
+      const text = String(error);
+      if (text !== lastPollError) {
+        lastPollError = text;
+        console.error('metadata poll:', error);
+      }
     }
   }, 250);
 }
