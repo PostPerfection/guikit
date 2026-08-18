@@ -187,7 +187,7 @@ fn a_package_played_to_its_end_reports_eof_in_the_metadata() {
 }
 
 /// Every overlay at once, which is the most a page can ask to have drawn.
-fn every_overlay() -> PreviewOverlays {
+pub(super) fn every_overlay() -> PreviewOverlays {
     PreviewOverlays {
         safe_area_percent: Some(95),
         aspect_mask: Some(2.39),
@@ -205,7 +205,7 @@ fn every_overlay() -> PreviewOverlays {
 
 /// The state the commands keep, with no surface behind it: the overlays are put
 /// on the player handed to `apply_overlays`, which is the player the test drives.
-fn overlay_state(overlays: PreviewOverlays) -> PreviewPlayer {
+pub(super) fn overlay_state(overlays: PreviewOverlays) -> PreviewPlayer {
     let state = PreviewPlayer::new(PreviewSurface::Unavailable(
         "no surface in a test".to_string(),
     ));

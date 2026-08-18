@@ -336,6 +336,51 @@ fn a_property_read_on_the_render_thread_survives_without_direct_rendering() {
     });
 }
 
+/// The page's real quarter-second poll: `apply_overlays` then the metadata
+/// read, off the render thread, with every overlay drawn. The transport bar is
+/// dead unless the position advances and the pause state reads false while the
+/// clip is actually playing, not only once it stops.
+#[test]
+#[ignore = "needs a GL driver, run on its own"]
+fn the_metadata_poll_reads_live_values_while_the_clip_plays() {
+    let Some(dir) = clip_directory() else { return };
+    let render = RenderThread::bound_to_this_thread();
+    abort_when_the_beating_stops();
+    render.player.load_file(&clip_path(&dir)).unwrap();
+
+    let reader = Arc::clone(&render.player);
+    let polling = std::thread::spawn(move || {
+        let state =
+            super::end_of_file_tests::overlay_state(super::end_of_file_tests::every_overlay());
+        let deadline = Instant::now() + PLAYBACK_TIMEOUT;
+        let mut playing_read = false;
+        while Instant::now() < deadline {
+            beat();
+            super::apply_overlays(&reader, &state).unwrap();
+            let metadata = player_metadata(&reader).unwrap();
+            let position = reader.get_position().unwrap_or(0.0);
+            if metadata.contains("\"paused\": false") && position > 0.0 {
+                playing_read = true;
+            }
+            if reader.get_property_bool(EOF_PROPERTY).unwrap_or(false) {
+                assert!(
+                    playing_read,
+                    "no poll saw the clip playing before it ended, last read {metadata}"
+                );
+                return;
+            }
+            std::thread::sleep(POLL_INTERVAL);
+        }
+        panic!("the clip never played out");
+    });
+    while !polling.is_finished() {
+        beat();
+        render.pump_once();
+        std::thread::sleep(POLL_INTERVAL);
+    }
+    polling.join().unwrap();
+}
+
 fn clip_directory() -> Option<tempfile::TempDir> {
     if !have_ffmpeg() {
         eprintln!("skipping: ffmpeg not available");
