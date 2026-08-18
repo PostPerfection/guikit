@@ -297,17 +297,24 @@ function initScrubber() {
 
   if (!scrubber) return;
 
-  // Click to seek
-  scrubber.addEventListener('mousedown', (e) => {
+  // Click to seek. The pointer is captured for the drag: the video under the
+  // scrubber is a native widget, not part of this page, so a plain mouseup
+  // released over it never arrives and the seek would stay latched, freezing
+  // every poll-driven control until some later click landed in the page.
+  scrubber.addEventListener('pointerdown', (e) => {
+    scrubber.setPointerCapture(e.pointerId);
     isSeeking = true;
     seekToMouse(e);
   });
-  document.addEventListener('mousemove', (e) => {
+  scrubber.addEventListener('pointermove', (e) => {
     if (isSeeking) seekToMouse(e);
   });
-  document.addEventListener('mouseup', () => {
+  const endSeek = () => {
     isSeeking = false;
-  });
+  };
+  scrubber.addEventListener('pointerup', endSeek);
+  scrubber.addEventListener('pointercancel', endSeek);
+  scrubber.addEventListener('lostpointercapture', endSeek);
 
   function seekToMouse(e) {
     const rect = scrubber.getBoundingClientRect();
