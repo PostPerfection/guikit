@@ -1,6 +1,5 @@
 // Preview player - uses mpv via IPC for high-performance video playback
 import { invoke } from '@tauri-apps/api/core';
-import { open } from '@tauri-apps/plugin-dialog';
 
 let scrubberInterval = null;
 let isSeeking = false;
@@ -43,6 +42,19 @@ export function previewSeek(seconds) {
 
 export function previewSeekAbsolute(seconds) {
   invoke('preview_seek_absolute', { seconds }).catch(() => {});
+}
+
+/// How far the skip buttons and an app's skip shortcuts move, so the two cannot
+/// disagree.
+export const PREVIEW_SEEK_SECONDS = 5;
+
+/// Both frame steps pause playback, which is mpv's behaviour.
+export function previewFrameStepForward() {
+  invoke('preview_frame_step').catch(() => {});
+}
+
+export function previewFrameStepBack() {
+  invoke('preview_frame_back_step').catch(() => {});
 }
 
 /// Read every metadata poll, one watcher at a time. The playlist takes the
@@ -290,9 +302,27 @@ export function showEmbeddedPanel() {
   reportSurface();
 }
 
+// The transport buttons an app puts in its own markup, wired by id, each one
+// optional. The skip buttons take their tooltip from PREVIEW_SEEK_SECONDS.
+const TRANSPORT_BUTTONS = [
+  { id: 'timeline-start-btn', onClick: () => previewSeekAbsolute(0) },
+  {
+    id: 'timeline-skip-back-btn',
+    onClick: () => previewSeek(-PREVIEW_SEEK_SECONDS),
+    title: `Back ${PREVIEW_SEEK_SECONDS} seconds`,
+  },
+  { id: 'timeline-frame-back-btn', onClick: previewFrameStepBack },
+  { id: 'timeline-play-btn', onClick: previewPlayPause },
+  { id: 'timeline-frame-forward-btn', onClick: previewFrameStepForward },
+  {
+    id: 'timeline-skip-forward-btn',
+    onClick: () => previewSeek(PREVIEW_SEEK_SECONDS),
+    title: `Forward ${PREVIEW_SEEK_SECONDS} seconds`,
+  },
+];
+
 function initScrubber() {
   const scrubber = document.getElementById('timeline-scrubber');
-  const playBtn = document.getElementById('timeline-play-btn');
   const durLabel = document.getElementById('timeline-duration');
 
   if (!scrubber) return;
@@ -326,8 +356,12 @@ function initScrubber() {
     }
   }
 
-  // Play/pause button
-  playBtn?.addEventListener('click', previewPlayPause);
+  for (const { id, onClick, title } of TRANSPORT_BUTTONS) {
+    const button = document.getElementById(id);
+    if (!button) continue;
+    button.addEventListener('click', onClick);
+    if (title) button.title = title;
+  }
 
   // Start position polling
   startScrubberPolling();

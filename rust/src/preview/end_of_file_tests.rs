@@ -12,6 +12,7 @@ use postkit::packaging::{ns, AssetMap, AssetMapAsset, DcpCpl, DcpCplReel};
 
 use super::{
     apply_overlays, player_metadata, PreviewCrop, PreviewOverlays, PreviewPlayer, PreviewSurface,
+    FRAME_BACK_STEP, FRAME_STEP,
 };
 
 /// Picture file name, asset uuid and clip length in seconds, per reel.
@@ -31,6 +32,8 @@ const NOT_AT_THE_END: &str = r#""eof": false"#;
 const POSITION_TOLERANCE_SECONDS: f64 = 0.2;
 /// How far a resumed package has to get for playback to have restarted.
 const RESUMED_POSITION_SECONDS: f64 = 0.1;
+/// How far a single frame step may move, a couple of frames at the clip rate.
+const STEP_TOLERANCE_SECONDS: f64 = 2.0 / FRAMES_PER_SECOND as f64;
 const PLAYBACK_TIMEOUT: Duration = Duration::from_secs(30);
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
@@ -293,4 +296,56 @@ fn the_package_loaded_at_the_end_starts_on_one_play_pause() {
         player.get_position().unwrap_or(0.0) > RESUMED_POSITION_SECONDS
     })
     .unwrap_or_else(|last| panic!("play/pause did not restart playback, last read {last}"));
+}
+
+/// The two frame steps behind the transport bar's step buttons, on a real
+/// player: mpv fails a command name it does not know, so this is what says the
+/// names are right, and the step has to leave the player paused on the frame it
+/// moved to.
+#[test]
+fn a_frame_step_moves_one_frame_and_leaves_the_player_paused() {
+    if !have_ffmpeg() {
+        eprintln!("skipping: ffmpeg not available");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    write_package(dir.path());
+    let player = loaded_player(dir.path());
+
+    pump_until(&player, |_| {
+        player.get_position().unwrap_or(0.0) > RESUMED_POSITION_SECONDS
+    })
+    .unwrap_or_else(|last| panic!("the package never started playing, last read {last}"));
+    player.play_pause().unwrap();
+    let paused_at = player.get_position().unwrap();
+
+    player.command(&[FRAME_STEP]).unwrap();
+    let metadata = pump_until(&player, |_| {
+        player.get_position().unwrap_or(0.0) > paused_at
+    })
+    .unwrap_or_else(|last| panic!("the frame step did not move forward, last read {last}"));
+    assert!(
+        metadata.contains(r#""paused": true"#),
+        "the frame step left the player playing: {metadata}"
+    );
+    let stepped_to = player.get_position().unwrap();
+    assert!(
+        stepped_to - paused_at < STEP_TOLERANCE_SECONDS,
+        "one frame step ran from {paused_at}s to {stepped_to}s"
+    );
+
+    player.command(&[FRAME_BACK_STEP]).unwrap();
+    let metadata = pump_until(&player, |_| {
+        player.get_position().unwrap_or(0.0) < stepped_to
+    })
+    .unwrap_or_else(|last| panic!("the frame step back did not move back, last read {last}"));
+    assert!(
+        metadata.contains(r#""paused": true"#),
+        "the frame step back left the player playing: {metadata}"
+    );
+    let stepped_back_to = player.get_position().unwrap();
+    assert!(
+        stepped_to - stepped_back_to < STEP_TOLERANCE_SECONDS,
+        "one frame step back ran from {stepped_to}s to {stepped_back_to}s"
+    );
 }

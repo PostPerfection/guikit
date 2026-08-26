@@ -215,6 +215,20 @@ pub fn preview_seek_absolute(
     state.player()?.seek_absolute(seconds)
 }
 
+/// mpv's frame steps, which both pause playback.
+const FRAME_STEP: &str = "frame-step";
+const FRAME_BACK_STEP: &str = "frame-back-step";
+
+#[tauri::command(async)]
+pub fn preview_frame_step(state: tauri::State<'_, PreviewPlayer>) -> Result<(), String> {
+    state.player()?.command(&[FRAME_STEP])
+}
+
+#[tauri::command(async)]
+pub fn preview_frame_back_step(state: tauri::State<'_, PreviewPlayer>) -> Result<(), String> {
+    state.player()?.command(&[FRAME_BACK_STEP])
+}
+
 #[tauri::command(async)]
 pub fn preview_stop(state: tauri::State<'_, PreviewPlayer>) -> Result<(), String> {
     let player = state.player()?;
@@ -816,6 +830,8 @@ mod tests {
                 preview_play_pause,
                 preview_seek,
                 preview_seek_absolute,
+                preview_frame_step,
+                preview_frame_back_step,
                 preview_stop,
                 preview_get_position,
                 preview_get_duration,

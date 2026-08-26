@@ -7,7 +7,7 @@ Shared code for the PostPerfection wizard GUIs, frontend and native.
 - `src/shortcuts.js`: keyboard shortcut handling and the shortcuts dialog
 - `src/base.css`: the shared stylesheet
 - `rust/`: the `guikit` crate, holding the native side of the preview
-- `test/`: the headless harness for the playlist queue
+- `test/`: the headless harness for the playlist queue and the transport bar
 
 ## The guikit crate
 
@@ -30,6 +30,22 @@ reporting false so the page hides the preview.
 The crate depends on postkit by git url. Both wizards redirect that to their
 own `extern/postkit` submodule with a `[patch]` in their gui `Cargo.toml`, so a
 build compiles postkit once.
+
+## Preview transport
+
+The transport bar is the app's own markup, wired by element id and every button
+optional: `timeline-scrubber` with `timeline-playhead` inside it,
+`timeline-position` and `timeline-duration`, `timeline-play-btn`,
+`timeline-start-btn`, `timeline-skip-back-btn`, `timeline-skip-forward-btn`,
+`timeline-frame-back-btn` and `timeline-frame-forward-btn`. The skip buttons move
+by the exported `PREVIEW_SEEK_SECONDS` and take their tooltip from it, so an app
+binding the same jump to a key labels it from that constant rather than its own.
+
+`previewPlayPause`, `previewSeek(seconds)`, `previewSeekAbsolute(seconds)`,
+`previewFrameStepBack()` and `previewFrameStepForward()` are also exported for an
+app's shortcuts. The two frame steps run mpv's `frame-back-step` and
+`frame-step`, which pause playback, and need `preview_frame_back_step` and
+`preview_frame_step` registered beside the other commands.
 
 ## Preview QC controls
 
@@ -159,9 +175,10 @@ the marker goes, and no end of file advances anything until a row is clicked
 again.
 
 `test/playlist.test.mjs` drives the queue headless, with `test/preview-stub.mjs`
-standing in for the player: `node --test 'test/*.test.mjs'`, no dependencies and
-nothing to build. It is the whole JS test suite, and CI runs it beside the syntax
-check.
+standing in for the player, and `test/transport.test.mjs` clicks the transport
+buttons with `test/tauri-core-stub.mjs` standing in for the tauri bridge:
+`node --test 'test/*.test.mjs'`, no dependencies and nothing to build. That is the
+whole JS test suite, and CI runs it beside the syntax check.
 
 ## Consumers
 
