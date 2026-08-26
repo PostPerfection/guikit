@@ -1,4 +1,4 @@
-// preview.js imports the tauri bridge from '@tauri-apps/api/core', which is not
+// The modules import the tauri bridge from '@tauri-apps/api/core', which is not
 // installed here, so the harness resolves that one specifier to the stub. Node
 // runs this off the main thread, which is why the file holds nothing but the
 // mapping.

@@ -4,10 +4,12 @@ Shared code for the PostPerfection wizard GUIs, frontend and native.
 
 - `src/preview.js`: mpv-backed preview player and scrubber
 - `src/playlist.js`: the queue that plays packages one after another
+- `src/jobs.js`: the Jobs panel, the backend's jobs and an app's second source
 - `src/shortcuts.js`: keyboard shortcut handling and the shortcuts dialog
 - `src/base.css`: the shared stylesheet
 - `rust/`: the `guikit` crate, holding the native side of the preview
-- `test/`: the headless harness for the playlist queue and the transport bar
+- `test/`: the headless harness for the playlist queue, the transport bar and the
+  Jobs panel
 
 ## The guikit crate
 
@@ -174,9 +176,40 @@ anything else means the app loaded something of its own: the rows stay rendered,
 the marker goes, and no end of file advances anything until a row is clicked
 again.
 
+## Jobs
+
+`jobs.js` renders the Jobs table both wizards show. The app keeps the markup and
+hands the elements over:
+
+```js
+initJobsPanel({ tableBody, statusBadge, refreshButton, pollIntervalMs, extraRows });
+```
+
+`tableBody` is the `<tbody>`, `statusBadge` the element the source status is
+written to, `refreshButton` gets a click handler when it is given, and
+`pollIntervalMs` replaces the three second poll. The table is the same six
+columns in every app, so the header row is
+`<tr><th>ID</th><th>Source</th><th>Job</th><th>State</th><th>Progress</th><th></th></tr>`
+and the "No jobs" placeholder spans all six. `refreshJobs()`,
+`startJobsPolling()` and `stopJobsPolling()` are exported for the app to call on
+a view switch.
+
+The rows always include the backend's own jobs, read from `list_jobs` and
+cancelled with `cancel_job`, which is postkit's `JobInfo` and the job registry
+under it. They read `gui` in the Source column. A job's message becomes the row's
+title attribute, and only a running or queued row gets a ✕ button.
+
+`extraRows` is an app's second source of jobs, an async function returning
+`{ source, status, rows }`. `source` names those rows in the Source column,
+`status` goes in the badge, and each row is
+`{ id, label, state, progress, message, cancel }` with `cancel` an async function
+the ✕ button calls. dcpwizard lists and cancels its batch daemon's jobs through
+it. With no hook the badge reads "Ready".
+
 `test/playlist.test.mjs` drives the queue headless, with `test/preview-stub.mjs`
-standing in for the player, and `test/transport.test.mjs` clicks the transport
-buttons with `test/tauri-core-stub.mjs` standing in for the tauri bridge:
+standing in for the player, and `test/transport.test.mjs` and
+`test/jobs.test.mjs` click the transport buttons and the panel's cancels with
+`test/tauri-core-stub.mjs` standing in for the tauri bridge:
 `node --test 'test/*.test.mjs'`, no dependencies and nothing to build. That is the
 whole JS test suite, and CI runs it beside the syntax check.
 
