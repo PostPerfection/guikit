@@ -18,7 +18,6 @@ use std::time::{Duration, Instant};
 
 use postkit::mpv_render::MpvRenderPlayer;
 
-use super::end_of_file_tests::have_ffmpeg;
 use super::{player_metadata, EOF_PROPERTY};
 
 /// A frame size worth a real decoder allocation, so the window the deadlock
@@ -282,7 +281,7 @@ fn poll_until_the_end(player: &MpvRenderPlayer, beat: impl Fn()) {
 #[test]
 #[ignore = "hangs on purpose and needs a GL driver, run on its own"]
 fn a_property_read_on_the_render_thread_deadlocks() {
-    let Some(dir) = clip_directory() else { return };
+    let dir = clip_directory();
     let render = RenderThread::bound_to_this_thread();
     abort_when_the_beating_stops();
     render.player.load_file(&clip_path(&dir)).unwrap();
@@ -300,7 +299,7 @@ fn a_property_read_on_the_render_thread_deadlocks() {
 #[test]
 #[ignore = "needs a GL driver, run on its own"]
 fn a_property_read_off_the_render_thread_plays_out() {
-    let Some(dir) = clip_directory() else { return };
+    let dir = clip_directory();
     let render = RenderThread::bound_to_this_thread();
     abort_when_the_beating_stops();
     render.player.load_file(&clip_path(&dir)).unwrap();
@@ -321,7 +320,7 @@ fn a_property_read_off_the_render_thread_plays_out() {
 #[test]
 #[ignore = "needs a GL driver, run on its own"]
 fn a_property_read_on_the_render_thread_survives_without_direct_rendering() {
-    let Some(dir) = clip_directory() else { return };
+    let dir = clip_directory();
     let render = RenderThread::bound_to_this_thread();
     render
         .player
@@ -343,7 +342,7 @@ fn a_property_read_on_the_render_thread_survives_without_direct_rendering() {
 #[test]
 #[ignore = "needs a GL driver, run on its own"]
 fn the_metadata_poll_reads_live_values_while_the_clip_plays() {
-    let Some(dir) = clip_directory() else { return };
+    let dir = clip_directory();
     let render = RenderThread::bound_to_this_thread();
     abort_when_the_beating_stops();
     render.player.load_file(&clip_path(&dir)).unwrap();
@@ -381,14 +380,10 @@ fn the_metadata_poll_reads_live_values_while_the_clip_plays() {
     polling.join().unwrap();
 }
 
-fn clip_directory() -> Option<tempfile::TempDir> {
-    if !have_ffmpeg() {
-        eprintln!("skipping: ffmpeg not available");
-        return None;
-    }
+fn clip_directory() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     write_clip(&dir.path().join("clip.mxf"));
-    Some(dir)
+    dir
 }
 
 fn clip_path(dir: &tempfile::TempDir) -> String {

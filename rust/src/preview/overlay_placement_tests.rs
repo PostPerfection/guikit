@@ -4,13 +4,12 @@
 //! for the picture has to be placed on it. A clip is rendered into a square
 //! surface through the software renderer, which leaves the picture between bars
 //! the way the preview panel does, and the drawn pixels are looked for on the
-//! picture. Skips when ffmpeg is absent.
+//! picture.
 
 use std::time::{Duration, Instant};
 
 use postkit::mpv_render::{MpvRenderPlayer, OsdAssOverlay};
 
-use super::end_of_file_tests::have_ffmpeg;
 use super::overlays::{overlay_drawing, OsdRectangle, PreviewOverlays, SourceSize};
 use super::{read_osd_rectangle, QC_OVERLAY_ID};
 
@@ -152,10 +151,6 @@ fn close_enough(drawn: usize, expected: f64, what: &str) {
 
 #[test]
 fn the_drawing_lands_on_the_picture_rather_than_the_whole_surface() {
-    if !have_ffmpeg() {
-        eprintln!("skipping: ffmpeg not available");
-        return;
-    }
     let directory = tempfile::tempdir().unwrap();
     let clip = directory.path().join("black.mp4");
     write_black_clip(&clip);

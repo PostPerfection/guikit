@@ -2,7 +2,7 @@
 //!
 //! A two-reel package written by postkit's ASSETMAP and CPL writers around
 //! ffmpeg clips is played to its end through libmpv's software renderer, which
-//! needs no display. Skips when ffmpeg is absent.
+//! needs no display.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -36,14 +36,6 @@ const RESUMED_POSITION_SECONDS: f64 = 0.1;
 const STEP_TOLERANCE_SECONDS: f64 = 2.0 / FRAMES_PER_SECOND as f64;
 const PLAYBACK_TIMEOUT: Duration = Duration::from_secs(30);
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
-
-pub(super) fn have_ffmpeg() -> bool {
-    std::process::Command::new("ffmpeg")
-        .arg("-version")
-        .output()
-        .map(|out| out.status.success())
-        .unwrap_or(false)
-}
 
 fn write_clip(path: &Path, seconds: u32) {
     let out = std::process::Command::new("ffmpeg")
@@ -166,10 +158,6 @@ fn play_to_the_end(player: &MpvRenderPlayer) -> String {
 
 #[test]
 fn a_package_played_to_its_end_reports_eof_in_the_metadata() {
-    if !have_ffmpeg() {
-        eprintln!("skipping: ffmpeg not available");
-        return;
-    }
     let dir = tempfile::tempdir().unwrap();
     write_package(dir.path());
     let player = loaded_player(dir.path());
@@ -223,10 +211,6 @@ pub(super) fn overlay_state(overlays: PreviewOverlays) -> PreviewPlayer {
 /// playback. The rule about the render thread is held in `render_thread_tests`.
 #[test]
 fn overlays_drawn_over_a_package_leave_the_end_of_file_flag_alone() {
-    if !have_ffmpeg() {
-        eprintln!("skipping: ffmpeg not available");
-        return;
-    }
     let dir = tempfile::tempdir().unwrap();
     write_package(dir.path());
     let player = loaded_player(dir.path());
@@ -272,10 +256,6 @@ fn overlays_drawn_over_a_package_leave_the_end_of_file_flag_alone() {
 /// send one play/pause, because the pause mpv took at the end outlives the load.
 #[test]
 fn the_package_loaded_at_the_end_starts_on_one_play_pause() {
-    if !have_ffmpeg() {
-        eprintln!("skipping: ffmpeg not available");
-        return;
-    }
     let dir = tempfile::tempdir().unwrap();
     write_package(dir.path());
     let player = loaded_player(dir.path());
@@ -304,10 +284,6 @@ fn the_package_loaded_at_the_end_starts_on_one_play_pause() {
 /// moved to.
 #[test]
 fn a_frame_step_moves_one_frame_and_leaves_the_player_paused() {
-    if !have_ffmpeg() {
-        eprintln!("skipping: ffmpeg not available");
-        return;
-    }
     let dir = tempfile::tempdir().unwrap();
     write_package(dir.path());
     let player = loaded_player(dir.path());

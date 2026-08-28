@@ -29,3 +29,83 @@ jobs:
 
       - name: Test the playlist queue
         run: node --test 'test/*.test.mjs'
+
+  # windows is left out: postkit's build.rs wants MPV_LIB_DIR pointing at an
+  # mpv.lib generated from libmpv-2.dll with gendef and lib.exe, and no
+  # workflow in this org produces one.
+  rust:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            name: Linux
+          - os: macos-latest
+            name: macOS
+
+    runs-on: ${{ matrix.os }}
+    name: Rust (${{ matrix.name }})
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      # cmake, openssl and xerces-c build postkit's asdcplib dependency.
+      # libmpv is what the preview plays through, and tauri needs the webkit,
+      # indicator and rsvg development files.
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            cmake \
+            libssl-dev \
+            libxml2-dev \
+            libxerces-c-dev \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            libmpv-dev
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install pkg-config cmake openssl@3 xerces-c mpv ffmpeg
+          echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+          echo "CMAKE_PREFIX_PATH=$(brew --prefix xerces-c):$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+
+      - name: Install ffmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          curl -sSL -o ffmpeg.tar.xz https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-27-16-45/ffmpeg-n8.1.2-47-g156bb4d299-linux64-gpl-8.1.tar.xz
+          tar -xJf ffmpeg.tar.xz
+          echo "$PWD/ffmpeg-n8.1.2-47-g156bb4d299-linux64-gpl-8.1/bin" >> "$GITHUB_PATH"
+
+      - name: Check test tools
+        shell: bash
+        run: |
+          ffmpeg -version | head -n 1
+          ffprobe -version | head -n 1
+          pkg-config --modversion mpv
+
+      - name: Build
+        working-directory: rust
+        run: cargo build
+
+      - name: Test
+        working-directory: rust
+        run: cargo test
+
+      - name: Clippy
+        working-directory: rust
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Format check
+        working-directory: rust
+        run: cargo fmt --check
