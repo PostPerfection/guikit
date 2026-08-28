@@ -6,13 +6,13 @@
 //! and neither ever runs again. These probes hold the rule both ways round and
 //! show which mpv option the trap hangs off.
 //!
-//! Each one needs an OpenGL driver, gets its context from EGL with no surface,
-//! and ends a hang as a signal rather than as a failure, because a blocked
-//! thread cannot report anything. Run one at a time:
-//! `cargo test -p guikit --lib render_thread -- --ignored --exact <name>`
+//! Each one needs an OpenGL driver and gets its context from EGL with no
+//! surface, so a headless run needs an X server such as `xvfb-run -a`. A hang
+//! ends as a signal rather than as a failure, because a blocked thread cannot
+//! report anything.
 
 use std::ffi::{c_char, c_void, CStr, CString};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -42,6 +42,11 @@ const POLL_INTERVAL: Duration = Duration::from_millis(10);
 /// How long a thread may go without a turn of its loop before it counts as
 /// blocked for good.
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(20);
+/// How long the wrapper waits for the deadlocking probe's own process to abort,
+/// which has to cover ffmpeg writing the clip and mpv opening it on top of the
+/// heartbeat.
+const ABORT_TIMEOUT: Duration = Duration::from_secs(180);
+const ABORT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 // ─── EGL, enough of it for a context with no surface ────────────────────────
 
@@ -278,16 +283,25 @@ fn poll_until_the_end(player: &MpvRenderPlayer, beat: impl Fn()) {
 /// A property read on the render thread, which is what a plain tauri command
 /// does, because its body runs inline on the thread dispatching the webview's
 /// IPC and that is the thread the surface renders on.
+///
+/// Ends in `process::abort`, so it only ever runs in the child process
+/// `the_render_thread_deadlock_aborts_its_process` spawns.
 #[test]
-#[ignore = "hangs on purpose and needs a GL driver, run on its own"]
+#[ignore = "aborts the process, the wrapper test runs it"]
 fn a_property_read_on_the_render_thread_deadlocks() {
     let dir = clip_directory();
     let render = RenderThread::bound_to_this_thread();
-    abort_when_the_beating_stops();
+    // init_opengl already turns direct rendering off, so the trap has to be set
+    // again here for the probe to have anything to catch
+    render
+        .player
+        .set_property(DIRECT_RENDERING_OPTION, "yes")
+        .unwrap();
+    let watchdog = Watchdog::abort_when_the_beating_stops();
     render.player.load_file(&clip_path(&dir)).unwrap();
 
     poll_until_the_end(&render.player, || {
-        beat();
+        watchdog.beat();
         render.pump_once();
     });
     panic!("the read on the render thread came back, which it is not expected to");
@@ -297,17 +311,16 @@ fn a_property_read_on_the_render_thread_deadlocks() {
 /// preview commands being `(async)` buys, and the render thread doing nothing
 /// but render.
 #[test]
-#[ignore = "needs a GL driver, run on its own"]
 fn a_property_read_off_the_render_thread_plays_out() {
     let dir = clip_directory();
     let render = RenderThread::bound_to_this_thread();
-    abort_when_the_beating_stops();
+    let watchdog = Watchdog::abort_when_the_beating_stops();
     render.player.load_file(&clip_path(&dir)).unwrap();
 
     let reader = Arc::clone(&render.player);
     let polling = std::thread::spawn(move || poll_until_the_end(&reader, || {}));
     while !polling.is_finished() {
-        beat();
+        watchdog.beat();
         render.pump_once();
         std::thread::sleep(POLL_INTERVAL);
     }
@@ -318,7 +331,6 @@ fn a_property_read_off_the_render_thread_plays_out() {
 /// That is the option the trap hangs off: with it gone the core allocates the
 /// decoder's buffers itself and never waits on the render thread for them.
 #[test]
-#[ignore = "needs a GL driver, run on its own"]
 fn a_property_read_on_the_render_thread_survives_without_direct_rendering() {
     let dir = clip_directory();
     let render = RenderThread::bound_to_this_thread();
@@ -326,11 +338,11 @@ fn a_property_read_on_the_render_thread_survives_without_direct_rendering() {
         .player
         .set_property(DIRECT_RENDERING_OPTION, "no")
         .unwrap();
-    abort_when_the_beating_stops();
+    let watchdog = Watchdog::abort_when_the_beating_stops();
     render.player.load_file(&clip_path(&dir)).unwrap();
 
     poll_until_the_end(&render.player, || {
-        beat();
+        watchdog.beat();
         render.pump_once();
     });
 }
@@ -340,21 +352,21 @@ fn a_property_read_on_the_render_thread_survives_without_direct_rendering() {
 /// dead unless the position advances and the pause state reads false while the
 /// clip is actually playing, not only once it stops.
 #[test]
-#[ignore = "needs a GL driver, run on its own"]
 fn the_metadata_poll_reads_live_values_while_the_clip_plays() {
     let dir = clip_directory();
     let render = RenderThread::bound_to_this_thread();
-    abort_when_the_beating_stops();
+    let watchdog = Watchdog::abort_when_the_beating_stops();
     render.player.load_file(&clip_path(&dir)).unwrap();
 
     let reader = Arc::clone(&render.player);
+    let polled = watchdog.beat.clone();
     let polling = std::thread::spawn(move || {
         let state =
             super::end_of_file_tests::overlay_state(super::end_of_file_tests::every_overlay());
         let deadline = Instant::now() + PLAYBACK_TIMEOUT;
         let mut playing_read = false;
         while Instant::now() < deadline {
-            beat();
+            polled.beat();
             super::apply_overlays(&reader, &state).unwrap();
             let metadata = player_metadata(&reader).unwrap();
             let position = reader.get_position().unwrap_or(0.0);
@@ -373,11 +385,48 @@ fn the_metadata_poll_reads_live_values_while_the_clip_plays() {
         panic!("the clip never played out");
     });
     while !polling.is_finished() {
-        beat();
+        watchdog.beat();
         render.pump_once();
         std::thread::sleep(POLL_INTERVAL);
     }
     polling.join().unwrap();
+}
+
+/// The deadlock detection itself, run for real: the probe above blocks its
+/// render thread for good and its heartbeat watchdog turns that into an abort,
+/// so a run of it that comes back any other way means the trap is no longer
+/// being sprung.
+#[test]
+fn the_render_thread_deadlock_aborts_its_process() {
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "--ignored",
+            "--nocapture",
+            "preview::render_thread_tests::a_property_read_on_the_render_thread_deadlocks",
+        ])
+        .spawn()
+        .unwrap();
+
+    let deadline = Instant::now() + ABORT_TIMEOUT;
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            child.kill().unwrap();
+            child.wait().unwrap();
+            panic!("the deadlocking probe never aborted within {ABORT_TIMEOUT:?}");
+        }
+        std::thread::sleep(ABORT_POLL_INTERVAL);
+    };
+
+    use std::os::unix::process::ExitStatusExt;
+    assert_eq!(
+        status.signal(),
+        Some(libc::SIGABRT),
+        "the deadlocking probe exited as {status} rather than on SIGABRT"
+    );
 }
 
 fn clip_directory() -> tempfile::TempDir {
@@ -390,21 +439,54 @@ fn clip_path(dir: &tempfile::TempDir) -> String {
     dir.path().join("clip.mxf").to_string_lossy().into_owned()
 }
 
-static HEARTBEAT: AtomicU64 = AtomicU64::new(0);
+/// Something a probe's loops tick so the watchdog can tell a slow turn from a
+/// blocked one. Counted per probe, so one probe's ticking cannot stand in for
+/// another's while the two run side by side.
+#[derive(Clone)]
+struct Beat(Arc<AtomicU64>);
 
-fn beat() {
-    HEARTBEAT.fetch_add(1, Ordering::Release);
+impl Beat {
+    fn beat(&self) {
+        self.0.fetch_add(1, Ordering::Release);
+    }
 }
 
 /// A blocked thread cannot fail a test, because nothing on it runs again, so the
-/// hang is turned into a signal from a thread of its own.
-fn abort_when_the_beating_stops() {
-    std::thread::spawn(|| loop {
-        let seen = HEARTBEAT.load(Ordering::Acquire);
-        std::thread::sleep(HEARTBEAT_TIMEOUT);
-        if HEARTBEAT.load(Ordering::Acquire) == seen {
-            eprintln!("[probe] nothing has run for {HEARTBEAT_TIMEOUT:?}, aborting");
-            std::process::abort();
-        }
-    });
+/// hang is turned into a signal from a thread of its own. Aborting takes the
+/// whole process with it, so the watch stops when the guard drops and a probe
+/// that finished cannot take the rest of the run down behind it.
+struct Watchdog {
+    beat: Beat,
+    watching: Arc<AtomicBool>,
+}
+
+impl Watchdog {
+    fn abort_when_the_beating_stops() -> Self {
+        let beat = Beat(Arc::new(AtomicU64::new(0)));
+        let watching = Arc::new(AtomicBool::new(true));
+        let counted = Arc::clone(&beat.0);
+        let still_watching = Arc::clone(&watching);
+        std::thread::spawn(move || loop {
+            let seen = counted.load(Ordering::Acquire);
+            std::thread::sleep(HEARTBEAT_TIMEOUT);
+            if !still_watching.load(Ordering::Acquire) {
+                return;
+            }
+            if counted.load(Ordering::Acquire) == seen {
+                eprintln!("[probe] nothing has run for {HEARTBEAT_TIMEOUT:?}, aborting");
+                std::process::abort();
+            }
+        });
+        Watchdog { beat, watching }
+    }
+
+    fn beat(&self) {
+        self.beat.beat();
+    }
+}
+
+impl Drop for Watchdog {
+    fn drop(&mut self) {
+        self.watching.store(false, Ordering::Release);
+    }
 }

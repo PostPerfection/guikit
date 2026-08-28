@@ -30,9 +30,6 @@ jobs:
       - name: Test the playlist queue
         run: node --test 'test/*.test.mjs'
 
-  # windows is left out: postkit's build.rs wants MPV_LIB_DIR pointing at an
-  # mpv.lib generated from libmpv-2.dll with gendef and lib.exe, and no
-  # workflow in this org produces one.
   rust:
     strategy:
       fail-fast: false
@@ -42,22 +39,34 @@ jobs:
             name: Linux
           - os: macos-latest
             name: macOS
+          - os: windows-latest
+            name: Windows
 
     runs-on: ${{ matrix.os }}
     name: Rust (${{ matrix.name }})
 
     steps:
+      - name: Enable long paths (Windows)
+        if: runner.os == 'Windows'
+        run: git config --system core.longpaths true
+
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy, rustfmt
+          components: clippy, rustfmt, llvm-tools-preview
 
-      # cmake, openssl and xerces-c build postkit's asdcplib dependency.
-      # libmpv is what the preview plays through, and tauri needs the webkit,
-      # indicator and rsvg development files.
+      - name: Install cargo-llvm-cov
+        if: runner.os == 'Linux'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+
+      # cmake, openssl and xerces-c build postkit's asdcplib dependency, tauri
+      # needs the webkit, indicator and rsvg development files, and the render
+      # thread probes need an X server and a GL driver to get a context from.
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -71,14 +80,43 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev \
-            libmpv-dev
+            xvfb \
+            libegl1-mesa-dev \
+            libgl1-mesa-dri \
+            mesa-utils
 
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew install pkg-config cmake openssl@3 xerces-c mpv ffmpeg
+          brew install pkg-config cmake openssl@3 xerces-c
           echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
           echo "CMAKE_PREFIX_PATH=$(brew --prefix xerces-c):$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+
+      - name: Install dependencies (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
+          $env:VCPKG_BUILD_TYPE="release"
+          # vcpkg reads curl 56 and 503 off github's archive host as permanent and
+          # refuses to retry the source download, so retry the whole install
+          for ($attempt = 1; $attempt -le 5; $attempt++) {
+            vcpkg install openssl xerces-c --triplet x64-windows
+            if ($LASTEXITCODE -eq 0) { break }
+            if ($attempt -eq 5) { throw "vcpkg install failed after $attempt attempts" }
+            Start-Sleep -Seconds (30 * $attempt)
+          }
+
+      - name: Set vcpkg env (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          echo "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
+          echo "CMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" >> $env:GITHUB_ENV
+
+      - name: Setup libmpv
+        uses: PostPerfection/setup-libmpv@v1
+        with:
+          mpv-release: '20260828'
+          mpv-archive: mpv-dev-x86_64-20260828-git-182fa6ca49.7z
 
       - name: Install ffmpeg (Linux)
         if: runner.os == 'Linux'
@@ -87,18 +125,62 @@ jobs:
           tar -xJf ffmpeg.tar.xz
           echo "$PWD/ffmpeg-n8.1.2-47-g156bb4d299-linux64-gpl-8.1/bin" >> "$GITHUB_PATH"
 
+      # homebrew's ffmpeg carries neither libass nor freetype
+      - name: Install ffmpeg (macOS)
+        if: runner.os == 'macOS'
+        uses: mamba-org/setup-micromamba@v3
+        with:
+          environment-name: ffmpeg
+          create-args: ffmpeg=8.1.1=gpl_h4b93310_102
+          init-shell: none
+
+      - name: Put ffmpeg on PATH (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: echo "$(dirname "$("${MAMBA_EXE:-micromamba}" run -n ffmpeg which ffmpeg)")" >> "$GITHUB_PATH"
+
+      - name: Install ffmpeg (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          curl -sSL -o ffmpeg.zip https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-27-16-45/ffmpeg-n8.1.2-47-g156bb4d299-win64-gpl-8.1.zip
+          unzip -q ffmpeg.zip
+          echo "$(cygpath -w "$PWD/ffmpeg-n8.1.2-47-g156bb4d299-win64-gpl-8.1/bin")" >> "$GITHUB_PATH"
+
       - name: Check test tools
         shell: bash
         run: |
           ffmpeg -version | head -n 1
           ffprobe -version | head -n 1
-          pkg-config --modversion mpv
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            ls "$MPV_LIB_DIR/mpv.lib"
+          else
+            pkg-config --modversion mpv
+          fi
 
       - name: Build
         working-directory: rust
         run: cargo build
 
+      - name: Test with coverage (Linux)
+        if: runner.os == 'Linux'
+        working-directory: rust
+        run: xvfb-run -a cargo llvm-cov --lcov --output-path lcov.info
+
+      - name: Coverage summary (Linux)
+        if: runner.os == 'Linux'
+        working-directory: rust
+        run: cargo llvm-cov report --summary-only | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lcov
+          path: rust/lcov.info
+
       - name: Test
+        if: runner.os != 'Linux'
         working-directory: rust
         run: cargo test
 
