@@ -195,22 +195,40 @@ jobs:
           $dumpbin = Join-Path $msvc.FullName "bin\Hostx64\x64\dumpbin.exe"
           $exe = (Get-ChildItem rust\target\debug\deps\guikit-*.exe | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
           "exe: $exe"
-          Get-ChildItem rust\target\debug\deps\*.dll -ErrorAction SilentlyContinue | ForEach-Object { "beside exe: $($_.Name)" }
-          $importsByDll = @{}
-          $dll = $null
-          foreach ($line in (& $dumpbin /imports $exe)) {
-            if ($line -match '^\s+(\S+\.dll)\s*$') { $dll = $Matches[1]; $importsByDll[$dll] = @(); continue }
-            if ($dll -and $line -match '^\s+[0-9A-F]+\s+(\S+)\s*$') { $importsByDll[$dll] += $Matches[1] }
+          $exeDir = Split-Path $exe
+          function Resolve-Dll($name) {
+            $candidates = @("$exeDir\$name", "C:\Windows\System32\$name") + @(Get-Command $name -All -ErrorAction SilentlyContinue | ForEach-Object Source)
+            return $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
           }
-          foreach ($name in $importsByDll.Keys) {
-            $found = Get-Command $name -ErrorAction SilentlyContinue
-            if (-not $found) { "$name -> NOT FOUND"; continue }
-            $path = $found.Source
-            "$name -> $path"
-            if ($path -like 'C:\Windows\*') { continue }
-            $exports = & $dumpbin /exports $path | ForEach-Object { if ($_ -match '^\s+\d+\s+[0-9A-F]+\s+[0-9A-F]{8}\s+(\S+)') { $Matches[1] } }
-            $importsByDll[$name] | Where-Object { $exports -notcontains $_ } | ForEach-Object { "  missing: $_" }
+          function Exports($path) {
+            & $dumpbin /exports $path | ForEach-Object { if ($_ -match '^\s+\d+\s+[0-9A-F]+\s+(?:[0-9A-F]{8}\s+)?(\S+)') { $Matches[1] } }
           }
+          function ImportsByDll($path) {
+            $byDll = @{}
+            $dll = $null
+            foreach ($line in (& $dumpbin /imports $path)) {
+              if ($line -match '^\s+(\S+\.dll)\s*$') { $dll = $Matches[1]; $byDll[$dll] = @(); continue }
+              if ($dll -and $line -match '^\s+[0-9A-F]+\s+(\S+)\s*$') { $byDll[$dll] += $Matches[1] }
+            }
+            return $byDll
+          }
+          function Check($path, $depth) {
+            $byDll = ImportsByDll $path
+            foreach ($name in $byDll.Keys) {
+              if ($name -like 'api-ms-win-*' -or $name -like 'ext-ms-*') { continue }
+              $found = Resolve-Dll $name
+              if (-not $found) { "$path needs $name -> NOT FOUND"; continue }
+              "$name -> $found ($((Get-Item $found).VersionInfo.FileVersion))"
+              $exports = Exports $found
+              $byDll[$name] | Where-Object { $exports -notcontains $_ } | ForEach-Object { "  missing in ${found}: $_" }
+              if ($depth -gt 0 -and $found -notlike 'C:\Windows\*') { Check $found ($depth - 1) }
+            }
+          }
+          Check $exe 1
+          "--- loader popups in the system event log"
+          Get-WinEvent -LogName System -MaxEvents 300 -ErrorAction SilentlyContinue | Where-Object { $_.Id -eq 26 } | ForEach-Object { $_.Message }
+          "--- application errors"
+          Get-WinEvent -LogName Application -MaxEvents 100 -ErrorAction SilentlyContinue | Where-Object { $_.LevelDisplayName -eq 'Error' } | ForEach-Object { $_.Message }
 
       - name: Clippy
         working-directory: rust
