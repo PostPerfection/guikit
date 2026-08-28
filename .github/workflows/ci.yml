@@ -186,6 +186,32 @@ jobs:
         working-directory: rust
         run: cargo test
 
+      - name: Name the dll missing the test exe's imports (Windows)
+        if: failure() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          $msvc = Get-ChildItem "$vs\VC\Tools\MSVC" | Sort-Object Name | Select-Object -Last 1
+          $dumpbin = Join-Path $msvc.FullName "bin\Hostx64\x64\dumpbin.exe"
+          $exe = (Get-ChildItem rust\target\debug\deps\guikit-*.exe | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+          "exe: $exe"
+          Get-ChildItem rust\target\debug\deps\*.dll -ErrorAction SilentlyContinue | ForEach-Object { "beside exe: $($_.Name)" }
+          $importsByDll = @{}
+          $dll = $null
+          foreach ($line in (& $dumpbin /imports $exe)) {
+            if ($line -match '^\s+(\S+\.dll)\s*$') { $dll = $Matches[1]; $importsByDll[$dll] = @(); continue }
+            if ($dll -and $line -match '^\s+[0-9A-F]+\s+(\S+)\s*$') { $importsByDll[$dll] += $Matches[1] }
+          }
+          foreach ($name in $importsByDll.Keys) {
+            $found = Get-Command $name -ErrorAction SilentlyContinue
+            if (-not $found) { "$name -> NOT FOUND"; continue }
+            $path = $found.Source
+            "$name -> $path"
+            if ($path -like 'C:\Windows\*') { continue }
+            $exports = & $dumpbin /exports $path | ForEach-Object { if ($_ -match '^\s+\d+\s+[0-9A-F]+\s+[0-9A-F]{8}\s+(\S+)') { $Matches[1] } }
+            $importsByDll[$name] | Where-Object { $exports -notcontains $_ } | ForEach-Object { "  missing: $_" }
+          }
+
       - name: Clippy
         working-directory: rust
         run: cargo clippy --all-targets -- -D warnings
