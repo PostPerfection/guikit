@@ -463,5 +463,5 @@ fn opengl_library() -> Option<HMODULE> {
             0
         }
     });
-    (address != 0).then(|| HMODULE(address as *mut c_void))
+    (address != 0).then_some(HMODULE(address as *mut c_void))
 }
