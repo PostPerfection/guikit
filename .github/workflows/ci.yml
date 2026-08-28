@@ -111,6 +111,8 @@ jobs:
         run: |
           echo "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
           echo "CMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" >> $env:GITHUB_ENV
+          # ahead of the runner's other openssl dlls, which lack the exports vcpkg's link against
+          echo "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\bin" >> $env:GITHUB_PATH
 
       - name: Setup libmpv
         uses: PostPerfection/setup-libmpv@v1
