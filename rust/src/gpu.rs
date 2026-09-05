@@ -36,10 +36,17 @@ fn record_request(requested: bool, outcome: &Result<(), String>) {
 /// Switch grok's accelerator plugin on or off for the whole process. The
 /// `initialize` call loads the plugin and may run here first.
 #[tauri::command]
-pub fn set_gpu(enabled: bool) -> Result<bool, String> {
+pub fn set_gpu(
+    enabled: bool,
+    license: Option<String>,
+    registration_url: Option<String>,
+) -> Result<bool, String> {
     postkit::grok_encoder::initialize(0);
     let outcome = if enabled {
-        postkit::grok_encoder::use_gpu()
+        postkit::grok_encoder::use_gpu_with_authentication(
+            license.as_deref(),
+            registration_url.as_deref(),
+        )
     } else {
         postkit::grok_encoder::use_cpu();
         Ok(())
