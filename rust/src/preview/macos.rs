@@ -1,4 +1,4 @@
-//! Hosts libmpv's OpenGL output in an `NSOpenGLView` subclass layered over the
+//! Hosts the preview players' OpenGL output in an `NSOpenGLView` subclass over the
 //! webview.
 //!
 //! The GL view is a sibling of tauri's WKWebView inside the window's content
@@ -14,6 +14,7 @@ use std::ffi::{c_char, c_void, CStr, CString};
 use std::ptr::{self, NonNull};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
+use super::player::Player;
 use objc2::rc::Retained;
 use objc2::{
     define_class, msg_send, AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, Message,
@@ -24,7 +25,6 @@ use objc2_app_kit::{
     NSOpenGLPixelFormatAttribute, NSOpenGLProfileVersion3_2Core, NSOpenGLView, NSView,
 };
 use objc2_foundation::{NSPoint, NSRect, NSSize};
-use postkit::mpv_render::MpvRenderPlayer;
 use tauri::Manager;
 
 const GL_RENDERER: u32 = 0x1F01;
@@ -72,7 +72,7 @@ struct SurfaceRect {
 
 struct PreviewViewIvars {
     /// Weak so the view, which is never released, cannot keep mpv alive forever.
-    player: Weak<MpvRenderPlayer>,
+    player: Weak<Player>,
 }
 
 define_class!(
@@ -114,7 +114,7 @@ impl PreviewView {
     fn new(
         mtm: MainThreadMarker,
         pixel_format: &NSOpenGLPixelFormat,
-        player: &Arc<MpvRenderPlayer>,
+        player: &Arc<Player>,
     ) -> Option<Retained<Self>> {
         let this = Self::alloc(mtm).set_ivars(PreviewViewIvars {
             player: Arc::downgrade(player),
@@ -139,14 +139,14 @@ unsafe impl Send for PreviewSurface {}
 unsafe impl Sync for PreviewSurface {}
 
 pub struct EmbeddedPreview {
-    player: Arc<MpvRenderPlayer>,
+    player: Arc<Player>,
     surface: Arc<PreviewSurface>,
     rect: Arc<Mutex<SurfaceRect>>,
     app_handle: tauri::AppHandle,
 }
 
 impl EmbeddedPreview {
-    pub fn player(&self) -> &MpvRenderPlayer {
+    pub fn player(&self) -> &Player {
         &self.player
     }
 
@@ -188,7 +188,7 @@ pub fn attach(window: &tauri::Window) -> Result<EmbeddedPreview, String> {
     }
     .ok_or("no OpenGL pixel format matches what the preview asks for")?;
 
-    let player = Arc::new(MpvRenderPlayer::new()?);
+    let player = Arc::new(Player::new()?);
     let gl_view = PreviewView::new(mtm, &pixel_format, &player)
         .ok_or("the OpenGL view could not be created")?;
     gl_view.setWantsBestResolutionOpenGLSurface(true);
@@ -219,7 +219,7 @@ pub fn attach(window: &tauri::Window) -> Result<EmbeddedPreview, String> {
     let rect = Arc::new(Mutex::new(SurfaceRect::default()));
     let app_handle = window.app_handle().clone();
 
-    // Weak because mpv owns this callback, and a strong handle would be a cycle.
+    // Weak because the players own this callback, and a strong handle would be a cycle.
     let waiting_player = Arc::downgrade(&player);
     player.set_update_callback({
         let surface = Arc::clone(&surface);
@@ -245,7 +245,7 @@ pub fn attach(window: &tauri::Window) -> Result<EmbeddedPreview, String> {
 /// `wants_redraw` after every update callback mandatory, and it has to happen on
 /// the render thread with the context current, never inside the callback. The
 /// drawing itself is left to AppKit, which also repaints on its own.
-fn request_redraw(surface: &PreviewSurface, player: &MpvRenderPlayer) {
+fn request_redraw(surface: &PreviewSurface, player: &Player) {
     let context = unsafe { &*surface.context };
     context.makeCurrentContext();
     if player.wants_redraw() {

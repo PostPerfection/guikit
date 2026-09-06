@@ -37,7 +37,7 @@ const STEP_TOLERANCE_SECONDS: f64 = 2.0 / FRAMES_PER_SECOND as f64;
 const PLAYBACK_TIMEOUT: Duration = Duration::from_secs(30);
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
-fn write_clip(path: &Path, seconds: u32) {
+pub(super) fn write_clip(path: &Path, seconds: u32) {
     let out = std::process::Command::new("ffmpeg")
         .args([
             "-v",

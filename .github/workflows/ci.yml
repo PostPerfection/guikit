@@ -149,6 +149,11 @@ jobs:
           unzip -q ffmpeg.zip
           echo "$(cygpath -w "$PWD/ffmpeg-n8.1.2-47-g156bb4d299-win64-gpl-8.1/bin")" >> "$GITHUB_PATH"
 
+      - name: Setup grok
+        uses: PostPerfection/setup-grok@v1
+        with:
+          grok-ref: v20.4.3
+
       - name: Check test tools
         shell: bash
         run: |
@@ -158,6 +163,7 @@ jobs:
             ls "$MPV_LIB_DIR/mpv.lib"
           else
             pkg-config --modversion mpv
+            pkg-config --modversion libgrokj2k
           fi
 
       - name: Build

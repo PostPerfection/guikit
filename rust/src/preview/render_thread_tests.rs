@@ -86,7 +86,7 @@ type GlTexImage2D = unsafe extern "C" fn(u32, i32, i32, i32, i32, i32, u32, u32,
 type GlFramebufferTexture2D = unsafe extern "C" fn(u32, u32, u32, u32, i32);
 type GlCheckFramebufferStatus = unsafe extern "C" fn(u32) -> u32;
 
-fn egl_symbol(name: &str) -> *mut c_void {
+pub(super) fn egl_symbol(name: &str) -> *mut c_void {
     let library = unsafe { libc::dlopen(EGL_LIBRARY.as_ptr(), libc::RTLD_NOW | libc::RTLD_GLOBAL) };
     assert!(!library.is_null(), "libEGL is not loadable");
     let symbol = CString::new(name).unwrap();
@@ -95,20 +95,23 @@ fn egl_symbol(name: &str) -> *mut c_void {
     address
 }
 
-unsafe extern "C" fn resolve_gl_symbol(_ctx: *mut c_void, name: *const c_char) -> *mut c_void {
+pub(super) unsafe extern "C" fn resolve_gl_symbol(
+    _ctx: *mut c_void,
+    name: *const c_char,
+) -> *mut c_void {
     let get_proc_address: EglGetProcAddress =
         unsafe { std::mem::transmute(egl_symbol("eglGetProcAddress")) };
     unsafe { get_proc_address(name) }
 }
 
-fn gl_symbol(name: &str) -> *mut c_void {
+pub(super) fn gl_symbol(name: &str) -> *mut c_void {
     let name = CString::new(name).unwrap();
     unsafe { resolve_gl_symbol(std::ptr::null_mut(), name.as_ptr()) }
 }
 
-/// An OpenGL context current on this thread, drawing into a texture. Hands back
-/// the framebuffer mpv is given.
-fn current_gl_context() -> i32 {
+/// An OpenGL context current on this thread, drawing into a texture of the size
+/// asked for. Hands back the framebuffer the player is given.
+pub(super) fn current_gl_context(width: i32, height: i32) -> i32 {
     unsafe {
         let get_display: EglGetDisplay = std::mem::transmute(egl_symbol("eglGetDisplay"));
         let initialize: EglInitialize = std::mem::transmute(egl_symbol("eglInitialize"));
@@ -178,8 +181,8 @@ fn current_gl_context() -> i32 {
             GL_TEXTURE_2D,
             0,
             GL_RGBA as i32,
-            TARGET_WIDTH,
-            TARGET_HEIGHT,
+            width,
+            height,
             0,
             GL_RGBA,
             GL_UNSIGNED_BYTE,
@@ -215,7 +218,7 @@ impl RenderThread {
     /// Binds the render context to the calling thread, which is the render thread
     /// from here on.
     fn bound_to_this_thread() -> Self {
-        let framebuffer = current_gl_context();
+        let framebuffer = current_gl_context(TARGET_WIDTH, TARGET_HEIGHT);
         let player = Arc::new(MpvRenderPlayer::new().unwrap());
         player
             .init_opengl(resolve_gl_symbol, std::ptr::null_mut(), None)

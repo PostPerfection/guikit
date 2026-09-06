@@ -1,4 +1,5 @@
-//! Hosts libmpv's OpenGL output in a `GtkGLArea` layered over the webview.
+//! Hosts the preview players' OpenGL output in a `GtkGLArea` layered over the
+//! webview.
 //!
 //! Native Wayland cannot reparent another process's window, so the preview has
 //! to render in-process. The GL area sits in a `GtkOverlay` above tauri's
@@ -7,13 +8,14 @@
 
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::ptr;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use gtk::glib;
 use gtk::glib::translate::ToGlibPtr;
 use gtk::prelude::*;
-use postkit::mpv_render::{MpvRenderPlayer, NativeDisplay};
-use std::sync::Arc;
+use postkit::mpv_render::NativeDisplay;
+
+use super::player::Player;
 
 /// `GL_DRAW_FRAMEBUFFER_BINDING`. GtkGLArea renders into a framebuffer it owns
 /// and offers no getter for it, so mpv's target has to be read back from GL.
@@ -40,13 +42,13 @@ enum SurfaceEvent {
 }
 
 pub struct EmbeddedPreview {
-    player: Arc<MpvRenderPlayer>,
+    player: Arc<Player>,
     rect: Arc<Mutex<SurfaceRect>>,
     events: async_channel::Sender<SurfaceEvent>,
 }
 
 impl EmbeddedPreview {
-    pub fn player(&self) -> &MpvRenderPlayer {
+    pub fn player(&self) -> &Player {
         &self.player
     }
 
@@ -70,7 +72,7 @@ pub fn attach(window: &tauri::Window) -> Result<EmbeddedPreview, String> {
     let gtk_window = window.gtk_window().map_err(|e| e.to_string())?;
     let webview_box = window.default_vbox().map_err(|e| e.to_string())?;
 
-    let player = Arc::new(MpvRenderPlayer::new()?);
+    let player = Arc::new(Player::new()?);
     let gl_area = gtk::GLArea::new();
     gl_area.set_has_depth_buffer(false);
     gl_area.set_has_stencil_buffer(false);
@@ -126,12 +128,12 @@ pub fn attach(window: &tauri::Window) -> Result<EmbeddedPreview, String> {
     })
 }
 
-/// Hand mpv the GL area's context. Reached from the realize signal and, when
+/// Hand the players the GL area's context. Reached from the realize signal and, when
 /// the window is already on screen, directly from `attach`, so it has to
 /// tolerate being called twice.
 fn bind_render_context(
     gl_area: &gtk::GLArea,
-    player: &Arc<MpvRenderPlayer>,
+    player: &Arc<Player>,
     events: &async_channel::Sender<SurfaceEvent>,
 ) {
     if player.is_initialized() {
@@ -147,7 +149,7 @@ fn bind_render_context(
         eprintln!("[preview] no native display handle, hardware decode will be off");
     }
     if let Err(error) = player.init_opengl(resolve_gl_symbol, ptr::null_mut(), native_display) {
-        eprintln!("[preview] libmpv OpenGL init failed: {error}");
+        eprintln!("[preview] OpenGL init failed: {error}");
         return;
     }
     let events = events.clone();
@@ -178,7 +180,7 @@ fn apply_rect(gl_area: &gtk::GLArea, rect: SurfaceRect) {
 fn spawn_event_pump(
     incoming: async_channel::Receiver<SurfaceEvent>,
     gl_area: gtk::GLArea,
-    player: Arc<MpvRenderPlayer>,
+    player: Arc<Player>,
     rect: Arc<Mutex<SurfaceRect>>,
 ) {
     glib::MainContext::default().spawn_local(async move {

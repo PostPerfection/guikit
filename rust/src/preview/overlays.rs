@@ -1,10 +1,11 @@
 //! The QC overlays drawn over playback, as ASS drawings on mpv's OSD.
 //!
-//! Everything here is pure text: the requested overlays become filled paths in
-//! the source picture's own pixels, one ASS dialogue event per overlay. mpv
-//! stretches an overlay's canvas over the whole rendered surface, black bars
-//! included, so the canvas is sized and the drawing shifted to land on the
-//! picture instead, which is what `PicturePlacement` works out.
+//! The requested overlays become filled rectangles in the source picture's own
+//! pixels. A renderer that composites frames itself takes those rectangles, and
+//! mpv takes them as one ASS dialogue event per overlay. mpv stretches an
+//! overlay's canvas over the whole rendered surface, black bars included, so the
+//! canvas is sized and the drawing shifted to land on the picture instead, which
+//! is what `PicturePlacement` works out.
 
 use serde::Deserialize;
 
@@ -44,6 +45,44 @@ const CROP_OUTLINE_INK: OverlayInk = OverlayInk {
     colour: RED,
     alpha: "1A",
 };
+
+// pixels of the source picture at full resolution, not of the rendered surface
+pub use postkit::grok_player::OverlayRectangle;
+
+impl OverlayInk {
+    // ass writes the colour BBGGRR and the alpha as transparency
+    fn filled(self, x: i64, y: i64, width: i64, height: i64) -> OverlayRectangle {
+        OverlayRectangle {
+            x,
+            y,
+            width,
+            height,
+            colour: [
+                hexadecimal_pair(self.colour, RED_DIGITS_AT),
+                hexadecimal_pair(self.colour, GREEN_DIGITS_AT),
+                hexadecimal_pair(self.colour, BLUE_DIGITS_AT),
+            ],
+            alpha: u8::MAX - hexadecimal_pair(self.alpha, 0),
+        }
+    }
+}
+
+const BLUE_DIGITS_AT: usize = 0;
+const GREEN_DIGITS_AT: usize = 2;
+const RED_DIGITS_AT: usize = 4;
+
+fn hexadecimal_pair(text: &str, at: usize) -> u8 {
+    let digits = text.as_bytes();
+    hexadecimal_digit(digits[at]) * 16 + hexadecimal_digit(digits[at + 1])
+}
+
+fn hexadecimal_digit(digit: u8) -> u8 {
+    match digit {
+        b'0'..=b'9' => digit - b'0',
+        b'A'..=b'F' => digit - b'A' + 10,
+        _ => panic!("overlay ink is written as uppercase hexadecimal"),
+    }
+}
 
 /// Line widths in source pixels, so a line is as thick against the picture as it
 /// was when the same overlays were drawn by a video filter.
@@ -139,32 +178,54 @@ pub fn overlay_drawing(
     osd: Option<OsdRectangle>,
 ) -> Option<OverlayDrawing> {
     let source = source?;
-    let placement = picture_placement(source, osd);
-    let mut events: Vec<String> = Vec::new();
-    // the mask is a fill, so it draws first or it covers the lines
-    if let Some(aspect) = overlays.aspect_mask {
-        events.extend(aspect_mask_event(aspect, source, &placement));
-    }
-    if let Some(crop) = overlays.crop.filter(|_| overlays.crop_visible) {
-        events.extend(crop_events(crop, source, &placement));
-    }
-    if let Some(percent) = overlays.safe_area_percent {
-        events.push(safe_area_event(percent, source, &placement));
-    }
-    if overlays.centre_cross {
-        events.push(centre_cross_event(source, &placement));
-    }
-    if overlays.thirds_grid {
-        events.push(thirds_grid_event(source, &placement));
-    }
+    let events = overlay_events(overlays, source);
     if events.is_empty() {
         return None;
     }
+    let placement = picture_placement(source, osd);
+    let drawn: Vec<String> = events
+        .iter()
+        .map(|event| drawing_event(event, &placement))
+        .collect();
     Some(OverlayDrawing {
-        events: events.join("\n"),
+        events: drawn.join("\n"),
         play_res_x: placement.play_res_x,
         play_res_y: placement.play_res_y,
     })
+}
+
+// in the order the ass events draw them
+pub fn overlay_rectangles(overlays: &PreviewOverlays, source: SourceSize) -> Vec<OverlayRectangle> {
+    overlay_events(overlays, source)
+        .into_iter()
+        .flat_map(|event| event.rectangles)
+        .collect()
+}
+
+struct OverlayEvent {
+    ink: OverlayInk,
+    rectangles: Vec<OverlayRectangle>,
+}
+
+fn overlay_events(overlays: &PreviewOverlays, source: SourceSize) -> Vec<OverlayEvent> {
+    let mut events: Vec<OverlayEvent> = Vec::new();
+    // the mask is a fill, so it draws first or it covers the lines
+    if let Some(aspect) = overlays.aspect_mask {
+        events.extend(aspect_mask_event(aspect, source));
+    }
+    if let Some(crop) = overlays.crop.filter(|_| overlays.crop_visible) {
+        events.extend(crop_events(crop, source));
+    }
+    if let Some(percent) = overlays.safe_area_percent {
+        events.push(safe_area_event(percent, source));
+    }
+    if overlays.centre_cross {
+        events.push(centre_cross_event(source));
+    }
+    if overlays.thirds_grid {
+        events.push(thirds_grid_event(source));
+    }
+    events
 }
 
 /// The canvas a drawing in source pixels needs, and where the picture's top left
@@ -206,15 +267,28 @@ fn picture_placement(source: SourceSize, osd: Option<OsdRectangle>) -> PicturePl
 }
 
 /// One ASS dialogue event: the drawing's origin at the picture's top left corner,
-/// no border or shadow, and a filled path in the ink asked for.
-fn drawing_event(ink: OverlayInk, placement: &PicturePlacement, path: &str) -> String {
+/// no border or shadow, and the event's rectangles filled in the ink asked for.
+fn drawing_event(event: &OverlayEvent, placement: &PicturePlacement) -> String {
+    let path: Vec<String> = event
+        .rectangles
+        .iter()
+        .map(|rectangle| rectangle_path(*rectangle))
+        .collect();
+    let path = path.join(" ");
     format!(
         "{{\\an7\\pos({},{})\\bord0\\shad0\\1c&H{}&\\1a&H{}&\\p1}}{path}{{\\p0}}",
-        placement.offset_x, placement.offset_y, ink.colour, ink.alpha
+        placement.offset_x, placement.offset_y, event.ink.colour, event.ink.alpha
     )
 }
 
-fn rectangle_path(x: i64, y: i64, width: i64, height: i64) -> String {
+fn rectangle_path(rectangle: OverlayRectangle) -> String {
+    let OverlayRectangle {
+        x,
+        y,
+        width,
+        height,
+        ..
+    } = rectangle;
     let right = x + width;
     let bottom = y + height;
     format!("m {x} {y} l {right} {y} l {right} {bottom} l {x} {bottom}")
@@ -222,70 +296,73 @@ fn rectangle_path(x: i64, y: i64, width: i64, height: i64) -> String {
 
 /// A rectangle's edges as four filled bars, because a path with a hole in it
 /// depends on which way round libass winds the two.
-fn outline_path(x: i64, y: i64, width: i64, height: i64, thickness: i64) -> String {
+fn outline_rectangles(
+    ink: OverlayInk,
+    x: i64,
+    y: i64,
+    width: i64,
+    height: i64,
+    thickness: i64,
+) -> Vec<OverlayRectangle> {
     let sides_height = height - 2 * thickness;
-    [
-        rectangle_path(x, y, width, thickness),
-        rectangle_path(x, y + height - thickness, width, thickness),
-        rectangle_path(x, y + thickness, thickness, sides_height),
-        rectangle_path(
+    vec![
+        ink.filled(x, y, width, thickness),
+        ink.filled(x, y + height - thickness, width, thickness),
+        ink.filled(x, y + thickness, thickness, sides_height),
+        ink.filled(
             x + width - thickness,
             y + thickness,
             thickness,
             sides_height,
         ),
     ]
-    .join(" ")
 }
 
-fn safe_area_event(percent: u8, source: SourceSize, placement: &PicturePlacement) -> String {
+fn safe_area_event(percent: u8, source: SourceSize) -> OverlayEvent {
     let size = f64::from(percent) / 100.0;
-    let width = rounded(source.width * size);
-    let height = rounded(source.height * size);
-    let path = outline_path(
-        rounded((source.width - source.width * size) / 2.0),
-        rounded((source.height - source.height * size) / 2.0),
-        width,
-        height,
-        SAFE_AREA_THICKNESS,
-    );
-    drawing_event(SAFE_AREA_INK, placement, &path)
+    let ink = SAFE_AREA_INK;
+    OverlayEvent {
+        ink,
+        rectangles: outline_rectangles(
+            ink,
+            rounded((source.width - source.width * size) / 2.0),
+            rounded((source.height - source.height * size) / 2.0),
+            rounded(source.width * size),
+            rounded(source.height * size),
+            SAFE_AREA_THICKNESS,
+        ),
+    }
 }
 
 /// The bands a target aspect leaves on the picture, as fills over it. Which pair
 /// applies is arithmetic here, the picture's own size being known.
-fn aspect_mask_event(
-    aspect: f64,
-    source: SourceSize,
-    placement: &PicturePlacement,
-) -> Option<String> {
+fn aspect_mask_event(aspect: f64, source: SourceSize) -> Option<OverlayEvent> {
     let width = source.width;
     let height = source.height;
     let band_width = (width - height * aspect) / 2.0;
     let band_height = (height - width / aspect) / 2.0;
-    let path = if band_width >= SMALLEST_MASK_BAND_PIXELS {
+    let ink = ASPECT_MASK_INK;
+    let rectangles = if band_width >= SMALLEST_MASK_BAND_PIXELS {
         let band = rounded(band_width);
-        [
-            rectangle_path(0, 0, band, rounded(height)),
-            rectangle_path(rounded(width) - band, 0, band, rounded(height)),
+        vec![
+            ink.filled(0, 0, band, rounded(height)),
+            ink.filled(rounded(width) - band, 0, band, rounded(height)),
         ]
-        .join(" ")
     } else if band_height >= SMALLEST_MASK_BAND_PIXELS {
         let band = rounded(band_height);
-        [
-            rectangle_path(0, 0, rounded(width), band),
-            rectangle_path(0, rounded(height) - band, rounded(width), band),
+        vec![
+            ink.filled(0, 0, rounded(width), band),
+            ink.filled(0, rounded(height) - band, rounded(width), band),
         ]
-        .join(" ")
     } else {
         // the target is the picture's own aspect, so there is nothing to mask
         return None;
     };
-    Some(drawing_event(ASPECT_MASK_INK, placement, &path))
+    Some(OverlayEvent { ink, rectangles })
 }
 
 /// The bands the crop discards, as fills, plus an outline around what it keeps.
-fn crop_events(crop: PreviewCrop, source: SourceSize, placement: &PicturePlacement) -> Vec<String> {
+fn crop_events(crop: PreviewCrop, source: SourceSize) -> Vec<OverlayEvent> {
     let width = rounded(source.width);
     let height = rounded(source.height);
     let left = i64::from(crop.left);
@@ -293,7 +370,7 @@ fn crop_events(crop: PreviewCrop, source: SourceSize, placement: &PicturePlaceme
     let top = i64::from(crop.top);
     let bottom = i64::from(crop.bottom);
     let mut events = Vec::new();
-    let bands: Vec<String> = [
+    let bands: Vec<OverlayRectangle> = [
         (left > 0, (0, 0, left, height)),
         (right > 0, (width - right, 0, right, height)),
         (top > 0, (0, 0, width, top)),
@@ -301,76 +378,86 @@ fn crop_events(crop: PreviewCrop, source: SourceSize, placement: &PicturePlaceme
     ]
     .into_iter()
     .filter(|(cropped, _)| *cropped)
-    .map(|(_, (x, y, band_width, band_height))| rectangle_path(x, y, band_width, band_height))
+    .map(|(_, (x, y, band_width, band_height))| CROP_BAND_INK.filled(x, y, band_width, band_height))
     .collect();
     if !bands.is_empty() {
-        events.push(drawing_event(CROP_BAND_INK, placement, &bands.join(" ")));
+        events.push(OverlayEvent {
+            ink: CROP_BAND_INK,
+            rectangles: bands,
+        });
     }
-    let path = outline_path(
-        left,
-        top,
-        width - left - right,
-        height - top - bottom,
-        CROP_OUTLINE_THICKNESS,
-    );
-    events.push(drawing_event(CROP_OUTLINE_INK, placement, &path));
+    events.push(OverlayEvent {
+        ink: CROP_OUTLINE_INK,
+        rectangles: outline_rectangles(
+            CROP_OUTLINE_INK,
+            left,
+            top,
+            width - left - right,
+            height - top - bottom,
+            CROP_OUTLINE_THICKNESS,
+        ),
+    });
     events
 }
 
-fn centre_cross_event(source: SourceSize, placement: &PicturePlacement) -> String {
+fn centre_cross_event(source: SourceSize) -> OverlayEvent {
     let width = rounded(source.width);
     let height = rounded(source.height);
-    let path = [
-        rectangle_path(
-            (width - CENTRE_CROSS_THICKNESS) / 2,
-            0,
-            CENTRE_CROSS_THICKNESS,
-            height,
-        ),
-        rectangle_path(
-            0,
-            (height - CENTRE_CROSS_THICKNESS) / 2,
-            width,
-            CENTRE_CROSS_THICKNESS,
-        ),
-    ]
-    .join(" ");
-    drawing_event(CENTRE_CROSS_INK, placement, &path)
+    let ink = CENTRE_CROSS_INK;
+    OverlayEvent {
+        ink,
+        rectangles: vec![
+            ink.filled(
+                (width - CENTRE_CROSS_THICKNESS) / 2,
+                0,
+                CENTRE_CROSS_THICKNESS,
+                height,
+            ),
+            ink.filled(
+                0,
+                (height - CENTRE_CROSS_THICKNESS) / 2,
+                width,
+                CENTRE_CROSS_THICKNESS,
+            ),
+        ],
+    }
 }
 
 /// The four lines that divide the picture in thirds, the picture's own edges left
 /// alone.
-fn thirds_grid_event(source: SourceSize, placement: &PicturePlacement) -> String {
+fn thirds_grid_event(source: SourceSize) -> OverlayEvent {
     let width = rounded(source.width);
     let height = rounded(source.height);
-    let path = [
-        rectangle_path(
-            rounded(source.width / 3.0),
-            0,
-            THIRDS_GRID_THICKNESS,
-            height,
-        ),
-        rectangle_path(
-            rounded(source.width * 2.0 / 3.0),
-            0,
-            THIRDS_GRID_THICKNESS,
-            height,
-        ),
-        rectangle_path(
-            0,
-            rounded(source.height / 3.0),
-            width,
-            THIRDS_GRID_THICKNESS,
-        ),
-        rectangle_path(
-            0,
-            rounded(source.height * 2.0 / 3.0),
-            width,
-            THIRDS_GRID_THICKNESS,
-        ),
-    ]
-    .join(" ");
-    drawing_event(THIRDS_GRID_INK, placement, &path)
+    let ink = THIRDS_GRID_INK;
+    OverlayEvent {
+        ink,
+        rectangles: vec![
+            ink.filled(
+                rounded(source.width / 3.0),
+                0,
+                THIRDS_GRID_THICKNESS,
+                height,
+            ),
+            ink.filled(
+                rounded(source.width * 2.0 / 3.0),
+                0,
+                THIRDS_GRID_THICKNESS,
+                height,
+            ),
+            ink.filled(
+                0,
+                rounded(source.height / 3.0),
+                width,
+                THIRDS_GRID_THICKNESS,
+            ),
+            ink.filled(
+                0,
+                rounded(source.height * 2.0 / 3.0),
+                width,
+                THIRDS_GRID_THICKNESS,
+            ),
+        ],
+    }
 }
 
 /// ASS drawing coordinates are whole numbers, and sub-pixel placement is below
@@ -405,6 +492,21 @@ mod tests {
         drawn(overlays, hd_source())
             .map(|d| d.events)
             .unwrap_or_default()
+    }
+
+    fn rectangles(overlays: &PreviewOverlays) -> Vec<OverlayRectangle> {
+        overlay_rectangles(overlays, hd_source().unwrap())
+    }
+
+    fn every_overlay() -> PreviewOverlays {
+        PreviewOverlays {
+            safe_area_percent: Some(95),
+            aspect_mask: Some(2.39),
+            centre_cross: true,
+            thirds_grid: true,
+            crop: Some(LEFT_CROP),
+            crop_visible: true,
+        }
     }
 
     #[test]
@@ -673,6 +775,55 @@ mod tests {
                 .count(),
             2
         );
+    }
+
+    #[test]
+    fn every_overlay_at_once_fills_rectangles_with_the_mask_bands_first() {
+        let filled = rectangles(&every_overlay());
+        assert!(!filled.is_empty());
+        assert_eq!(filled[0].colour, [0, 0, 0]);
+        let drawing = drawn(&every_overlay(), hd_source()).unwrap();
+        assert_eq!(drawing.events.lines().count(), 6);
+    }
+
+    #[test]
+    fn nothing_on_fills_no_rectangles() {
+        assert!(rectangles(&PreviewOverlays::default()).is_empty());
+    }
+
+    #[test]
+    fn the_crop_band_rectangles_are_the_edges_it_takes_off() {
+        let filled = rectangles(&PreviewOverlays {
+            crop: Some(LEFT_CROP),
+            crop_visible: true,
+            ..Default::default()
+        });
+        assert!(filled.contains(&OverlayRectangle {
+            x: 0,
+            y: 0,
+            width: 138,
+            height: 1080,
+            colour: [255, 0, 0],
+            alpha: 89,
+        }));
+    }
+
+    #[test]
+    fn ass_ink_reads_back_to_front_and_counts_transparency_down() {
+        let band = OverlayInk {
+            colour: RED,
+            alpha: "A6",
+        }
+        .filled(0, 0, 1, 1);
+        assert_eq!(band.colour, [255, 0, 0]);
+        assert_eq!(band.alpha, 89);
+        let safe_area = OverlayInk {
+            colour: WHITE,
+            alpha: "33",
+        }
+        .filled(0, 0, 1, 1);
+        assert_eq!(safe_area.colour, [255, 255, 255]);
+        assert_eq!(safe_area.alpha, 204);
     }
 
     #[test]

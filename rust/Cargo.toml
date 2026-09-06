@@ -13,10 +13,13 @@ tauri = { version = "2", features = ["unstable"] }
 # tauri already builds serde, and a command taking a struct needs the derive
 serde = { version = "1", features = ["derive"] }
 postkit = { git = "https://github.com/PostPerfection/postkit.git", features = [
+    "grok-ffi",
     "libmpv",
 ] }
 
 [dev-dependencies]
+# the backend selection test writes the J2K MXF the grok player is picked for
+asdcplib = { git = "https://github.com/PostPerfection/asdcplib-rs.git", rev = "fd9d4a0" }
 tempfile = "3"
 
 [target.'cfg(target_os = "linux")'.dependencies]

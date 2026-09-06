@@ -2,7 +2,7 @@
 
 Shared code for the PostPerfection wizard GUIs, frontend and native.
 
-- `src/preview.js`: mpv-backed preview player and scrubber
+- `src/preview.js`: preview player and scrubber
 - `src/playlist.js`: the queue that plays packages one after another
 - `src/jobs.js`: the Jobs panel, the backend's jobs and an app's second source
 - `src/shortcuts.js`: keyboard shortcut handling and the shortcuts dialog
@@ -13,8 +13,8 @@ Shared code for the PostPerfection wizard GUIs, frontend and native.
 
 ## The guikit crate
 
-`rust/src/preview` hosts libmpv's video output inside the app window and
-exposes the tauri commands the page drives it with. `attach` has a per-platform
+`rust/src/preview` hosts the video output inside the app window and exposes the
+tauri commands the page drives it with. `attach` has a per-platform
 implementation (`linux.rs`, `macos.rs`, `windows.rs`); only linux is written,
 the others return an error saying so.
 
@@ -25,13 +25,27 @@ An app registers the commands from `guikit::preview` in its
 app.manage(guikit::preview::create_player(app, "main"));
 ```
 
-Playback is the only path, so an app needs libmpv development files at build
-time. When `attach` fails the app still starts, with `preview_is_embedded`
+Playback is the only path, so an app needs libmpv and grok development files at
+build time. When `attach` fails the app still starts, with `preview_is_embedded`
 reporting false so the page hides the preview.
 
 The crate depends on postkit by git url. Both wizards redirect that to their
 own `extern/postkit` submodule with a `[patch]` in their gui `Cargo.toml`, so a
 build compiles postkit once.
+
+## Preview backends
+
+Two players sit behind the surface and each load picks one. postkit's
+`GrokPlayer` takes JPEG 2000 sources: a picture track MXF, a CPL, a package
+directory, or a directory of codestreams. Everything else goes to libmpv.
+`preview_load` and `preview_load_dcp` both choose, and print the choice as
+`[preview] backend: grok|mpv for <path>`. Every other command follows the
+backend the load picked, so the page drives one player either way.
+
+grok decodes with the JPEG 2000 codec rather than through libavcodec, draws the
+QC overlays and the subtitles into the frame it composes, and starts playing on
+load the way mpv's `loadfile` does. Both players render into the same GL
+framebuffer, and the surface renders whichever one is loaded.
 
 ## Preview transport
 
@@ -45,9 +59,9 @@ binding the same jump to a key labels it from that constant rather than its own.
 
 `previewPlayPause`, `previewSeek(seconds)`, `previewSeekAbsolute(seconds)`,
 `previewFrameStepBack()` and `previewFrameStepForward()` are also exported for an
-app's shortcuts. The two frame steps run mpv's `frame-back-step` and
-`frame-step`, which pause playback, and need `preview_frame_back_step` and
-`preview_frame_step` registered beside the other commands.
+app's shortcuts. Both frame steps pause playback, and need
+`preview_frame_back_step` and `preview_frame_step` registered beside the other
+commands.
 
 ## Preview QC controls
 
@@ -62,17 +76,20 @@ Crop, Sub and CC start disabled, because they have nothing to show until the
 page hands them one. `setPreviewCrop({ left, right, top, bottom })` gives the
 crop overlay the pixels the job takes off each edge of the source picture, and
 `setPreviewCrop(null)` takes it away. `setPreviewSubtitleFile(path)` and
-`setPreviewCaptionFile(path)` load a file into mpv's primary and secondary
+`setPreviewCaptionFile(path)` load a file into the primary and secondary
 subtitle slots, the secondary one rendering at the top of the frame, and null
-drops the track. Only what libass reads natively works: SRT, ASS or SSA and
-WebVTT, so the wizards convert their subtitle XML to SRT first. The clip has to
-be loaded before the track goes on it, and loading another clip drops both
-tracks.
+drops the track. Both backends have those two slots. mpv takes what libass
+reads natively, SRT, ASS or SSA and WebVTT, and grok takes SRT, ASS or SSA, so
+the wizards convert their subtitle XML to SRT first. The clip has to be loaded
+before the track goes on it, and loading another clip drops both tracks.
 
-The overlays are one ASS overlay on mpv's OSD. `overlay_drawing` builds it from
-a `PreviewOverlays` struct as one dialogue event per overlay, each a filled path
-in the source picture's own pixels, and `preview_set_overlays` installs it
-through postkit's `set_osd_overlay`. Nothing goes through a video filter any
+On mpv the overlays are one ASS overlay on the OSD. `overlay_drawing` builds it
+from a `PreviewOverlays` struct as one dialogue event per overlay, each a filled
+path in the source picture's own pixels, and `preview_set_overlays` installs it
+through postkit's `set_osd_overlay`. On grok the same struct becomes filled
+rectangles through `overlay_rectangles`, in those same source pixels, and
+`set_overlay` hands them to the compositor, which draws them into the frame.
+Nothing goes through a video filter any
 more: libass composites the drawings, so no frame passes through the CPU for
 them and switching one on is not a filter reconfiguration, which is what used to
 clear mpv's `eof-reached` under the playlist and cost frame rate while playing.
@@ -101,13 +118,14 @@ load, a resized window and a decode scale change all move it. The drawing
 already on the player is remembered, so a poll that finds nothing moved sends
 nothing.
 
-`preview_set_decode_scale` takes `full`, `half` or `quarter` and sets
-libavcodec's `lowres` to 0, 1 or 2 through mpv's `vd-lavc-o`. The decoder reads
-lowres when it opens, so the command reloads the current file at the position
-and pause state it had. JPEG 2000 reaches half and quarter by discarding DWT
-levels, so a reduced scale costs a fraction of a full decode. Other codecs
-honour lowres only where their decoder implements it, which h264, HEVC and
-ProRes do not, and the control is offered for them all the same.
+`preview_set_decode_scale` takes `full`, `half` or `quarter`. On mpv that is
+libavcodec's `lowres` at 0, 1 or 2 through `vd-lavc-o`. The decoder reads lowres
+when it opens, so the command reloads the current file at the position and pause
+state it had. Other codecs honour lowres only where their decoder implements it,
+which h264, HEVC and ProRes do not, and the control is offered for them all the
+same. On grok it is the number of DWT levels discarded, which needs no reload.
+Either way JPEG 2000 reaches half and quarter by discarding levels, so a reduced
+scale costs a fraction of a full decode.
 
 That reload takes the external subtitle tracks with it, and a `sub-add` sent
 straight after a `loadfile` is refused because the file is not loaded yet. So
@@ -119,12 +137,12 @@ ids they had.
 `dropped_frames` (mpv `frame-drop-count`), `delayed_frames`
 (`vo-delayed-frame-count`), `cache_seconds` (`demuxer-cache-duration`),
 `decoder_fps` (`estimated-vf-fps`) and `container_fps` (`container-fps`). Each
-is null until mpv has a value for it. The scrubber poll reads them, so the HUD
-costs no second timer.
+is null until the backend has a value for it, and grok leaves `cache_seconds`
+null always. The scrubber poll reads them, so the HUD costs no second timer.
 
-It also carries `eof`, mpv's `eof-reached`, which is what the playlist advances
-on. mpv only holds that true, paused on the last frame, because postkit starts
-the player with `keep-open` on; guikit sets nothing for it.
+It also carries `eof`, which is what the playlist advances on. Both backends
+hold it true paused on the last frame: mpv because postkit starts it with
+`keep-open` on, grok because it stops there.
 
 ## Playlist
 

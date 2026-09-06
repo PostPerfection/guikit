@@ -1,4 +1,4 @@
-//! Hosts libmpv's OpenGL output in a child window layered over the webview.
+//! Hosts the preview players' OpenGL output in a child window over the webview.
 //!
 //! WebView2 owns a child window covering tauri's whole client area, so the
 //! preview is a sibling child window raised above it and positioned from the
@@ -11,7 +11,7 @@ use std::mem::size_of;
 use std::ptr;
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
-use postkit::mpv_render::MpvRenderPlayer;
+use super::player::Player;
 use tauri::Manager;
 use windows::core::{w, Error, PCSTR, PCWSTR};
 use windows::Win32::Foundation::{HINSTANCE, HMODULE, HWND, LPARAM, LRESULT, RECT, WPARAM};
@@ -82,12 +82,12 @@ impl Drop for GlSurface {
 /// owns this, cannot keep alive the surface whose teardown destroys it.
 struct PaintTarget {
     surface: Weak<GlSurface>,
-    player: Weak<MpvRenderPlayer>,
+    player: Weak<Player>,
 }
 
 /// Hand the window everything a repaint needs. The window owns it from here
 /// until `WM_NCDESTROY`, the last message it can ever be sent.
-fn install_paint_target(surface: &Arc<GlSurface>, player: &Arc<MpvRenderPlayer>) {
+fn install_paint_target(surface: &Arc<GlSurface>, player: &Arc<Player>) {
     let target = Box::new(PaintTarget {
         surface: Arc::downgrade(surface),
         player: Arc::downgrade(player),
@@ -101,7 +101,7 @@ fn install_paint_target(surface: &Arc<GlSurface>, player: &Arc<MpvRenderPlayer>)
     }
 }
 
-fn paint_target(window: HWND) -> Option<(Arc<GlSurface>, Arc<MpvRenderPlayer>)> {
+fn paint_target(window: HWND) -> Option<(Arc<GlSurface>, Arc<Player>)> {
     let pointer = unsafe { GetWindowLongPtrW(window, GWLP_USERDATA) };
     if pointer == 0 {
         return None;
@@ -129,7 +129,7 @@ struct SurfaceRect {
 pub struct EmbeddedPreview {
     // The player is declared before the surface so that mpv's render context is
     // freed while the GL context it was created with is still alive.
-    player: Arc<MpvRenderPlayer>,
+    player: Arc<Player>,
     surface: Arc<GlSurface>,
     rect: Arc<Mutex<SurfaceRect>>,
     app: tauri::AppHandle,
@@ -137,7 +137,7 @@ pub struct EmbeddedPreview {
 }
 
 impl EmbeddedPreview {
-    pub fn player(&self) -> &MpvRenderPlayer {
+    pub fn player(&self) -> &Player {
         &self.player
     }
 
@@ -171,7 +171,7 @@ pub fn attach(window: &tauri::Window) -> Result<EmbeddedPreview, String> {
     let scale_factor = window.scale_factor().map_err(|error| error.to_string())?;
     let surface = Arc::new(create_gl_surface(parent)?);
 
-    let player = Arc::new(MpvRenderPlayer::new()?);
+    let player = Arc::new(Player::new()?);
     // `create_gl_surface` left the GL context current on this thread. Windows
     // has no native display handle to pass, so mpv negotiates hardware decode.
     player.init_opengl(resolve_gl_symbol, ptr::null_mut(), None)?;
@@ -400,13 +400,13 @@ fn make_current(surface: &GlSurface) -> bool {
     }
 }
 
-fn make_current_and_draw(surface: &GlSurface, player: &MpvRenderPlayer) {
+fn make_current_and_draw(surface: &GlSurface, player: &Player) {
     if make_current(surface) {
         draw(surface, player);
     }
 }
 
-fn draw(surface: &GlSurface, player: &MpvRenderPlayer) {
+fn draw(surface: &GlSurface, player: &Player) {
     let (width, height) = client_size(surface.window);
     if let Err(error) = player.render_opengl(DEFAULT_FRAMEBUFFER, width, height, FLIP_Y) {
         eprintln!("[preview] render failed: {error}");

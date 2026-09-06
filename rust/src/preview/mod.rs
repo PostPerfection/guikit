@@ -9,15 +9,24 @@
 //! good, because the core hands the decoder's buffer allocation to the render
 //! thread while the render thread waits for the core.
 
+use std::path::Path;
 use std::sync::Mutex;
 
+use postkit::grok_player::{
+    DecodeScale as GrokDecodeScale, GrokPlayer, SubtitleSlot as GrokSubtitleSlot,
+};
 use postkit::mpv_render::{MpvRenderPlayer, OsdAssOverlay};
 use serde::Deserialize;
 use tauri::Manager;
 
 mod overlays;
-use overlays::{overlay_drawing, OsdRectangle, OverlayDrawing, SourceSize};
-pub use overlays::{PreviewCrop, PreviewOverlays};
+use overlays::{overlay_drawing, OsdRectangle, OverlayDrawing};
+pub use overlays::{
+    overlay_rectangles, OverlayRectangle, PreviewCrop, PreviewOverlays, SourceSize,
+};
+
+mod player;
+pub use player::{Backend, Player};
 
 /// The OSD overlay the QC drawings occupy. Ids belong to the libmpv client, so
 /// this one is the app's alone.
@@ -104,6 +113,7 @@ pub struct PreviewPlayer {
     source_size: Mutex<Option<SourceSize>>,
     overlays: Mutex<PreviewOverlays>,
     drawn_overlay: Mutex<Option<OverlayDrawing>>,
+    sent_rectangles: Mutex<Option<Vec<OverlayRectangle>>>,
 }
 
 impl PreviewPlayer {
@@ -115,6 +125,7 @@ impl PreviewPlayer {
             source_size: Mutex::new(None),
             overlays: Mutex::new(PreviewOverlays::default()),
             drawn_overlay: Mutex::new(None),
+            sent_rectangles: Mutex::new(None),
         }
     }
 
@@ -131,7 +142,7 @@ impl PreviewPlayer {
         *remembered
     }
 
-    fn player(&self) -> Result<&MpvRenderPlayer, String> {
+    fn player(&self) -> Result<&Player, String> {
         match &self.surface {
             PreviewSurface::Embedded(preview) => Ok(preview.player()),
             PreviewSurface::Unavailable(reason) => Err(reason.clone()),
@@ -194,7 +205,14 @@ pub fn preview_load(
 ) -> Result<(), String> {
     let player = state.player()?;
     state.forget_loaded_file();
-    player.load_file(&file_path)
+    send_decode_scale_to_grok(player, &state);
+    player.load_source(&file_path)
+}
+
+// a scale set while mpv was on screen never reached grok
+fn send_decode_scale_to_grok(player: &Player, state: &PreviewPlayer) {
+    let scale = *state.decode_scale.lock().unwrap();
+    player.grok().set_decode_scale(scale.grok_decode_scale());
 }
 
 #[tauri::command(async)]
@@ -221,12 +239,12 @@ const FRAME_BACK_STEP: &str = "frame-back-step";
 
 #[tauri::command(async)]
 pub fn preview_frame_step(state: tauri::State<'_, PreviewPlayer>) -> Result<(), String> {
-    state.player()?.command(&[FRAME_STEP])
+    state.player()?.frame_step()
 }
 
 #[tauri::command(async)]
 pub fn preview_frame_back_step(state: tauri::State<'_, PreviewPlayer>) -> Result<(), String> {
-    state.player()?.command(&[FRAME_BACK_STEP])
+    state.player()?.frame_back_step()
 }
 
 #[tauri::command(async)]
@@ -238,12 +256,12 @@ pub fn preview_stop(state: tauri::State<'_, PreviewPlayer>) -> Result<(), String
 
 #[tauri::command(async)]
 pub fn preview_get_position(state: tauri::State<'_, PreviewPlayer>) -> Result<f64, String> {
-    state.player()?.get_position()
+    state.player()?.position()
 }
 
 #[tauri::command(async)]
 pub fn preview_get_duration(state: tauri::State<'_, PreviewPlayer>) -> Result<f64, String> {
-    state.player()?.get_duration()
+    state.player()?.duration()
 }
 
 /// Playback position, the HUD counters and the end-of-file flag as one JSON
@@ -253,9 +271,16 @@ pub fn preview_get_duration(state: tauri::State<'_, PreviewPlayer>) -> Result<f6
 /// when a load or a resized surface has moved it under them.
 #[tauri::command(async)]
 pub fn preview_get_metadata(state: tauri::State<'_, PreviewPlayer>) -> Result<String, String> {
-    let player = state.player()?;
-    apply_overlays(player, &state)?;
-    player_metadata(player)
+    poll_metadata(state.player()?, &state)
+}
+
+fn poll_metadata(player: &Player, state: &PreviewPlayer) -> Result<String, String> {
+    if player.active() == Backend::Grok {
+        apply_grok_overlays(player.grok(), state);
+        return Ok(player.grok().metadata_json());
+    }
+    apply_overlays(player.mpv(), state)?;
+    player_metadata(player.mpv())
 }
 
 fn player_metadata(player: &MpvRenderPlayer) -> Result<String, String> {
@@ -277,6 +302,7 @@ pub fn preview_load_dcp(
 ) -> Result<(), String> {
     let player = state.player()?;
     state.forget_loaded_file();
+    send_decode_scale_to_grok(player, &state);
     player.load_package_dir(&dir_path)
 }
 
@@ -286,9 +312,44 @@ pub fn preview_set_overlays(
     overlays: PreviewOverlays,
     state: tauri::State<'_, PreviewPlayer>,
 ) -> Result<(), String> {
-    let player = state.player()?;
+    install_overlays(overlays, state.player()?, &state)
+}
+
+fn install_overlays(
+    overlays: PreviewOverlays,
+    player: &Player,
+    state: &PreviewPlayer,
+) -> Result<(), String> {
     *state.overlays.lock().unwrap() = overlays;
-    apply_overlays(player, &state)
+    if player.active() == Backend::Grok {
+        apply_grok_overlays(player.grok(), state);
+        return Ok(());
+    }
+    apply_overlays(player.mpv(), state)
+}
+
+// grok draws these into the frame it composes
+fn apply_grok_overlays(player: &GrokPlayer, state: &PreviewPlayer) {
+    let overlays = state.overlays.lock().unwrap();
+    let mut sent = state.sent_rectangles.lock().unwrap();
+    if !overlays.any() && sent.is_none() {
+        return;
+    }
+    let Some(source) = grok_source_size(player) else {
+        return;
+    };
+    let rectangles = overlay_rectangles(&overlays, source);
+    let wanted = (!rectangles.is_empty()).then_some(rectangles);
+    if *sent == wanted {
+        return;
+    }
+    player.set_overlay(wanted.clone().unwrap_or_default());
+    *sent = wanted;
+}
+
+fn grok_source_size(player: &GrokPlayer) -> Option<SourceSize> {
+    let (width, height) = player.source_size()?;
+    SourceSize::new(f64::from(width), f64::from(height))
 }
 
 /// Put the overlays the page asked for on the player, measured against the
@@ -396,6 +457,15 @@ impl DecodeScale {
     fn frame_divisor(self) -> f64 {
         f64::from(1u32 << self.lowres_level())
     }
+
+    // grok drops the same number of DWT levels lowres names
+    fn grok_decode_scale(self) -> GrokDecodeScale {
+        match self {
+            DecodeScale::Full => GrokDecodeScale::Full,
+            DecodeScale::Half => GrokDecodeScale::Half,
+            DecodeScale::Quarter => GrokDecodeScale::Quarter,
+        }
+    }
 }
 
 #[tauri::command(async)]
@@ -405,15 +475,20 @@ pub fn preview_set_decode_scale(
 ) -> Result<(), String> {
     let player = state.player()?;
     *state.decode_scale.lock().unwrap() = scale;
-    player.set_property(DECODER_OPTIONS_PROPERTY, &scale.decoder_option_value())?;
+    if player.active() == Backend::Grok {
+        player.grok().set_decode_scale(scale.grok_decode_scale());
+        return Ok(());
+    }
+    let mpv = player.mpv();
+    mpv.set_property(DECODER_OPTIONS_PROPERTY, &scale.decoder_option_value())?;
     // lowres is read when the decoder opens, so the file has to be loaded again
-    let Ok(path) = player.get_property_string(PATH_PROPERTY) else {
+    let Ok(path) = mpv.get_property_string(PATH_PROPERTY) else {
         return Ok(());
     };
-    let paused = player.get_property_bool(PAUSE_PROPERTY).unwrap_or(true);
+    let paused = mpv.get_property_bool(PAUSE_PROPERTY).unwrap_or(true);
     let tracks = state.subtitle_tracks.lock().unwrap();
-    let file_options = reload_file_options(paused, player.get_position().ok(), &tracks);
-    player.command(&["loadfile", &path, "replace", "0", &file_options])
+    let file_options = reload_file_options(paused, mpv.get_position().ok(), &tracks);
+    mpv.command(&["loadfile", &path, "replace", "0", &file_options])
 }
 
 /// The per-file options the reload carries. The subtitle files ride along with
@@ -494,6 +569,13 @@ impl SubtitleTrackSlot {
             SubtitleTrackSlot::Caption => &mut tracks.caption,
         }
     }
+
+    fn grok_slot(self) -> GrokSubtitleSlot {
+        match self {
+            SubtitleTrackSlot::Subtitle => GrokSubtitleSlot::Subtitle,
+            SubtitleTrackSlot::Caption => GrokSubtitleSlot::Caption,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -521,15 +603,21 @@ pub fn preview_set_subtitle_file(
     state: tauri::State<'_, PreviewPlayer>,
 ) -> Result<(), String> {
     let player = state.player()?;
+    if player.active() == Backend::Grok {
+        return player
+            .grok()
+            .set_subtitle_file(track.grok_slot(), file_path.as_deref().map(Path::new));
+    }
+    let mpv = player.mpv();
     let mut tracks = state.subtitle_tracks.lock().unwrap();
     track.state_in_mut(&mut tracks).file_path = file_path.clone();
-    reload_subtitle_tracks(player, &mut tracks)?;
+    reload_subtitle_tracks(mpv, &mut tracks)?;
     if file_path.is_none() {
         return Ok(());
     }
     // the slot may have been toggled off earlier, and a file loaded into a
     // hidden slot shows nothing
-    set_track_visibility(player, track, true)
+    set_track_visibility(mpv, track, true)
 }
 
 /// Render or hide one of the subtitle slots, which leaves the track loaded.
@@ -539,7 +627,14 @@ pub fn preview_set_subtitle_visibility(
     visible: bool,
     state: tauri::State<'_, PreviewPlayer>,
 ) -> Result<(), String> {
-    set_track_visibility(state.player()?, track, visible)
+    let player = state.player()?;
+    if player.active() == Backend::Grok {
+        player
+            .grok()
+            .set_subtitle_visibility(track.grok_slot(), visible);
+        return Ok(());
+    }
+    set_track_visibility(player.mpv(), track, visible)
 }
 
 fn set_track_visibility(
@@ -621,10 +716,22 @@ fn json_bool(value: Option<bool>) -> String {
 }
 
 #[cfg(test)]
+mod grok_fixture;
+
+#[cfg(test)]
+mod backend_selection_tests;
+
+#[cfg(test)]
 mod end_of_file_tests;
 
 #[cfg(test)]
+mod grok_playback_tests;
+
+#[cfg(test)]
 mod overlay_placement_tests;
+
+#[cfg(all(test, target_os = "linux"))]
+mod grok_presenter_tests;
 
 #[cfg(all(test, target_os = "linux"))]
 mod render_thread_tests;
