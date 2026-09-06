@@ -474,6 +474,8 @@ body {
 }
 
 .prop-field input[type="text"],
+.prop-field input[type="url"],
+.prop-field input[type="password"],
 .prop-field input[type="number"],
 .prop-field input[type="datetime-local"],
 .prop-field select {
