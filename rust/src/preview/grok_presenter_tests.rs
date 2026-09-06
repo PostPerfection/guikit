@@ -115,58 +115,59 @@ fn the_gl_presenter_letterboxes_the_picture_and_keeps_it_the_right_way_up() {
         player.grok().frame_size().is_some()
     });
 
-    let upright = draw(&player, framebuffer, false);
-    if upright.iter().all(|value| *value == 0) {
+    // a top-left origin surface, which is what GTK's GL area gives, and what mpv's flip_y means
+    let top_left_origin = draw(&player, framebuffer, true);
+    if top_left_origin.iter().all(|value| *value == 0) {
         eprintln!(
             "[test] {renderer} read the framebuffer back as all black, \
              so only the GL calls are checked here"
         );
-        draw(&player, framebuffer, true);
+        draw(&player, framebuffer, false);
         return;
     }
 
     for row in [BAND_ROW, BODY_ROW] {
         assert_eq!(
-            pixel(&upright, PICTURE_LEFT / 2, row),
+            pixel(&top_left_origin, PICTURE_LEFT / 2, row),
             [0, 0, 0],
             "the bar left of the picture is not black on row {row}"
         );
         assert_eq!(
-            pixel(&upright, (PICTURE_RIGHT + TARGET_WIDTH) / 2, row),
+            pixel(&top_left_origin, (PICTURE_RIGHT + TARGET_WIDTH) / 2, row),
             [0, 0, 0],
             "the bar right of the picture is not black on row {row}"
         );
     }
 
-    let band = pixel(&upright, PICTURE_MIDDLE_COLUMN, BAND_ROW);
+    let band = pixel(&top_left_origin, PICTURE_MIDDLE_COLUMN, BAND_ROW);
     assert!(
         close_to(band, grok_fixture::band_colour()),
         "the fixture's band is not at the top of the picture: {band:?}"
     );
-    let body = pixel(&upright, PICTURE_MIDDLE_COLUMN, BODY_ROW);
+    let body = pixel(&top_left_origin, PICTURE_MIDDLE_COLUMN, BODY_ROW);
     assert!(
         close_to(body, grok_fixture::body_colour()),
         "the fixture's body colour is not below the band: {body:?}"
     );
 
-    // a top-left origin surface, which is what GTK's GL area gives
-    let flipped = draw(&player, framebuffer, true);
+    // a bottom-left origin surface reads the same framebuffer the other way up
+    let bottom_left_origin = draw(&player, framebuffer, false);
     let band = pixel(
-        &flipped,
+        &bottom_left_origin,
         PICTURE_MIDDLE_COLUMN,
         TARGET_HEIGHT - 1 - BAND_ROW,
     );
     assert!(
         close_to(band, grok_fixture::band_colour()),
-        "flip_y did not put the band at the bottom: {band:?}"
+        "flip_y off did not put the band at the bottom: {band:?}"
     );
     let body = pixel(
-        &flipped,
+        &bottom_left_origin,
         PICTURE_MIDDLE_COLUMN,
         TARGET_HEIGHT - 1 - BODY_ROW,
     );
     assert!(
         close_to(body, grok_fixture::body_colour()),
-        "flip_y did not turn the picture over: {body:?}"
+        "flip_y off did not turn the picture over: {body:?}"
     );
 }
