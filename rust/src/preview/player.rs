@@ -30,6 +30,7 @@ pub struct Player {
 
 impl Player {
     pub fn new() -> Result<Self, String> {
+        load_cuda_kernels_eagerly();
         Ok(Player {
             mpv: MpvRenderPlayer::new()?,
             grok: GrokPlayer::new(),
@@ -226,5 +227,13 @@ impl Player {
                 .duration()
                 .ok_or_else(|| "nothing is loaded".to_string()),
         }
+    }
+}
+
+// mpv's hwdec probe creates the process's cuda context before the grok plugin can, and a plugin
+// kernel loaded lazily at its first launch deadlocks behind the plugin's blocked host callback
+fn load_cuda_kernels_eagerly() {
+    if std::env::var_os("CUDA_MODULE_LOADING").is_none() {
+        std::env::set_var("CUDA_MODULE_LOADING", "EAGER");
     }
 }

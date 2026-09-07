@@ -149,6 +149,14 @@ impl PreviewPlayer {
         }
     }
 
+    /// Ends grok playback, and with it any device decode batch, so the process can exit
+    /// without waiting on the plugin's callbacks. Called from the app's exit handler.
+    pub fn shutdown(&self) {
+        if let Ok(player) = self.player() {
+            player.grok().shutdown();
+        }
+    }
+
     /// Loading or stopping takes mpv's external subtitle tracks with it, so the
     /// track ids held here would name tracks that no longer exist, and the size
     /// held here would be another file's.
