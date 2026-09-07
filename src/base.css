@@ -1162,6 +1162,13 @@ body {
   background: var(--accent);
   color: #fff;
 }
+/* the row the Preview button plays */
+.asset-item.selected,
+.recent-item.selected {
+  background: var(--primary);
+  color: #fff;
+  box-shadow: 0 0 0 2px var(--primary);
+}
 .recent-title {
   display: block;
   font-weight: 500;
