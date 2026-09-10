@@ -1,6 +1,7 @@
 // The Jobs panel: the rows the app's own backend is running, and whatever else
 // an app queues elsewhere, in one table.
 import { invoke } from '@tauri-apps/api/core';
+import { escapeHtml } from './html.js';
 
 const JOBS_TABLE_COLUMNS = 6;
 const CANCELLABLE_JOB_STATES = ['running', 'queued'];
@@ -95,10 +96,4 @@ async function handleTableClick(event) {
   if (!button) return;
   await renderedRows[Number(button.dataset.jobIndex)].cancel();
   refreshJobs();
-}
-
-function escapeHtml(text) {
-  if (text === null || text === undefined) return '';
-  const replacements = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' };
-  return String(text).replace(/[&<>"]/g, (character) => replacements[character]);
 }
