@@ -30,6 +30,7 @@ libc = "0.2"
 # versions match what tauri already links on each platform, so the app keeps a
 # single native stack rather than two copies of objc2 or windows
 [target.'cfg(target_os = "macos")'.dependencies]
+dispatch2 = "0.3"
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = [
     "std",

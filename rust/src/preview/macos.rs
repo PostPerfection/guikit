@@ -15,6 +15,7 @@ use std::ptr::{self, NonNull};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use super::player::Player;
+use dispatch2::DispatchQueue;
 use objc2::rc::Retained;
 use objc2::{
     define_class, msg_send, AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, Message,
@@ -223,15 +224,21 @@ pub fn attach(window: &tauri::Window) -> Result<EmbeddedPreview, String> {
     let waiting_player = Arc::downgrade(&player);
     player.set_update_callback({
         let surface = Arc::clone(&surface);
-        let app_handle = app_handle.clone();
         move || {
             let Some(player) = waiting_player.upgrade() else {
                 return;
             };
             let surface = Arc::clone(&surface);
-            let _ = app_handle.run_on_main_thread(move || request_redraw(&surface, &player));
+            // mpv fires this from its own thread *or* from the caller of
+            // set_update_callback. tauri's run_on_main_thread runs the body
+            // inline when we are already on the main thread, which re-enters
+            // mpv_render_context_update from inside the callback and deadlocks
+            // advanced control (window stays 0×0, event loop never starts).
+            // Post to the next main-queue turn, matching linux.rs try_send.
+            DispatchQueue::main().exec_async(move || request_redraw(&surface, &player));
         }
     });
+    eprintln!("[preview] attached");
 
     Ok(EmbeddedPreview {
         player,
