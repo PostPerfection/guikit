@@ -19,7 +19,7 @@ postkit = { git = "https://github.com/PostPerfection/postkit.git", features = [
 
 [dev-dependencies]
 # the backend selection test writes the J2K MXF the grok player is picked for
-asdcplib = { git = "https://github.com/PostPerfection/asdcplib-rs.git", rev = "2f1617bf2ddf3121c8f1ace7adf80ae7d9678e8c" }
+asdcplib = { git = "https://github.com/PostPerfection/asdcplib-rs.git", rev = "03834857a3995be25c884be6e8486a98c7032447" }
 tempfile = "3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
