@@ -35,9 +35,11 @@ const GL_VERSION: u32 = 0x1F02;
 /// one GL always has.
 const DEFAULT_FRAMEBUFFER: i32 = 0;
 
-/// The AppKit GL default framebuffer has its origin at the bottom left, which is
-/// the orientation mpv already draws in.
-const FLIP_Y: bool = false;
+/// The preview sits in a layer-backed window (WKWebView forces that on the
+/// content view), so Core Animation composites the GL surface with a top-left
+/// origin, the same way GtkGLArea does. Classic NSOpenGLView is bottom-left and
+/// would not need this, but `_NSOpenGLViewBackingLayer` does.
+const FLIP_Y: bool = true;
 
 const COLOR_BITS: NSOpenGLPixelFormatAttribute = 24;
 const ALPHA_BITS: NSOpenGLPixelFormatAttribute = 8;

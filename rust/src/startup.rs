@@ -3,8 +3,12 @@
 
 /// Fork a parent process that waits for the app to exit, then unconditionally
 /// restores terminal settings. WebKitGTK child processes corrupt the terminal
-/// after the main process exits.
-#[cfg(unix)]
+/// after the main process exits. A no-op on other Unix platforms: WKWebView in
+/// a forked process never commits a page load, so the window stays blank.
+#[cfg(all(unix, not(target_os = "linux")))]
+pub fn fork_terminal_guard() {}
+
+#[cfg(target_os = "linux")]
 pub fn fork_terminal_guard() {
     unsafe {
         if libc::isatty(libc::STDIN_FILENO) == 0 {
