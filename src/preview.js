@@ -462,9 +462,7 @@ function formatTimecode(seconds, fps) {
 export function previewFile(filePath) {
   showEmbeddedPanel();
   loadWatcher(filePath);
-  invoke('preview_load', { filePath }).catch((e) => {
-    console.error('[preview] Failed to load:', e);
-  });
+  invoke('preview_load', { filePath }).catch(reportPreviewLoadFailure);
   resetTrackToggles();
   startScrubberPolling();
 }
@@ -473,9 +471,17 @@ export function previewFile(filePath) {
 export function previewDcp(dirPath) {
   showEmbeddedPanel();
   loadWatcher(dirPath);
-  invoke('preview_load_dcp', { dirPath }).catch((e) => {
-    console.error('[preview] Failed to load DCP:', e);
-  });
+  invoke('preview_load_dcp', { dirPath }).catch(reportPreviewLoadFailure);
   resetTrackToggles();
   startScrubberPolling();
+}
+
+function reportPreviewLoadFailure(error) {
+  const message = `Preview failed: ${error}`;
+  console.error('[preview] Failed to load:', error);
+  const status = document.getElementById('status-text');
+  if (status) {
+    status.textContent = message;
+    status.title = message;
+  }
 }
