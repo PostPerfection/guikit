@@ -734,6 +734,11 @@ body {
   padding: 0 2px;
 }
 
+.timeline-scrubber-idle {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .timeline-scrubber-track {
   width: 100%;
   height: 4px;

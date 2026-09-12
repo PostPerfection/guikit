@@ -10,8 +10,13 @@ let metadataWatcher = () => {};
 let loadWatcher = () => {};
 let shownWatcher = () => {};
 let endReported = false;
+// the file or directory the player holds, null when it holds nothing
+let loadedPath = null;
 
 const OVERLAY_CONTROLS_ID = 'preview-controls';
+
+const PREVIEW_PANEL_DEFAULT_TITLE = 'Preview';
+const SCRUBBER_IDLE_CLASS = 'timeline-scrubber-idle';
 
 // What the backend draws over the picture, sent whole on every change.
 const overlays = {
@@ -291,6 +296,9 @@ export function stopPreview() {
   invoke('preview_stop').catch(() => {});
   shownWatcher(null);
   resetTrackToggles();
+  loadedPath = null;
+  setTransportEnabled(false);
+  showPreviewTitle(null);
 }
 
 /// Stop the player and take the panel off the page, which is what the panel's own
@@ -330,6 +338,29 @@ const TRANSPORT_BUTTONS = [
   },
 ];
 
+function setTransportEnabled(enabled) {
+  for (const { id } of TRANSPORT_BUTTONS) {
+    const button = document.getElementById(id);
+    if (button) button.disabled = !enabled;
+  }
+  const scrubber = document.getElementById('timeline-scrubber');
+  if (!scrubber) return;
+  if (enabled) scrubber.classList.remove(SCRUBBER_IDLE_CLASS);
+  else scrubber.classList.add(SCRUBBER_IDLE_CLASS);
+}
+
+// the last segment of a path, with either separator, and a trailing one ignored
+function lastPathSegment(path) {
+  return path.replace(/[/\\]+$/, '').split(/[/\\]/).pop();
+}
+
+function showPreviewTitle(path) {
+  const title = document.getElementById('preview-title');
+  if (!title) return;
+  title.textContent = path ? `Preview: ${lastPathSegment(path)}` : PREVIEW_PANEL_DEFAULT_TITLE;
+  title.title = path || '';
+}
+
 function initScrubber() {
   const scrubber = document.getElementById('timeline-scrubber');
   const durLabel = document.getElementById('timeline-duration');
@@ -341,6 +372,7 @@ function initScrubber() {
   // released over it never arrives and the seek would stay latched, freezing
   // every poll-driven control until some later click landed in the page.
   scrubber.addEventListener('pointerdown', (e) => {
+    if (!loadedPath) return;
     scrubber.setPointerCapture(e.pointerId);
     isSeeking = true;
     seekToMouse(e);
@@ -371,6 +403,9 @@ function initScrubber() {
     button.addEventListener('click', onClick);
     if (title) button.title = title;
   }
+
+  setTransportEnabled(false);
+  showPreviewTitle(null);
 
   // Start position polling
   startScrubberPolling();
@@ -480,6 +515,9 @@ export function previewFile(filePath) {
   loadWatcher(filePath);
   invoke('preview_load', { filePath }).catch(reportPreviewLoadFailure);
   resetTrackToggles();
+  loadedPath = filePath;
+  setTransportEnabled(true);
+  showPreviewTitle(filePath);
   startScrubberPolling();
 }
 
@@ -491,6 +529,9 @@ export function previewDcp(dirPath) {
   loadWatcher(dirPath);
   invoke('preview_load_dcp', { dirPath }).catch(reportPreviewLoadFailure);
   resetTrackToggles();
+  loadedPath = dirPath;
+  setTransportEnabled(true);
+  showPreviewTitle(dirPath);
   startScrubberPolling();
 }
 
