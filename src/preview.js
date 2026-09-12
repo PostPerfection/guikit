@@ -12,6 +12,8 @@ let shownWatcher = () => {};
 let endReported = false;
 // the file or directory the player holds, null when it holds nothing
 let loadedPath = null;
+// set while the page draws something the native surface would otherwise cover
+let surfaceCovered = false;
 
 const OVERLAY_CONTROLS_ID = 'preview-controls';
 
@@ -269,7 +271,7 @@ async function initEmbeddedSurface() {
   if (!isEmbedded) return;
 
   const report = () => {
-    const visible = !panel.hidden;
+    const visible = !panel.hidden && !surfaceCovered;
     const rect = surface.getBoundingClientRect();
     invoke('preview_set_surface', {
       x: Math.round(rect.left),
@@ -288,6 +290,19 @@ async function initEmbeddedSurface() {
 
   reportSurface = report;
   report();
+}
+
+/// Take the picture off the screen while the page draws over it, playback carries
+/// on underneath.
+export function coverPreviewSurface() {
+  surfaceCovered = true;
+  reportSurface();
+}
+
+/// Put the picture back where the panel is showing.
+export function uncoverPreviewSurface() {
+  surfaceCovered = false;
+  reportSurface();
 }
 
 /// Stop the player, leaving the panel where it is. The tracks go with the file
