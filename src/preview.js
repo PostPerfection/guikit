@@ -9,6 +9,7 @@ let qcControls = null;
 let metadataWatcher = () => {};
 let loadWatcher = () => {};
 let shownWatcher = () => {};
+let endReported = false;
 
 const OVERLAY_CONTROLS_ID = 'preview-controls';
 
@@ -388,6 +389,11 @@ function startScrubberPolling() {
       lastPollError = '';
       updateHud(meta);
       metadataWatcher(meta);
+      // at the end nothing is previewing any more, so the Preview button comes back
+      if (meta.eof && !endReported) {
+        endReported = true;
+        shownWatcher(null);
+      }
       if (meta.position != null && meta.duration != null && meta.duration > 0) {
         const pct = meta.position / meta.duration;
         updatePlayhead(pct);
@@ -470,6 +476,7 @@ function formatTimecode(seconds, fps) {
 export function previewFile(filePath) {
   showEmbeddedPanel();
   shownWatcher(filePath);
+  endReported = false;
   loadWatcher(filePath);
   invoke('preview_load', { filePath }).catch(reportPreviewLoadFailure);
   resetTrackToggles();
@@ -480,6 +487,7 @@ export function previewFile(filePath) {
 export function previewDcp(dirPath) {
   showEmbeddedPanel();
   shownWatcher(dirPath);
+  endReported = false;
   loadWatcher(dirPath);
   invoke('preview_load_dcp', { dirPath }).catch(reportPreviewLoadFailure);
   resetTrackToggles();
