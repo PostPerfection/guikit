@@ -33,6 +33,7 @@ const POSITION_TOLERANCE_SECONDS: f64 = 0.2;
 /// How far a resumed package has to get for playback to have restarted.
 const RESUMED_POSITION_SECONDS: f64 = 0.1;
 /// How far a single frame step may move, a couple of frames at the clip rate.
+const PAUSED: &str = r#""paused": true"#;
 const STEP_TOLERANCE_SECONDS: f64 = 2.0 / FRAMES_PER_SECOND as f64;
 const PLAYBACK_TIMEOUT: Duration = Duration::from_secs(30);
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
@@ -166,7 +167,7 @@ fn a_package_played_to_its_end_reports_eof_in_the_metadata() {
     // rather than closing the file and reporting nothing
     let metadata = play_to_the_end(&player);
     assert!(
-        metadata.contains(r#""paused": true"#),
+        metadata.contains(PAUSED),
         "mpv did not pause at the end: {metadata}"
     );
     let position = player.get_position().unwrap();
@@ -267,7 +268,7 @@ fn the_package_loaded_at_the_end_starts_on_one_play_pause() {
     let metadata = pump_until(&player, |metadata| metadata.contains(NOT_AT_THE_END))
         .unwrap_or_else(|last| panic!("the flag never cleared after the load, last read {last}"));
     assert!(
-        metadata.contains(r#""paused": true"#),
+        metadata.contains(PAUSED),
         "the load did not stay paused: {metadata}"
     );
 
@@ -296,14 +297,13 @@ fn a_frame_step_moves_one_frame_and_leaves_the_player_paused() {
     let paused_at = player.get_position().unwrap();
 
     player.command(&[FRAME_STEP]).unwrap();
-    let metadata = pump_until(&player, |_| {
-        player.get_position().unwrap_or(0.0) > paused_at
+    // mpv steps by playing one frame, so the pause lands after the position moves
+    pump_until(&player, |metadata| {
+        player.get_position().unwrap_or(0.0) > paused_at && metadata.contains(PAUSED)
     })
-    .unwrap_or_else(|last| panic!("the frame step did not move forward, last read {last}"));
-    assert!(
-        metadata.contains(r#""paused": true"#),
-        "the frame step left the player playing: {metadata}"
-    );
+    .unwrap_or_else(|last| {
+        panic!("the frame step did not move forward and pause, last read {last}")
+    });
     let stepped_to = player.get_position().unwrap();
     assert!(
         stepped_to - paused_at < STEP_TOLERANCE_SECONDS,
@@ -311,14 +311,12 @@ fn a_frame_step_moves_one_frame_and_leaves_the_player_paused() {
     );
 
     player.command(&[FRAME_BACK_STEP]).unwrap();
-    let metadata = pump_until(&player, |_| {
-        player.get_position().unwrap_or(0.0) < stepped_to
+    pump_until(&player, |metadata| {
+        player.get_position().unwrap_or(0.0) < stepped_to && metadata.contains(PAUSED)
     })
-    .unwrap_or_else(|last| panic!("the frame step back did not move back, last read {last}"));
-    assert!(
-        metadata.contains(r#""paused": true"#),
-        "the frame step back left the player playing: {metadata}"
-    );
+    .unwrap_or_else(|last| {
+        panic!("the frame step back did not move back and pause, last read {last}")
+    });
     let stepped_back_to = player.get_position().unwrap();
     assert!(
         stepped_to - stepped_back_to < STEP_TOLERANCE_SECONDS,
