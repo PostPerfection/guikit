@@ -8,6 +8,7 @@ let reportSurface = () => {};
 let qcControls = null;
 let metadataWatcher = () => {};
 let loadWatcher = () => {};
+let shownWatcher = () => {};
 
 const OVERLAY_CONTROLS_ID = 'preview-controls';
 
@@ -68,6 +69,12 @@ export function watchPreviewMetadata(watcher) {
 /// make itself.
 export function watchPreviewLoads(watcher) {
   loadWatcher = watcher;
+}
+
+/// Read what the panel is showing, one watcher at a time, as the file or
+/// directory loaded into it, or null once the player is stopped.
+export function watchPreviewShown(watcher) {
+  shownWatcher = watcher;
 }
 
 export function isPreviewVisible() {
@@ -281,6 +288,7 @@ async function initEmbeddedSurface() {
 /// the backend drops.
 export function stopPreview() {
   invoke('preview_stop').catch(() => {});
+  shownWatcher(null);
   resetTrackToggles();
 }
 
@@ -461,6 +469,7 @@ function formatTimecode(seconds, fps) {
 /// Load a file into the preview player
 export function previewFile(filePath) {
   showEmbeddedPanel();
+  shownWatcher(filePath);
   loadWatcher(filePath);
   invoke('preview_load', { filePath }).catch(reportPreviewLoadFailure);
   resetTrackToggles();
@@ -470,6 +479,7 @@ export function previewFile(filePath) {
 /// Load a DCP directory into the preview player
 export function previewDcp(dirPath) {
   showEmbeddedPanel();
+  shownWatcher(dirPath);
   loadWatcher(dirPath);
   invoke('preview_load_dcp', { dirPath }).catch(reportPreviewLoadFailure);
   resetTrackToggles();
