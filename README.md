@@ -65,10 +65,11 @@ commands.
 
 ## Preview QC controls
 
-`preview.js` builds a control strip into the preview panel header, so an app
-needs no markup of its own for it: safe area (95% or 90%), aspect mask (1.85,
-1.90, 2.39), centre cross, rule of thirds, crop, decode resolution, subtitles,
-captions, and the counters. An app only has to register `preview_set_overlays`,
+`preview.js` builds a control strip under the picture, so an app needs no
+markup of its own for it: safe area (95% or 90%), aspect mask (1.85, 1.90,
+2.39), centre cross, rule of thirds, crop, decode resolution, subtitles,
+captions, and the counters. It sits below `#preview-surface` so the native
+preview view cannot cover it. An app only has to register `preview_set_overlays`,
 `preview_set_decode_scale`, `preview_set_subtitle_file` and
 `preview_set_subtitle_visibility` beside the other commands.
 

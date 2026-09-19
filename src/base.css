@@ -620,16 +620,36 @@ body {
   padding: 6px 12px;
   font-size: 12px;
   color: var(--text-muted);
+  flex-shrink: 0;
 }
 
-/* QC strip: overlay and decode controls plus the playback counters. The panel
-   header holds it, and preview.js builds it. */
+.preview-panel-header #preview-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* QC strip: overlay and decode controls plus the playback counters. preview.js
+   places it under the picture so the native GL view cannot cover it. */
 .preview-controls {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  margin-left: auto;
+  flex-shrink: 0;
+  width: 100%;
+  padding: 6px 12px;
+  box-sizing: border-box;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
   font-size: 11px;
+}
+
+.preview-controls-label {
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text);
 }
 
 .preview-controls label {

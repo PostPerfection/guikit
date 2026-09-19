@@ -90,17 +90,25 @@ export function isPreviewVisible() {
   return !!panel && !panel.hidden;
 }
 
-// The QC strip lives in the panel header, built here so an app needs no markup
-// of its own for it.
+// The QC strip sits under the picture, not in the header. The native GL view
+// is a sibling over #preview-surface and covers anything in that rectangle,
+// including a header row that wrapped into it.
 function initQcControls() {
   const panel = document.getElementById('preview-panel');
-  const header = panel?.querySelector('.preview-panel-header');
-  if (!header || document.getElementById(OVERLAY_CONTROLS_ID)) return;
+  const surface = panel?.querySelector('.preview-surface');
+  if (!panel || !surface) return;
 
-  const strip = document.createElement('div');
-  strip.id = OVERLAY_CONTROLS_ID;
+  let strip = document.getElementById(OVERLAY_CONTROLS_ID);
+  if (!strip) {
+    strip = document.createElement('div');
+    strip.id = OVERLAY_CONTROLS_ID;
+    strip.className = 'preview-controls';
+    surface.insertAdjacentElement('afterend', strip);
+  }
+  if (strip.dataset.ready) return;
   strip.className = 'preview-controls';
   strip.innerHTML = `
+    <span class="preview-controls-label">QC</span>
     <label>Safe
       <select id="preview-safe-area">
         <option value="">off</option>
@@ -129,7 +137,7 @@ function initQcControls() {
     <button id="preview-subtitles" class="btn-sm" title="Subtitles" disabled>Sub</button>
     <button id="preview-captions" class="btn-sm" title="Closed captions" disabled>CC</button>
     <span id="preview-hud" class="preview-hud"></span>`;
-  header.insertBefore(strip, document.getElementById('preview-close'));
+  strip.dataset.ready = '1';
 
   qcControls = {
     safeArea: strip.querySelector('#preview-safe-area'),
