@@ -157,6 +157,12 @@ impl PreviewPlayer {
         }
     }
 
+    pub fn mpv_version(&self) -> String {
+        self.player()
+            .and_then(|player| player.mpv().get_property_string("mpv-version"))
+            .unwrap_or_else(|_| postkit::mpv_render::client_api_version())
+    }
+
     /// Loading or stopping takes mpv's external subtitle tracks with it, so the
     /// track ids held here would name tracks that no longer exist, and the size
     /// held here would be another file's.

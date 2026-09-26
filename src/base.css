@@ -968,6 +968,23 @@ body {
   color: var(--text-muted);
 }
 
+.component-version {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.component-version span {
+  color: var(--text-muted);
+}
+
+.component-version output {
+  color: var(--text);
+  text-align: right;
+}
+
 .form-actions {
   grid-column: 1 / -1;
   display: flex;
