@@ -167,7 +167,7 @@ impl EmbeddedPreview {
 /// driving it. The window and its context stay on the calling thread, which is
 /// the main thread the app is set up on.
 pub fn attach(window: &tauri::Window) -> Result<EmbeddedPreview, String> {
-    let parent = window.hwnd().map_err(|error| error.to_string())?;
+    let parent = HWND(window.hwnd().map_err(|error| error.to_string())?.0);
     let scale_factor = window.scale_factor().map_err(|error| error.to_string())?;
     let surface = Arc::new(create_gl_surface(parent)?);
 
