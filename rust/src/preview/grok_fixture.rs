@@ -118,7 +118,7 @@ fn codestreams(count: usize) -> Vec<Vec<u8>> {
         count as u64,
         &Arc::new(AtomicBool::new(false)),
         &Arc::new(PhaseClocks::default()),
-        || {
+        |_: &postkit::grok_encoder::FrameBufferPool| {
             if next >= count {
                 return None;
             }
