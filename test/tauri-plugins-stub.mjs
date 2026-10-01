@@ -77,6 +77,19 @@ export async function appDataDir() {
   return APP_DATA_FOLDER;
 }
 
+export const HOME_FOLDER = '/home/u';
+// null means the account has no documents folder registered
+export const folders = { documents: `${HOME_FOLDER}/Documents` };
+
+export async function documentDir() {
+  if (folders.documents === null) throw new Error('documents folder not registered');
+  return folders.documents;
+}
+
+export async function homeDir() {
+  return HOME_FOLDER;
+}
+
 export function getCurrentWindow() {
   return {
     async onCloseRequested(handler) {
