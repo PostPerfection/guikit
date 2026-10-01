@@ -440,39 +440,39 @@ function projectName() {
   return elements.get('project-name').textContent;
 }
 
-test('the toolbar names the project file the window title names', async () => {
+test('the toolbar names the project file stem, the window title the file name', async () => {
   await launch({ title: 'Film' });
   assert.equal(projectName(), 'Untitled');
   assert.equal(document.title, APPLICATION_NAME);
 
   tauri.answerDialog('save', '/projects/Film.dcpwizard');
   await project.saveProjectAs();
-  assert.equal(projectName(), 'Film.dcpwizard');
-  assert.equal(document.title, `${APPLICATION_NAME} - ${projectName()}`);
+  assert.equal(projectName(), 'Film');
+  assert.equal(document.title, `${APPLICATION_NAME} - Film.dcpwizard`);
 
   panel.state.form.title = 'Film, recut';
   await project.saveDraftIfChanged();
   await launch({ title: '' }, { '/projects/Film.dcpwizard': '', [DRAFT_PATH]: tauri.disk.get(DRAFT_PATH) });
-  assert.equal(projectName(), 'Film.dcpwizard (draft)');
-  assert.equal(document.title, `${APPLICATION_NAME} - ${projectName()}`);
+  assert.equal(projectName(), 'Film (draft)');
+  assert.equal(document.title, `${APPLICATION_NAME} - Film.dcpwizard (draft)`);
 
   tauri.answerDialog('confirm', true);
   tauri.answerDialog('save', null);
   await project.newProject();
-  assert.equal(projectName(), 'Film.dcpwizard (draft)', 'a cancelled New keeps the label');
+  assert.equal(projectName(), 'Film (draft)', 'a cancelled New keeps the label');
 
   tauri.answerDialog('confirm', true);
   tauri.answerDialog('save', '/projects/Next.dcpwizard');
   await project.newProject();
-  assert.equal(projectName(), 'Next.dcpwizard');
-  assert.equal(document.title, `${APPLICATION_NAME} - ${projectName()}`);
+  assert.equal(projectName(), 'Next');
+  assert.equal(document.title, `${APPLICATION_NAME} - Next.dcpwizard`);
 });
 
 test('the toolbar names an opened project file, and Untitled with the draft mark for a draft of no file', async () => {
   await launch({ title: '' }, { '/p/Film.dcpwizard': projectText({ title: 'Film' }) });
   await project.openProjectFile('/p/Film.dcpwizard');
-  assert.equal(projectName(), 'Film.dcpwizard');
-  assert.equal(document.title, `${APPLICATION_NAME} - ${projectName()}`);
+  assert.equal(projectName(), 'Film');
+  assert.equal(document.title, `${APPLICATION_NAME} - Film.dcpwizard`);
 
   await launch({ title: '' }, { [DRAFT_PATH]: projectText({ title: 'Unsaved' }) });
   assert.equal(projectName(), 'Untitled (draft)');

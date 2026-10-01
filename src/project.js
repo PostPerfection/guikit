@@ -456,7 +456,7 @@ function updateWindowTitle() {
   if (titleStatus) title += `${TITLE_SEPARATOR}${titleStatus}`;
   document.title = title;
   const projectName = document.getElementById(PROJECT_NAME_ID);
-  if (projectName) projectName.textContent = `${fileName ?? UNTITLED_FILE_STEM}${draftMark}`;
+  if (projectName) projectName.textContent = `${currentProjectPath ? fileStemOf(currentProjectPath) : UNTITLED_FILE_STEM}${draftMark}`;
 }
 
 export function setWindowTitleStatus(text) {
