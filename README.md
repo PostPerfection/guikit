@@ -6,6 +6,7 @@ Shared code for the PostPerfection wizard GUIs, frontend and native.
 - `src/playlist.js`: the queue that plays packages one after another
 - `src/jobs.js`: the Jobs panel, the backend's jobs and an app's second source
 - `src/shortcuts.js`: keyboard shortcut handling and the shortcuts dialog
+- `src/project.js`: project files (save, save as, open), the unsaved draft, the recent list and the window title
 - `src/base.css`: the shared stylesheet
 - `rust/`: the `guikit` crate, holding the native side of the preview
 - `test/`: the headless harness for the playlist queue, the transport bar and the
@@ -231,6 +232,43 @@ standing in for the player, and `test/transport.test.mjs` and
 `test/tauri-core-stub.mjs` standing in for the tauri bridge:
 `node --test 'test/*.test.mjs'`, no dependencies and nothing to build. That is the
 whole JS test suite, and CI runs it beside the syntax check.
+
+## Project files
+
+`project.js` saves the wizard's form as a project file, keeps an unsaved draft
+in the app data folder and lists recent projects. `initProjects(options)` sets
+it up. Opening a file or restoring the draft looks for every absolute path in
+the form, and a path that is gone is searched for again under the project
+file's folder. `options.outputFields` names top level keys holding files a build
+writes, which are left alone. `options.textFields` names keys holding typed
+text, such as a title, which are left alone at any depth so a value starting
+with `/` is not taken for a path.
+
+New project (`newProject`, Ctrl+N on `btn-new-project`) asks "Discard unsaved
+changes?" when the form differs from the open project file, or from
+`options.defaults` with none open. It then asks where to save `Untitled.<ext>`,
+starting in the open project's folder, else in `options.defaultProjectFolder()`.
+On a pick it restores `options.defaults`, calls `options.setProjectTitle(stem)`
+and `options.setOutputFolder(folder)` with the file's name and folder, and saves
+the file there.
+
+`saveProjectBesidePackage` writes `<package>.<ext>` beside a built package and
+saves the open project file too when it is a different file.
+
+The draft carries a top level `draftOf` with the open project's path. A restored
+draft makes that path the open project again, so the window title reads
+`<app> - Film.<ext> (draft)` and Save writes there. Saved project files never
+carry `draftOf`, and reading one ignores it.
+
+`initProjects` also opens a project file the app was launched with. It invokes
+the `take_launch_project_path` command, which returns the path or null and tells
+the backend the page is ready, and opens that path. It listens for the
+`open-project-file` event, with the path as payload, and opens each one it gets,
+which is how macOS hands over a file opened while the app runs. The app's
+backend has to provide both. Opening a project clears the draft.
+
+`test/project.test.mjs` drives it with `test/tauri-plugins-stub.mjs` standing in
+for the dialog and fs plugins and the tauri bridge.
 
 ## Consumers
 
