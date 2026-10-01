@@ -148,14 +148,17 @@ mod tests {
 
     #[test]
     fn only_file_urls_naming_a_project_file_are_opened() {
+        // a file url round trips to the platform's own path form
+        let project = std::env::temp_dir().join("My Film.dcpwizard");
+        let film = std::env::temp_dir().join("film.mov");
         let urls = [
-            tauri::Url::parse("file:///Users/user/My%20Film.dcpwizard").unwrap(),
-            tauri::Url::parse("file:///Users/user/film.mov").unwrap(),
+            tauri::Url::from_file_path(&project).unwrap(),
+            tauri::Url::from_file_path(&film).unwrap(),
             tauri::Url::parse("https://example.com/film.dcpwizard").unwrap(),
         ];
         assert_eq!(
             project_paths_in_urls(&urls, EXTENSION),
-            ["/Users/user/My Film.dcpwizard"]
+            [project.to_string_lossy().into_owned()]
         );
     }
 }
