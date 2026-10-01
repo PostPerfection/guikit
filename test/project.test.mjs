@@ -12,6 +12,8 @@ const APPLICATION_NAME = 'DCP Wizard';
 const DRAFT_PATH = `${tauri.APP_DATA_FOLDER}/draft.dcpwizard`;
 const RECENT_KEY = 'dcpwizard-recent-projects';
 const DEFAULT_PROJECT_FOLDER = '/home/u/Documents';
+const PROJECT_FILE_VERSION = 1;
+const CURRENT_VERSIONING = { projectFileVersion: PROJECT_FILE_VERSION, projectFileMigrations: {} };
 
 function fakeElement() {
   return {
@@ -51,12 +53,13 @@ globalThis.setInterval = () => 0;
 let panel;
 let statuses;
 
-function panelHolding(form) {
+function panelHolding(form, versioning) {
   const state = { form: structuredClone(form), restored: [] };
   return {
     state,
     options: {
       wizard: WIZARD,
+      ...versioning,
       applicationName: APPLICATION_NAME,
       packageNoun: 'DCP',
       outputFields: ['keyOut'],
@@ -84,17 +87,25 @@ function panelHolding(form) {
   };
 }
 
-async function launch(form, diskEntries = {}, recent = []) {
+async function launch(form, diskEntries = {}, recent = [], versioning = CURRENT_VERSIONING) {
   tauri.resetDisk(diskEntries);
   storage.clear();
   storage.set(RECENT_KEY, JSON.stringify(recent));
   statuses = [];
-  panel = panelHolding(form);
+  panel = panelHolding(form, versioning);
   await project.initProjects(panel.options);
 }
 
-function projectText(form, wizard = WIZARD) {
-  return project.projectFileText(wizard, form);
+function projectText(form, wizard = WIZARD, version = PROJECT_FILE_VERSION) {
+  return project.projectFileText(wizard, version, form);
+}
+
+function readProject(text, version = PROJECT_FILE_VERSION, migrations = {}) {
+  return project.readProjectFile(text, WIZARD, version, migrations);
+}
+
+function readForm(text) {
+  return readProject(text).form;
 }
 
 function recentPaths() {
@@ -106,34 +117,77 @@ test('a project file carries the wizard, the version and the form, and reads bac
   const saved = JSON.parse(projectText(form));
 
   assert.equal(saved.wizard, WIZARD);
-  assert.equal(saved.version, project.PROJECT_FILE_VERSION);
+  assert.equal(saved.version, PROJECT_FILE_VERSION);
   assert.ok(!Number.isNaN(Date.parse(saved.saved)));
-  assert.deepEqual(project.readProjectFile(projectText(form), WIZARD), form);
+  assert.deepEqual(readProject(projectText(form)), { form, version: PROJECT_FILE_VERSION });
 });
 
 test('a file from another wizard is refused naming that wizard', () => {
-  assert.throws(() => project.readProjectFile(projectText({}, 'imfwizard'), WIZARD), /imfwizard/);
+  assert.throws(() => readProject(projectText({}, 'imfwizard')), /imfwizard/);
 });
 
-test('a file from a newer project version is refused naming the version', () => {
-  const newer = JSON.stringify({ wizard: WIZARD, version: project.PROJECT_FILE_VERSION + 1, form: {} });
-  assert.throws(() => project.readProjectFile(newer, WIZARD), /version 2/);
+test('a file from a newer project version is refused naming both versions', () => {
+  const newer = projectText({}, WIZARD, 3);
+  assert.throws(() => readProject(newer, 2), /saved as project version 3, this app reads up to version 2/);
+});
+
+function renameTitleToName(form) {
+  return { name: form.title };
+}
+
+test('an older file runs every step up to the app version in order, each fed the previous result', () => {
+  let stepThreeInput;
+  const migrations = {
+    3: (form) => {
+      stepThreeInput = form;
+      return { project: { name: form.name } };
+    },
+    2: renameTitleToName,
+  };
+
+  const opened = readProject(projectText({ title: 'Film' }, WIZARD, 1), 3, migrations);
+
+  assert.deepEqual(stepThreeInput, { name: 'Film' });
+  assert.deepEqual(opened, { form: { project: { name: 'Film' } }, version: 1 });
+});
+
+test('a missing step between the file and the app version is refused naming that version', () => {
+  const migrations = { 3: (form) => form };
+  assert.throws(() => readProject(projectText({}, WIZARD, 1), 3, migrations), /no upgrade to version 2/);
+});
+
+test('a missing step for the app version itself is refused naming that version', () => {
+  const migrations = { 2: renameTitleToName };
+  assert.throws(() => readProject(projectText({}, WIZARD, 1), 3, migrations), /no upgrade to version 3/);
+});
+
+test('a file at the app version runs no step', () => {
+  const ranSteps = [];
+  const migrations = {
+    2: (form) => ranSteps.push(2) && form,
+    3: (form) => ranSteps.push(3) && form,
+  };
+
+  const opened = readProject(projectText({ title: 'Film' }, WIZARD, 3), 3, migrations);
+
+  assert.deepEqual(ranSteps, []);
+  assert.deepEqual(opened, { form: { title: 'Film' }, version: 3 });
 });
 
 test('a file with no form reads as an empty form, so every field takes its default', () => {
   const bare = JSON.stringify({ wizard: WIZARD, version: 1 });
-  assert.deepEqual(project.readProjectFile(bare, WIZARD), {});
+  assert.deepEqual(readForm(bare), {});
 });
 
 test('a version below 1 is refused as not a project file', () => {
   for (const version of [0, -1]) {
     const text = JSON.stringify({ wizard: WIZARD, version, form: {} });
-    assert.throws(() => project.readProjectFile(text, WIZARD), /not a project file/, `version ${version}`);
+    assert.throws(() => readForm(text), /not a project file/, `version ${version}`);
   }
 });
 
 test('text that is not JSON is refused as not a project file', () => {
-  assert.throws(() => project.readProjectFile('<xml/>', WIZARD), /not a project file/);
+  assert.throws(() => readForm('<xml/>'), /not a project file/);
 });
 
 test('a missing path is found again beside the project file', async () => {
@@ -238,6 +292,7 @@ test('opening a project replaces the form, names the missing paths and titles th
 
   await elements.get('btn-project-open').handlers.click();
 
+  assert.equal(tauri.dialogRequests.open.at(-1).defaultPath, DEFAULT_PROJECT_FOLDER);
   assert.deepEqual(panel.state.restored.at(-1), {
     title: 'Film',
     source: '/moved/film/clip.mov',
@@ -247,6 +302,57 @@ test('opening a project replaces the form, names the missing paths and titles th
   assert.match(statuses.at(-1), /not found: \/old\/film\/gone\.srt$/);
   assert.equal(recentPaths()[0], '/moved/film/Film.dcpwizard');
   assert.equal(tauri.disk.has(DRAFT_PATH), false, 'the opened file replaces the draft');
+});
+
+const UPGRADING_VERSIONING = { projectFileVersion: 2, projectFileMigrations: { 2: renameTitleToName } };
+
+test('opening an older file upgrades the form, says so, and leaves the file for Save to rewrite', async () => {
+  await launch({ name: '' }, { '/p/Film.dcpwizard': projectText({ title: 'Film' }, WIZARD, 1) }, [], UPGRADING_VERSIONING);
+  const writesBefore = tauri.writes.length;
+
+  await project.openProjectFile('/p/Film.dcpwizard');
+
+  assert.deepEqual(panel.state.form, { name: 'Film' });
+  assert.equal(statuses.at(-1), 'Opened Film.dcpwizard, upgraded from version 1');
+  assert.equal(document.title, `${APPLICATION_NAME} - Film.dcpwizard`);
+  assert.deepEqual(tauri.writes.slice(writesBefore), [], 'opening writes nothing');
+
+  tauri.answerDialog('confirm', false);
+  await project.newProject();
+  assert.equal(tauri.dialogRequests.confirm.at(-1), 'Discard unsaved changes?');
+
+  const saveDialogs = tauri.dialogRequests.save.length;
+  await project.saveProject();
+  assert.equal(tauri.dialogRequests.save.length, saveDialogs);
+  const saved = JSON.parse(tauri.disk.get('/p/Film.dcpwizard'));
+  assert.equal(saved.version, 2);
+  assert.deepEqual(saved.form, { name: 'Film' });
+
+  const asked = tauri.dialogRequests.confirm.length;
+  tauri.answerDialog('save', null);
+  await project.newProject();
+  assert.equal(tauri.dialogRequests.confirm.length, asked, 'the form matches the saved file');
+});
+
+test('an older file names its missing paths after the upgrade', async () => {
+  await launch({ name: '' }, { '/p/Film.dcpwizard': projectText({ title: 'Film', source: '/gone/clip.mov' }, WIZARD, 1) }, [], {
+    projectFileVersion: 2,
+    projectFileMigrations: { 2: (form) => ({ name: form.title, source: form.source }) },
+  });
+
+  await project.openProjectFile('/p/Film.dcpwizard');
+
+  assert.equal(statuses.at(-1), 'Opened Film.dcpwizard, upgraded from version 1, not found: /gone/clip.mov');
+});
+
+test('a draft from an older version restores through the steps', async () => {
+  const draft = project.projectFileText(WIZARD, 1, { title: 'Unsaved' }, new Date(), '/p/Film.dcpwizard');
+
+  await launch({ name: '' }, { [DRAFT_PATH]: draft }, [], UPGRADING_VERSIONING);
+
+  assert.deepEqual(panel.state.form, { name: 'Unsaved' });
+  assert.equal(statuses.at(-1), 'Restored the unsaved project');
+  assert.equal(document.title, `${APPLICATION_NAME} - Film.dcpwizard (draft)`);
 });
 
 test('opening another wizard\'s file shows the refusal and leaves the form alone', async () => {
@@ -264,8 +370,8 @@ test('Save As adds the extension and Save then writes to the same file without a
 
   await elements.get('btn-project-save-as').handlers.click();
 
-  assert.equal(tauri.dialogRequests.save.at(-1).defaultPath, 'Film.dcpwizard');
-  assert.deepEqual(project.readProjectFile(tauri.disk.get('/projects/Film.dcpwizard'), WIZARD), panel.state.form);
+  assert.equal(tauri.dialogRequests.save.at(-1).defaultPath, `${DEFAULT_PROJECT_FOLDER}/Film.dcpwizard`);
+  assert.deepEqual(readForm(tauri.disk.get('/projects/Film.dcpwizard')), panel.state.form);
   assert.equal(document.title, `${APPLICATION_NAME} - Film.dcpwizard`);
   assert.equal(recentPaths()[0], '/projects/Film.dcpwizard');
 
@@ -274,13 +380,13 @@ test('Save As adds the extension and Save then writes to the same file without a
   await elements.get('btn-project-save').handlers.click();
 
   assert.equal(tauri.dialogRequests.save.length, asked);
-  assert.equal(project.readProjectFile(tauri.disk.get('/projects/Film.dcpwizard'), WIZARD).title, 'Film, recut');
+  assert.equal(readForm(tauri.disk.get('/projects/Film.dcpwizard')).title, 'Film, recut');
 });
 
 test('Save with no project file asks where to save it', async () => {
   await launch({ title: 'New' });
   await elements.get('btn-project-save').handlers.click();
-  assert.equal(tauri.dialogRequests.save.at(-1).defaultPath, 'New.dcpwizard');
+  assert.equal(tauri.dialogRequests.save.at(-1).defaultPath, `${DEFAULT_PROJECT_FOLDER}/New.dcpwizard`);
 });
 
 test('the file beside a package is a record, the open project stays the one Save writes to', async () => {
@@ -291,7 +397,7 @@ test('the file beside a package is a record, the open project stays the one Save
   const besidePath = await project.saveProjectBesidePackage('/out/Film_FTR');
 
   assert.equal(besidePath, '/out/Film_FTR.dcpwizard');
-  assert.deepEqual(project.readProjectFile(tauri.disk.get(besidePath), WIZARD), panel.state.form);
+  assert.deepEqual(readForm(tauri.disk.get(besidePath)), panel.state.form);
   assert.equal(document.title, `${APPLICATION_NAME} - Film.dcpwizard`);
 });
 
@@ -303,7 +409,7 @@ test('a changed form is kept as a draft, restored on the next launch and cleared
   panel.state.form.title = 'Unsaved';
   await project.saveDraftIfChanged();
   const draft = tauri.disk.get(DRAFT_PATH);
-  assert.equal(project.readProjectFile(draft, WIZARD).title, 'Unsaved');
+  assert.equal(readForm(draft).title, 'Unsaved');
 
   await launch({ title: '' }, { [DRAFT_PATH]: draft });
   assert.equal(panel.state.form.title, 'Unsaved');
@@ -320,7 +426,7 @@ test('closing the window writes the draft', async () => {
   await launch({ title: '' });
   panel.state.form.title = 'Closing';
   await tauri.closeHandler();
-  assert.equal(project.readProjectFile(tauri.disk.get(DRAFT_PATH), WIZARD).title, 'Closing');
+  assert.equal(readForm(tauri.disk.get(DRAFT_PATH)).title, 'Closing');
 });
 
 test('saving clears the draft', async () => {
@@ -328,6 +434,49 @@ test('saving clears the draft', async () => {
   tauri.answerDialog('save', '/projects/Film.dcpwizard');
   await project.saveProject();
   assert.equal(tauri.disk.has(DRAFT_PATH), false);
+});
+
+function projectName() {
+  return elements.get('project-name').textContent;
+}
+
+test('the toolbar names the project file the window title names', async () => {
+  await launch({ title: 'Film' });
+  assert.equal(projectName(), 'Untitled');
+  assert.equal(document.title, APPLICATION_NAME);
+
+  tauri.answerDialog('save', '/projects/Film.dcpwizard');
+  await project.saveProjectAs();
+  assert.equal(projectName(), 'Film.dcpwizard');
+  assert.equal(document.title, `${APPLICATION_NAME} - ${projectName()}`);
+
+  panel.state.form.title = 'Film, recut';
+  await project.saveDraftIfChanged();
+  await launch({ title: '' }, { '/projects/Film.dcpwizard': '', [DRAFT_PATH]: tauri.disk.get(DRAFT_PATH) });
+  assert.equal(projectName(), 'Film.dcpwizard (draft)');
+  assert.equal(document.title, `${APPLICATION_NAME} - ${projectName()}`);
+
+  tauri.answerDialog('confirm', true);
+  tauri.answerDialog('save', null);
+  await project.newProject();
+  assert.equal(projectName(), 'Film.dcpwizard (draft)', 'a cancelled New keeps the label');
+
+  tauri.answerDialog('confirm', true);
+  tauri.answerDialog('save', '/projects/Next.dcpwizard');
+  await project.newProject();
+  assert.equal(projectName(), 'Next.dcpwizard');
+  assert.equal(document.title, `${APPLICATION_NAME} - ${projectName()}`);
+});
+
+test('the toolbar names an opened project file, and Untitled with the draft mark for a draft of no file', async () => {
+  await launch({ title: '' }, { '/p/Film.dcpwizard': projectText({ title: 'Film' }) });
+  await project.openProjectFile('/p/Film.dcpwizard');
+  assert.equal(projectName(), 'Film.dcpwizard');
+  assert.equal(document.title, `${APPLICATION_NAME} - ${projectName()}`);
+
+  await launch({ title: '' }, { [DRAFT_PATH]: projectText({ title: 'Unsaved' }) });
+  assert.equal(projectName(), 'Untitled (draft)');
+  assert.equal(document.title, `${APPLICATION_NAME} (draft)`);
 });
 
 test('the title keeps the build progress beside the project file name', async () => {
@@ -392,7 +541,7 @@ test('New with nothing changed asks nothing, then saves a default form named aft
   assert.equal(tauri.dialogRequests.save.at(-1).defaultPath, `${DEFAULT_PROJECT_FOLDER}/Untitled.dcpwizard`);
   const saved = { title: 'Film', outputDir: '/projects', source: '' };
   assert.deepEqual(panel.state.form, saved);
-  assert.deepEqual(project.readProjectFile(tauri.disk.get('/projects/Film.dcpwizard'), WIZARD), saved);
+  assert.deepEqual(readForm(tauri.disk.get('/projects/Film.dcpwizard')), saved);
   assert.equal(document.title, `${APPLICATION_NAME} - Film.dcpwizard`);
   assert.equal(recentPaths()[0], '/projects/Film.dcpwizard');
 });
@@ -430,7 +579,7 @@ test('a build saves the open project as well as the file beside the package', as
   await project.saveProjectBesidePackage('/out/Film_FTR');
 
   for (const path of ['/out/Film_FTR.dcpwizard', '/projects/Film.dcpwizard']) {
-    assert.equal(project.readProjectFile(tauri.disk.get(path), WIZARD).title, 'Film, recut', path);
+    assert.equal(readForm(tauri.disk.get(path)).title, 'Film, recut', path);
   }
   assert.equal(tauri.disk.has(DRAFT_PATH), false);
 });
@@ -461,6 +610,6 @@ test('a draft remembers its project file, so the next launch titles it and Save 
   const saveDialogs = tauri.dialogRequests.save.length;
   await project.saveProject();
   assert.equal(tauri.dialogRequests.save.length, saveDialogs);
-  assert.equal(project.readProjectFile(tauri.disk.get('/p/Film.dcpwizard'), WIZARD).title, 'Film, recut');
+  assert.equal(readForm(tauri.disk.get('/p/Film.dcpwizard')).title, 'Film, recut');
   assert.equal(document.title, `${APPLICATION_NAME} - Film.dcpwizard`);
 });

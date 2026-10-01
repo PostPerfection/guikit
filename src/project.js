@@ -6,7 +6,6 @@ import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { escapeHtml } from './html.js';
 
-export const PROJECT_FILE_VERSION = 1;
 const FIRST_PROJECT_FILE_VERSION = 1;
 
 export const PROJECT_FILE_SHORTCUTS = [
@@ -27,6 +26,7 @@ const RECENT_SECTION_ID = 'recent-projects';
 const RECENT_LIST_ID = 'recent-list';
 const RECENT_HEADER_ID = 'recent-header';
 const RECENT_TOGGLE_ID = 'recent-toggle';
+const PROJECT_NAME_ID = 'project-name';
 const MAX_RECENT = 20;
 
 const DRAFT_FILE_STEM = 'draft';
@@ -51,7 +51,7 @@ let draftPath = null;
 let draftFolderReady = null;
 // the serialized form the draft on disk, or the project file, already holds
 let formOnDisk = null;
-// the serialized form the open project file holds, the defaults with none open, null after a draft
+// the serialized form the open project file holds, the defaults with none open, null after a draft or an upgrade
 let projectFileForm = null;
 let draftOperations = Promise.resolve();
 let renderGeneration = 0;
@@ -96,12 +96,12 @@ function projectFilter() {
   return { name: `${configuration.applicationName} project`, extensions: [extension()] };
 }
 
-export function projectFileText(wizard, form, savedAt = new Date(), draftOf = undefined) {
-  const project = { wizard, version: PROJECT_FILE_VERSION, saved: savedAt.toISOString(), draftOf, form };
+export function projectFileText(wizard, version, form, savedAt = new Date(), draftOf = undefined) {
+  const project = { wizard, version, saved: savedAt.toISOString(), draftOf, form };
   return `${JSON.stringify(project, null, 2)}\n`;
 }
 
-export function readProjectFile(text, wizard) {
+export function readProjectFile(text, wizard, version, migrations) {
   let project;
   try {
     project = JSON.parse(text);
@@ -118,11 +118,25 @@ export function readProjectFile(text, wizard) {
   if (project.version < FIRST_PROJECT_FILE_VERSION) {
     throw new Error(`not a project file, version ${project.version} is below ${FIRST_PROJECT_FILE_VERSION}`);
   }
-  if (project.version > PROJECT_FILE_VERSION) {
-    throw new Error(`saved as project version ${project.version}, this app reads up to version ${PROJECT_FILE_VERSION}`);
+  if (project.version > version) {
+    throw new Error(`saved as project version ${project.version}, this app reads up to version ${version}`);
   }
-  const form = project.form;
-  return form && typeof form === 'object' && !Array.isArray(form) ? form : {};
+  const form = project.form && typeof project.form === 'object' && !Array.isArray(project.form) ? project.form : {};
+  return { form: migratedForm(form, project.version, version, migrations), version: project.version };
+}
+
+function migratedForm(form, fileVersion, version, migrations) {
+  let migrated = form;
+  for (let nextVersion = fileVersion + 1; nextVersion <= version; nextVersion++) {
+    const migrate = migrations[nextVersion];
+    if (!migrate) throw new Error(`saved as project version ${fileVersion}, this app has no upgrade to version ${nextVersion}`);
+    migrated = migrate(migrated);
+  }
+  return migrated;
+}
+
+function readConfiguredProjectFile(text) {
+  return readProjectFile(text, configuration.wizard, configuration.projectFileVersion, configuration.projectFileMigrations);
 }
 
 // === Paths ===
@@ -228,7 +242,7 @@ export async function relocateMissingPaths(form, projectFolder, outputFields = [
 // === Commands ===
 
 export async function openProject() {
-  const picked = await open({ multiple: false, directory: false, filters: [projectFilter()] });
+  const picked = await open({ multiple: false, directory: false, defaultPath: await projectFolder(), filters: [projectFilter()] });
   if (picked) await openProjectFile(picked);
 }
 
@@ -248,22 +262,24 @@ export async function openProjectFile(path) {
     if (forget) removeRecentProject(path);
     return;
   }
-  let form;
+  let projectFile;
   try {
-    form = readProjectFile(text, configuration.wizard);
+    projectFile = readConfiguredProjectFile(text);
   } catch (error) {
     await message(`${path}: ${error.message}`, { title: 'Cannot open project', kind: 'error' });
     return;
   }
-  const relocation = await relocateMissingPaths(form, folderOf(path), configuration.outputFields, configuration.textFields);
+  const upgraded = projectFile.version < configuration.projectFileVersion;
+  const relocation = await relocateMissingPaths(projectFile.form, folderOf(path), configuration.outputFields, configuration.textFields);
   const notRestored = (await configuration.restore(relocation.form)) || [];
   currentProjectPath = path;
   restoredFromDraft = false;
-  projectFileForm = JSON.stringify(configuration.serialize());
+  projectFileForm = upgraded ? null : JSON.stringify(configuration.serialize());
   await clearDraft();
   addRecentProject(path, recentTitle(relocation.form, path));
   updateWindowTitle();
-  configuration.setStatus(withMissing(`Opened ${fileNameOf(path)}`, [...relocation.missing, ...notRestored]));
+  const opened = upgraded ? `Opened ${fileNameOf(path)}, upgraded from version ${projectFile.version}` : `Opened ${fileNameOf(path)}`;
+  configuration.setStatus(withMissing(opened, [...relocation.missing, ...notRestored]));
 }
 
 function withMissing(status, missing) {
@@ -278,8 +294,7 @@ export async function newProject() {
   const unsaved = JSON.stringify(configuration.serialize()) !== projectFileForm;
   if (unsaved && !(await confirm(DISCARD_CHANGES_QUESTION, { title: 'New project', kind: 'warning' }))) return;
   const name = `${UNTITLED_FILE_STEM}.${extension()}`;
-  const folder = currentProjectPath ? folderOf(currentProjectPath) : await configuration.defaultProjectFolder();
-  const picked = await save({ defaultPath: folder ? joinPath(folder, name) : name, filters: [projectFilter()] });
+  const picked = await save({ defaultPath: await projectFileSuggestion(name), filters: [projectFilter()] });
   if (!picked) return;
   const path = withExtension(picked);
   await configuration.restore(configuration.defaults);
@@ -305,16 +320,22 @@ export async function saveProjectAs() {
   const form = configuration.serialize();
   const stem = (configuration.projectTitle(form) || UNTITLED_FILE_STEM).replace(FILE_NAME_UNSAFE, '-');
   const name = `${stem}.${extension()}`;
-  const picked = await save({
-    defaultPath: currentProjectPath ? joinPath(folderOf(currentProjectPath), name) : name,
-    filters: [projectFilter()],
-  });
+  const picked = await save({ defaultPath: await projectFileSuggestion(name), filters: [projectFilter()] });
   if (picked) await writeProject(withExtension(picked), form);
+}
+
+async function projectFolder() {
+  return currentProjectPath ? folderOf(currentProjectPath) : await configuration.defaultProjectFolder();
+}
+
+async function projectFileSuggestion(name) {
+  const folder = await projectFolder();
+  return folder ? joinPath(folder, name) : name;
 }
 
 async function writeProjectText(path, form) {
   try {
-    await writeTextFile(path, projectFileText(configuration.wizard, form));
+    await writeTextFile(path, projectFileText(configuration.wizard, configuration.projectFileVersion, form));
   } catch (error) {
     configuration.setStatus(`Could not save ${path}: ${error}`);
     return false;
@@ -373,7 +394,7 @@ async function restoreDraft() {
   let text;
   try {
     text = await readTextFile(draftPath);
-    form = readProjectFile(text, configuration.wizard);
+    form = readConfiguredProjectFile(text).form;
   } catch (error) {
     configuration.setStatus(`Could not restore the unsaved project in ${draftPath}: ${error.message || error}`);
     formOnDisk = null;
@@ -408,7 +429,8 @@ export function saveDraftIfChanged() {
     try {
       draftFolderReady ??= mkdir(folderOf(draftPath), { recursive: true });
       await draftFolderReady;
-      await writeTextFile(draftPath, projectFileText(configuration.wizard, form, new Date(), currentProjectPath ?? undefined));
+      const draftText = projectFileText(configuration.wizard, configuration.projectFileVersion, form, new Date(), currentProjectPath ?? undefined);
+      await writeTextFile(draftPath, draftText);
     } catch (error) {
       draftFolderReady = null;
       configuration.setStatus(`Could not keep the unsaved project in ${draftPath}: ${error}`);
@@ -426,11 +448,15 @@ function clearDraft(form = configuration.serialize()) {
 // === Window title ===
 
 function updateWindowTitle() {
+  const fileName = currentProjectPath ? fileNameOf(currentProjectPath) : null;
+  const draftMark = restoredFromDraft ? ` ${DRAFT_TITLE_MARK}` : '';
   let title = configuration.applicationName;
-  if (currentProjectPath) title += `${TITLE_SEPARATOR}${fileNameOf(currentProjectPath)}`;
-  if (restoredFromDraft) title += ` ${DRAFT_TITLE_MARK}`;
+  if (fileName) title += `${TITLE_SEPARATOR}${fileName}`;
+  title += draftMark;
   if (titleStatus) title += `${TITLE_SEPARATOR}${titleStatus}`;
   document.title = title;
+  const projectName = document.getElementById(PROJECT_NAME_ID);
+  if (projectName) projectName.textContent = `${fileName ?? UNTITLED_FILE_STEM}${draftMark}`;
 }
 
 export function setWindowTitleStatus(text) {
