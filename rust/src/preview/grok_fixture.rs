@@ -3,6 +3,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use asdcplib::crypto::{AesEncContext, HmacContext};
 use asdcplib::jp2k::{CodestreamHeader, MxfWriter, PictureDescriptor};
 use asdcplib::{LabelSet, Rational, WriterInfo};
 use postkit::colour::XyzToSrgb;
@@ -30,6 +31,8 @@ const CPL_UUID: &str = "cc10cc10-0000-0000-0000-000000000000";
 const PICTURE_UUID: &str = "11111111-1111-1111-1111-111111111111";
 const REEL_UUID: &str = "aaaaaaaa-0000-0000-0000-000000000000";
 
+const INITIALISATION_VECTOR: [u8; 16] = [0x9c; 16];
+
 pub(super) const PATIENCE: Duration = Duration::from_secs(30);
 pub(super) const POLL_INTERVAL: Duration = Duration::from_millis(5);
 
@@ -48,16 +51,41 @@ fn code_colour(code: i32) -> [u8; 3] {
     XyzToSrgb::new().pixel(code, code, code)
 }
 
+pub(super) struct PictureEncryption {
+    pub(super) content_key: [u8; 16],
+    pub(super) key_id: [u8; 16],
+}
+
 pub(super) fn write_picture_file(directory: &Path, frames: usize) -> PathBuf {
     let path = directory.join(PICTURE_NAME);
-    write_mxf(&path, &codestreams(frames));
+    write_mxf(&path, &codestreams(frames), None);
     path
 }
 
 pub(super) fn write_package(directory: &Path, frames: usize) -> PathBuf {
+    write_package_with(directory, frames, None)
+}
+
+pub(super) fn write_encrypted_package(
+    directory: &Path,
+    frames: usize,
+    encryption: &PictureEncryption,
+) -> PathBuf {
+    write_package_with(directory, frames, Some(encryption))
+}
+
+fn write_package_with(
+    directory: &Path,
+    frames: usize,
+    encryption: Option<&PictureEncryption>,
+) -> PathBuf {
     let package = directory.join("package");
     std::fs::create_dir_all(&package).unwrap();
-    write_picture_file(&package, frames);
+    write_mxf(
+        &package.join(PICTURE_NAME),
+        &codestreams(frames),
+        encryption,
+    );
 
     let asset_map = AssetMap {
         uuid: ASSET_MAP_UUID.into(),
@@ -156,11 +184,13 @@ fn banded_plane() -> Vec<i32> {
     plane
 }
 
-fn write_mxf(path: &Path, frames: &[Vec<u8>]) {
+fn write_mxf(path: &Path, frames: &[Vec<u8>], encryption: Option<&PictureEncryption>) {
     let info = WriterInfo {
         asset_uuid: [8; 16],
         context_id: [0xc7; 16],
-        cryptographic_key_id: [0xd4; 16],
+        cryptographic_key_id: encryption.map_or([0xd4; 16], |encryption| encryption.key_id),
+        encrypted_essence: encryption.is_some(),
+        uses_hmac: encryption.is_some(),
         label_set: LabelSet::Smpte,
         ..Default::default()
     };
@@ -177,8 +207,22 @@ fn write_mxf(path: &Path, frames: &[Vec<u8>]) {
     writer
         .open_write(&path.to_string_lossy(), &info, &descriptor, 16_384)
         .unwrap();
+    let mut crypto = encryption.map(|encryption| {
+        let mut encryptor = AesEncContext::new();
+        encryptor.init_key(&encryption.content_key).unwrap();
+        encryptor.set_ivec(&INITIALISATION_VECTOR).unwrap();
+        let mut hmac = HmacContext::new();
+        hmac.init_key(&encryption.content_key, LabelSet::Smpte)
+            .unwrap();
+        (encryptor, hmac)
+    });
     for frame in frames {
-        writer.write_frame(frame, None, None).unwrap();
+        match crypto.as_mut() {
+            Some((encryptor, hmac)) => writer
+                .write_frame(frame, Some(encryptor), Some(hmac))
+                .unwrap(),
+            None => writer.write_frame(frame, None, None).unwrap(),
+        }
     }
     writer.finalize().unwrap();
 }

@@ -107,7 +107,9 @@ fn the_gl_presenter_letterboxes_the_picture_and_keeps_it_the_right_way_up() {
     player
         .init_opengl(resolve_gl_symbol, std::ptr::null_mut(), None)
         .expect("both players took the GL context");
-    player.load_source(&picture.to_string_lossy()).unwrap();
+    player
+        .load_source(&picture.to_string_lossy(), None)
+        .unwrap();
     assert_eq!(player.active(), Backend::Grok, "the fixture is grok's");
     // every frame is the same picture, so stopping the clock costs the test nothing
     player.grok().set_paused(true);

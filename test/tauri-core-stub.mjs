@@ -6,14 +6,25 @@ export const invocations = [];
 
 // What each command answers with, for a test that reads the reply.
 const answers = new Map();
+// What each refused command rejects with.
+const refusals = new Map();
 
 export function invoke(command, args) {
   invocations.push([command, args]);
+  if (refusals.has(command)) return Promise.reject(refusals.get(command));
   return Promise.resolve(answers.has(command) ? answers.get(command) : '{}');
 }
 
 export function answerWith(command, value) {
   answers.set(command, value);
+}
+
+export function refuseWith(command, error) {
+  refusals.set(command, error);
+}
+
+export function forgetRefusals() {
+  refusals.clear();
 }
 
 export function forgetInvocations() {

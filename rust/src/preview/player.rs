@@ -2,6 +2,7 @@ use std::ffi::c_void;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use postkit::content_keys::ContentKeys;
 use postkit::grok_player::{GetProcAddressFn, GrokPlayer};
 use postkit::mpv_render::{MpvRenderPlayer, NativeDisplay};
 
@@ -117,27 +118,29 @@ impl Player {
 
     // ─── loading ───────────────────────────────────────────────────────────
 
-    pub fn load_source(&self, path: &str) -> Result<(), String> {
+    pub fn load_source(&self, path: &str, keys: Option<ContentKeys>) -> Result<(), String> {
         if GrokPlayer::accepts(Path::new(path)) {
-            return self.start_grok(path);
+            return self.start_grok(path, keys);
         }
+        refuse_keys_for_mpv(path, keys.as_ref())?;
         self.start_mpv(path);
         self.mpv.load_file(path)
     }
 
-    pub fn load_package_dir(&self, path: &str) -> Result<(), String> {
+    pub fn load_package_dir(&self, path: &str, keys: Option<ContentKeys>) -> Result<(), String> {
         if GrokPlayer::accepts(Path::new(path)) {
-            return self.start_grok(path);
+            return self.start_grok(path, keys);
         }
+        refuse_keys_for_mpv(path, keys.as_ref())?;
         self.start_mpv(path);
         self.mpv.load_package_dir(path)
     }
 
     // the page sends no play after a load, mpv's loadfile starts playing itself
-    fn start_grok(&self, path: &str) -> Result<(), String> {
+    fn start_grok(&self, path: &str, keys: Option<ContentKeys>) -> Result<(), String> {
         self.take_over(Backend::Grok, path);
         self.mpv.stop()?;
-        self.grok.load(Path::new(path))?;
+        self.grok.load(Path::new(path), keys)?;
         self.grok.set_paused(false);
         Ok(())
     }
@@ -232,6 +235,15 @@ impl Player {
 
 // mpv's hwdec probe creates the process's cuda context before the grok plugin can, and a plugin
 // kernel loaded lazily at its first launch deadlocks behind the plugin's blocked host callback
+fn refuse_keys_for_mpv(path: &str, keys: Option<&ContentKeys>) -> Result<(), String> {
+    if keys.is_none() {
+        return Ok(());
+    }
+    Err(format!(
+        "{path} is not JPEG 2000 MXF essence, so content keys do not apply to it"
+    ))
+}
+
 fn load_cuda_kernels_eagerly() {
     if std::env::var_os("CUDA_MODULE_LOADING").is_none() {
         std::env::set_var("CUDA_MODULE_LOADING", "EAGER");

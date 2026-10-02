@@ -45,6 +45,15 @@ directory, or a directory of codestreams. Everything else goes to libmpv.
 `[preview] backend: grok|mpv for <path>`. Every other command follows the
 backend the load picked, so the page drives one player either way.
 
+An encrypted package plays on grok when its load is given the content keys.
+`previewDcp(dirPath, contentKeys)` and `previewFile(filePath, contentKeys)` take
+`{ kdm, recipient_key, keys }`, the paths to a KDM and the recipient's private
+key or to a dcpwizard KEYS.json, or null for none, and both resolve to whether
+the load worked. `previewNeedsContentKeys(path)` is true for an encrypted DCP
+directory, CPL or picture MXF, so an app can ask for the keys before it loads.
+Keys given with a source mpv plays fail the load. An app registers
+`preview_needs_content_keys` beside the other commands.
+
 grok decodes with the JPEG 2000 codec rather than through libavcodec, draws the
 QC overlays and the subtitles into the frame it composes, and starts playing on
 load the way mpv's `loadfile` does. Both players render into the same GL

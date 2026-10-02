@@ -531,31 +531,38 @@ function formatTimecode(seconds, fps) {
 }
 
 /// Load a file into the preview player
-export function previewFile(filePath) {
+export function previewFile(filePath, contentKeys = null) {
   showEmbeddedPanel();
   shownWatcher(filePath);
   endReported = false;
   loadWatcher(filePath);
-  invoke('preview_load', { filePath }).catch(reportPreviewLoadFailure);
+  const loaded = invoke('preview_load', { filePath, contentKeys }).then(() => true, reportPreviewLoadFailure);
   resetTrackToggles();
   loadedPath = filePath;
   setTransportEnabled(true);
   showPreviewTitle(filePath);
   startScrubberPolling();
+  return loaded;
 }
 
 /// Load a DCP directory into the preview player
-export function previewDcp(dirPath) {
+export function previewDcp(dirPath, contentKeys = null) {
   showEmbeddedPanel();
   shownWatcher(dirPath);
   endReported = false;
   loadWatcher(dirPath);
-  invoke('preview_load_dcp', { dirPath }).catch(reportPreviewLoadFailure);
+  const loaded = invoke('preview_load_dcp', { dirPath, contentKeys }).then(() => true, reportPreviewLoadFailure);
   resetTrackToggles();
   loadedPath = dirPath;
   setTransportEnabled(true);
   showPreviewTitle(dirPath);
   startScrubberPolling();
+  return loaded;
+}
+
+// true for an encrypted DCP directory, CPL or picture MXF
+export function previewNeedsContentKeys(path) {
+  return invoke('preview_needs_content_keys', { path });
 }
 
 function reportPreviewLoadFailure(error) {
@@ -566,4 +573,5 @@ function reportPreviewLoadFailure(error) {
     status.textContent = message;
     status.title = message;
   }
+  return false;
 }

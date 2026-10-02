@@ -17,10 +17,12 @@ fn the_backend_follows_what_the_source_is() {
     let player = Player::new().unwrap();
     player.init_software().unwrap();
 
-    player.load_source(&clip.to_string_lossy()).unwrap();
+    player.load_source(&clip.to_string_lossy(), None).unwrap();
     assert_eq!(player.active(), Backend::Mpv, "an mp4 is libmpv's");
 
-    player.load_source(&picture.to_string_lossy()).unwrap();
+    player
+        .load_source(&picture.to_string_lossy(), None)
+        .unwrap();
     assert_eq!(
         player.active(),
         Backend::Grok,
@@ -31,14 +33,16 @@ fn the_backend_follows_what_the_source_is() {
         !player.grok().paused()
     });
 
-    player.load_package_dir(&package.to_string_lossy()).unwrap();
+    player
+        .load_package_dir(&package.to_string_lossy(), None)
+        .unwrap();
     assert_eq!(
         player.active(),
         Backend::Grok,
         "a package around one is grok's too"
     );
 
-    player.load_source(&clip.to_string_lossy()).unwrap();
+    player.load_source(&clip.to_string_lossy(), None).unwrap();
     assert_eq!(
         player.active(),
         Backend::Mpv,

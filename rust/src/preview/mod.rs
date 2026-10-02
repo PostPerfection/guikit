@@ -12,6 +12,7 @@
 use std::path::Path;
 use std::sync::Mutex;
 
+use postkit::content_keys::ContentKeys;
 use postkit::grok_player::{
     DecodeScale as GrokDecodeScale, GrokPlayer, SubtitleSlot as GrokSubtitleSlot,
 };
@@ -212,15 +213,51 @@ pub fn preview_is_embedded(state: tauri::State<'_, PreviewPlayer>) -> bool {
     matches!(&state.surface, PreviewSurface::Embedded(_))
 }
 
+// the files the content keys come from, named the way export requests name them
+#[derive(Deserialize)]
+pub struct ContentKeyPaths {
+    kdm: Option<String>,
+    recipient_key: Option<String>,
+    keys: Option<String>,
+}
+
+fn resolve_content_keys(paths: Option<ContentKeyPaths>) -> Result<Option<ContentKeys>, String> {
+    let Some(paths) = paths else {
+        return Ok(None);
+    };
+    ContentKeys::from_options(
+        paths.kdm.as_deref().map(Path::new),
+        paths.recipient_key.as_deref().map(Path::new),
+        paths.keys.as_deref().map(Path::new),
+    )
+}
+
 #[tauri::command(async)]
 pub fn preview_load(
     file_path: String,
+    content_keys: Option<ContentKeyPaths>,
     state: tauri::State<'_, PreviewPlayer>,
 ) -> Result<(), String> {
+    let keys = resolve_content_keys(content_keys)?;
     let player = state.player()?;
     state.forget_loaded_file();
     send_decode_scale_to_grok(player, &state);
-    player.load_source(&file_path)
+    player.load_source(&file_path, keys)
+}
+
+// a source the grok player does not take plays on mpv, where content keys do not apply
+#[tauri::command(async)]
+pub fn preview_needs_content_keys(path: String) -> Result<bool, String> {
+    let source = Path::new(&path);
+    if !GrokPlayer::accepts(source) {
+        return Ok(false);
+    }
+    match postkit::preview::resolve_picture(source) {
+        Ok(resolved) => Ok(resolved.encrypted),
+        // a directory of bare codestreams names no CPL
+        Err(postkit::preview::PreviewError::Resolve(_)) => Ok(false),
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 // a scale set while mpv was on screen never reached grok
@@ -312,12 +349,14 @@ fn player_metadata(player: &MpvRenderPlayer) -> Result<String, String> {
 #[tauri::command(async)]
 pub fn preview_load_dcp(
     dir_path: String,
+    content_keys: Option<ContentKeyPaths>,
     state: tauri::State<'_, PreviewPlayer>,
 ) -> Result<(), String> {
+    let keys = resolve_content_keys(content_keys)?;
     let player = state.player()?;
     state.forget_loaded_file();
     send_decode_scale_to_grok(player, &state);
-    player.load_package_dir(&dir_path)
+    player.load_package_dir(&dir_path, keys)
 }
 
 /// Draw the requested QC overlays over playback, or none of them.
@@ -739,6 +778,9 @@ mod backend_selection_tests;
 mod end_of_file_tests;
 
 #[cfg(test)]
+mod content_keys_tests;
+
+#[cfg(test)]
 mod grok_playback_tests;
 
 #[cfg(test)]
@@ -958,6 +1000,7 @@ mod tests {
                 preview_get_duration,
                 preview_get_metadata,
                 preview_load_dcp,
+                preview_needs_content_keys,
                 preview_set_overlays,
                 preview_set_decode_scale,
                 preview_set_subtitle_file,
