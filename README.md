@@ -26,9 +26,11 @@ An app registers the commands from `guikit::preview` in its
 app.manage(guikit::preview::create_player(app, "main"));
 ```
 
-Playback is the only path, so an app needs libmpv and grok development files at
-build time. When `attach` fails the app still starts, with `preview_is_embedded`
-reporting false so the page hides the preview.
+Playback is the only path, so an app needs grok plus the FFmpeg 8.1.3 LGPL
+libraries and libmpv from a PostPerfection/ffmpeg-mpv-builds release at build
+time, with `PKG_CONFIG_PATH` (Linux, macOS) or `FFMPEG_DIR` and `MPV_LIB_DIR`
+(Windows) pointing at them. When `attach` fails the app still starts, with
+`preview_is_embedded` reporting false so the page hides the preview.
 
 The crate depends on postkit by git url. Both wizards redirect that to their
 own `extern/postkit` submodule with a `[patch]` in their gui `Cargo.toml`, so a
