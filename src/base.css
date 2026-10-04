@@ -1164,16 +1164,25 @@ body {
 }
 
 /* Recent projects */
-.recent-panel {
-  margin-bottom: 8px;
-}
 .recent-list {
+  position: fixed;
+  margin-top: 4px;
+  z-index: 100;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   gap: 4px;
   padding: 8px;
-  max-height: 260px;
+  width: min(640px, calc(100vw - 16px));
+  max-height: min(440px, 60vh);
   overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+.recent-list[hidden] {
+  display: none;
 }
 .recent-item {
   display: flex;

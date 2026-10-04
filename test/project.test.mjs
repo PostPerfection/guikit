@@ -22,6 +22,15 @@ function fakeElement() {
     textContent: '',
     handlers: {},
     classList: { toggle() {} },
+    style: {},
+    offsetWidth: 0,
+    rectangle: { left: 0, bottom: 0 },
+    getBoundingClientRect() {
+      return this.rectangle;
+    },
+    contains(node) {
+      return node === this;
+    },
     setAttribute() {},
     addEventListener(name, handler) {
       this.handlers[name] = handler;
@@ -33,8 +42,13 @@ function fakeElement() {
 }
 
 const elements = new Map();
+const documentHandlers = {};
+globalThis.window = { innerWidth: 1500, addEventListener() {} };
 globalThis.document = {
   title: '',
+  addEventListener(name, handler) {
+    documentHandlers[name] = handler;
+  },
   getElementById(id) {
     if (!elements.has(id)) elements.set(id, fakeElement());
     return elements.get(id);
@@ -291,6 +305,31 @@ test('a recent row with its package offers to delete it, a row without one offer
   assert.doesNotMatch(filmRow, /recent-forget/);
   assert.match(shortRow, /recent-forget/);
   assert.doesNotMatch(shortRow, /recent-delete/);
+});
+
+test('the Recent button opens the list under it, and a click outside both closes it', async () => {
+  await launch({ title: '' }, { '/out/Film.dcpwizard': '' }, [{ path: '/out/Film.dcpwizard', title: 'Film', time: 1 }]);
+  const button = document.getElementById('btn-recent-projects');
+  const list = document.getElementById('recent-list');
+  button.rectangle = { left: 900, bottom: 36 };
+  list.offsetWidth = 640;
+  assert.equal(button.disabled, false);
+  assert.equal(list.hidden, true);
+
+  button.handlers.click();
+  assert.equal(list.hidden, false);
+  assert.deepEqual(list.style, { left: '852px', top: '36px' });
+
+  documentHandlers.click({ target: list });
+  assert.equal(list.hidden, false);
+
+  documentHandlers.click({ target: document.getElementById('asset-list') });
+  assert.equal(list.hidden, true);
+});
+
+test('the Recent button is disabled with no recent projects', async () => {
+  await launch({ title: '' });
+  assert.equal(document.getElementById('btn-recent-projects').disabled, true);
 });
 
 test('opening a project replaces the form, names the missing paths and titles the window', async () => {

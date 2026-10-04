@@ -22,10 +22,9 @@ const SHORTCUT_HANDLERS = {
   'project-save-as': () => saveProjectAs(),
 };
 
-const RECENT_SECTION_ID = 'recent-projects';
+const RECENT_BUTTON_ID = 'btn-recent-projects';
 const RECENT_LIST_ID = 'recent-list';
-const RECENT_HEADER_ID = 'recent-header';
-const RECENT_TOGGLE_ID = 'recent-toggle';
+const RECENT_LIST_WINDOW_MARGIN_PIXELS = 8;
 const PROJECT_NAME_ID = 'project-name';
 const MAX_RECENT = 20;
 
@@ -63,13 +62,19 @@ export async function initProjects(options) {
   currentProjectPath = null;
   restoredFromDraft = false;
   shownOrder = [];
+  recentProjectsCollapsed = true;
   for (const { id, buttonId } of PROJECT_FILE_SHORTCUTS) {
     document.getElementById(buttonId)?.addEventListener('click', SHORTCUT_HANDLERS[id]);
   }
-  document.getElementById(RECENT_HEADER_ID)?.addEventListener('click', () => {
-    localStorage.setItem(recentCollapsedKey(), String(!recentProjectsCollapsed()));
-    applyRecentProjectsCollapsed();
+  document.getElementById(RECENT_BUTTON_ID)?.addEventListener('click', () => {
+    setRecentProjectsCollapsed(!recentProjectsCollapsed);
   });
+  document.addEventListener('click', (event) => {
+    const button = document.getElementById(RECENT_BUTTON_ID);
+    const list = document.getElementById(RECENT_LIST_ID);
+    if (!button?.contains(event.target) && !list?.contains(event.target)) setRecentProjectsCollapsed(true);
+  });
+  window.addEventListener('resize', () => setRecentProjectsCollapsed(true));
   updateWindowTitle();
 
   draftPath = joinPath(await appDataDir(), `${DRAFT_FILE_STEM}.${extension()}`);
@@ -470,24 +475,27 @@ function recentKey() {
   return `${configuration.wizard}-recent-projects`;
 }
 
-function recentCollapsedKey() {
-  return `${configuration.wizard}-recent-projects-collapsed`;
+let recentProjectsCollapsed = true;
+
+function setRecentProjectsCollapsed(collapsed) {
+  recentProjectsCollapsed = collapsed;
+  applyRecentProjectsCollapsed();
 }
 
-function recentProjectsCollapsed() {
-  return localStorage.getItem(recentCollapsedKey()) !== 'false';
+function placeRecentListUnderButton(button, list) {
+  const { left, bottom } = button.getBoundingClientRect();
+  const furthestLeft = window.innerWidth - list.offsetWidth - RECENT_LIST_WINDOW_MARGIN_PIXELS;
+  list.style.left = `${Math.max(RECENT_LIST_WINDOW_MARGIN_PIXELS, Math.min(left, furthestLeft))}px`;
+  list.style.top = `${bottom}px`;
 }
 
 function applyRecentProjectsCollapsed() {
-  const section = document.getElementById(RECENT_SECTION_ID);
-  const toggle = document.getElementById(RECENT_TOGGLE_ID);
-  if (!section) return;
-  const collapsed = recentProjectsCollapsed();
-  section.classList.toggle('collapsed', collapsed);
-  if (toggle) {
-    toggle.textContent = collapsed ? '▶' : '▼';
-    toggle.setAttribute('aria-expanded', String(!collapsed));
-  }
+  const button = document.getElementById(RECENT_BUTTON_ID);
+  const list = document.getElementById(RECENT_LIST_ID);
+  if (!button || !list) return;
+  list.hidden = recentProjectsCollapsed;
+  button.setAttribute('aria-expanded', String(!recentProjectsCollapsed));
+  if (!recentProjectsCollapsed) placeRecentListUnderButton(button, list);
 }
 
 export function getRecentProjects() {
@@ -566,19 +574,19 @@ function recentRowHtml(entry, packageIsBeside) {
 }
 
 export async function renderRecentProjects() {
-  const section = document.getElementById(RECENT_SECTION_ID);
+  const button = document.getElementById(RECENT_BUTTON_ID);
   const list = document.getElementById(RECENT_LIST_ID);
-  if (!section || !list) return;
+  if (!button || !list) return;
   applyRecentProjectsCollapsed();
   const generation = ++renderGeneration;
   const recent = getRecentProjects();
   const packagesBeside = await Promise.all(recent.map((entry) => existsInScope(packagePathBeside(entry.path))));
   if (generation !== renderGeneration) return;
+  button.disabled = recent.length === 0;
   if (recent.length === 0) {
-    section.hidden = true;
+    setRecentProjectsCollapsed(true);
     return;
   }
-  section.hidden = false;
   const besideByPath = new Map(recent.map((entry, index) => [entry.path, packagesBeside[index]]));
   list.innerHTML = rowsInShownOrder(recent).map((entry) => recentRowHtml(entry, besideByPath.get(entry.path))).join('');
   wireRecentRows(list);
@@ -605,6 +613,9 @@ function wireRecentRows(list) {
     });
   }
   list.querySelectorAll('.recent-item').forEach((row) => {
-    row.addEventListener('click', () => openProjectFile(row.dataset.path));
+    row.addEventListener('click', () => {
+      setRecentProjectsCollapsed(true);
+      openProjectFile(row.dataset.path);
+    });
   });
 }
