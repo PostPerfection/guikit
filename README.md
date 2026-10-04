@@ -7,6 +7,7 @@ Shared code for the PostPerfection wizard GUIs, frontend and native.
 - `src/jobs.js`: the Jobs panel, the backend's jobs and an app's second source
 - `src/shortcuts.js`: keyboard shortcut handling and the shortcuts dialog
 - `src/project.js`: project files (save, save as, open), the unsaved draft, the recent list and the window title
+- `src/asset-strip-resize.js`: the drag handle under the project view's asset strip
 - `src/base.css`: the shared stylesheet
 - `rust/`: the `guikit` crate, holding the native side of the preview
 - `test/`: the headless harness for the playlist queue, the transport bar and the

@@ -1312,3 +1312,86 @@ body {
   justify-content: flex-end;
   gap: 8px;
 }
+
+/* === project view: asset strip above, settings in columns below === */
+#view-project .workspace {
+  --asset-strip-default-height: 320px;
+  --asset-strip-min-height: 200px;
+  --asset-strip-handle-height: 16px;
+  --settings-min-height: 240px;
+  flex-direction: column;
+  gap: 0;
+  min-height: calc(var(--asset-strip-min-height) + var(--asset-strip-handle-height) + var(--settings-min-height));
+}
+#view-project .workspace-main {
+  flex: none;
+  height: clamp(
+    var(--asset-strip-min-height),
+    var(--asset-strip-height, var(--asset-strip-default-height)),
+    calc(100% - var(--asset-strip-handle-height) - var(--settings-min-height))
+  );
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, auto) minmax(100px, 1fr);
+  grid-template-areas:
+    "assets compositions"
+    "assets reels";
+}
+#view-project .assets-panel { grid-area: assets; }
+#view-project .compositions-panel { grid-area: compositions; }
+#view-project .reels-panel { grid-area: reels; }
+#view-project .workspace-main > .panel {
+  min-height: 0;
+  overflow-y: auto;
+}
+#view-project .workspace-main .panel-header,
+#view-project .workspace-main .panel-actions {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.asset-strip-handle {
+  flex: none;
+  height: var(--asset-strip-handle-height);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: row-resize;
+  touch-action: none;
+}
+.asset-strip-handle::before {
+  content: "";
+  width: 48px;
+  height: 4px;
+  border-radius: var(--radius);
+  background: var(--border-light);
+}
+.asset-strip-handle:hover::before {
+  background: var(--primary);
+}
+#view-project .properties-panel {
+  flex: 1;
+  width: auto;
+  min-height: var(--settings-min-height);
+}
+#view-project .properties-content {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+#view-project .properties-content fieldset {
+  margin-bottom: 0;
+  padding: 12px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+/* a floated legend leaves the fieldset border unbroken */
+#view-project .properties-content legend {
+  float: left;
+  width: 100%;
+}
+#view-project .properties-content legend + * {
+  clear: both;
+}
+/* === end project view === */
