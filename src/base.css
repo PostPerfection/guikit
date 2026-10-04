@@ -1191,7 +1191,8 @@ body {
   min-width: 0;
 }
 .recent-retitle,
-.recent-delete {
+.recent-delete,
+.recent-forget {
   padding: 0 4px;
   border: none;
   background: none;
@@ -1201,7 +1202,8 @@ body {
   cursor: pointer;
 }
 .recent-retitle:hover,
-.recent-delete:hover {
+.recent-delete:hover,
+.recent-forget:hover {
   opacity: 1;
 }
 .status-disk {
@@ -1222,6 +1224,9 @@ body {
   display: block;
   font-weight: 500;
   font-size: 0.85rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .recent-path {
   display: block;

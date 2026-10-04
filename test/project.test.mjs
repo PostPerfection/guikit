@@ -281,6 +281,18 @@ test('launch migrates the stored recent list', async () => {
   assert.deepEqual(recentPaths(), ['/out/Film.dcpwizard']);
 });
 
+test('a recent row with its package offers to delete it, a row without one offers to leave the list', async () => {
+  await launch({ title: '' }, { '/out/Film.dcpwizard': '', '/out/Film': '', '/out/Short.dcpwizard': '' }, [
+    { path: '/out/Film.dcpwizard', title: 'Film', time: 1 },
+    { path: '/out/Short.dcpwizard', title: 'Short', time: 0 },
+  ]);
+  const [filmRow, shortRow] = document.getElementById('recent-list').innerHTML.split('class="recent-item"').slice(1);
+  assert.match(filmRow, /recent-delete/);
+  assert.doesNotMatch(filmRow, /recent-forget/);
+  assert.match(shortRow, /recent-forget/);
+  assert.doesNotMatch(shortRow, /recent-delete/);
+});
+
 test('opening a project replaces the form, names the missing paths and titles the window', async () => {
   const saved = { title: 'Film', source: '/old/film/clip.mov', subtitle: '/old/film/gone.srt' };
   await launch({ title: '' }, {

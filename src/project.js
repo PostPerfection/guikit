@@ -554,7 +554,8 @@ function recentRowHtml(entry, packageIsBeside) {
       <button class="recent-queue" title="Add this ${noun} to the playlist">+</button>
       <button class="recent-retitle" title="Give this ${noun} a new content title">✎</button>
       <button class="recent-delete" title="Delete this ${noun} from disk">✕</button>`
-    : '';
+    : `
+      <button class="recent-forget" title="Remove this project from the list">✕</button>`;
   return `
     <div class="recent-item" data-path="${path}" data-package-path="${packagePath}" title="${path}">
       <div class="recent-item-text">
@@ -593,6 +594,7 @@ function wireRecentRows(list) {
     }],
     ['.recent-retitle', (row) => onRetitle(row.dataset.packagePath, row.dataset.path)],
     ['.recent-delete', (row) => onDelete(row.dataset.packagePath)],
+    ['.recent-forget', (row) => removeRecentProject(row.dataset.path)],
   ];
   for (const [selector, action] of rowActions) {
     list.querySelectorAll(selector).forEach((button) => {
