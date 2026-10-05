@@ -278,21 +278,31 @@ async function initEmbeddedSurface() {
   isEmbedded = await invoke('preview_is_embedded').catch(() => false);
   if (!isEmbedded) return;
 
-  const report = () => {
-    const visible = !panel.hidden && !surfaceCovered;
+  let sentPlacement = null;
+  const sendPlacement = (onlyIfChanged) => {
     const rect = surface.getBoundingClientRect();
-    invoke('preview_set_surface', {
+    const placement = {
       x: Math.round(rect.left),
       y: Math.round(rect.top),
       width: Math.round(rect.width),
       height: Math.round(rect.height),
-      visible,
-    }).catch(() => {});
+      visible: !panel.hidden && !surfaceCovered,
+    };
+    const unchanged =
+      sentPlacement !== null && Object.keys(placement).every((key) => placement[key] === sentPlacement[key]);
+    if (onlyIfChanged && unchanged) return;
+    sentPlacement = placement;
+    invoke('preview_set_surface', placement).catch(() => {});
+  };
+  const report = () => sendPlacement(false);
+  // hiding the panel already sent the hidden placement
+  const reportIfMoved = () => {
+    if (!panel.hidden) sendPlacement(true);
   };
 
-  new ResizeObserver(report).observe(surface);
-  window.addEventListener('resize', report);
-  document.addEventListener('scroll', report, true);
+  new ResizeObserver(reportIfMoved).observe(surface);
+  window.addEventListener('resize', reportIfMoved);
+  document.addEventListener('scroll', reportIfMoved, true);
 
   document.getElementById('preview-close')?.addEventListener('click', closePreview);
 
