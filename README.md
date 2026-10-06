@@ -15,6 +15,7 @@ Shared code for the PostPerfection wizard GUIs, frontend and native.
 - `src/asset-strip-resize.js`: the drag handle under the project view's asset strip
 - `src/base.css`: the shared stylesheet
 - `rust/`: the `guikit` crate, holding the native side of the preview
+- `startup/`: the `guikit-startup` crate, the process setup every desktop app runs first. `prefer_shared_memory_webkit_frames_on_nvidia` sets `WEBKIT_DMABUF_RENDERER_FORCE_SHM=1` on a Linux box with an NVIDIA GPU unless one of WebKit's renderer variables is already set, and `fork_terminal_guard` keeps the terminal usable after the app exits. It depends on libc alone, so an app that links neither the preview nor tauri's unstable features can take it
 - `test/`: the headless harness for the playlist queue, the transport bar and the
   Jobs panel
 

@@ -1,0 +1,12 @@
+[package]
+name = "guikit-startup"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+description = "Process setup every PostPerfection desktop app runs before its window opens"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"

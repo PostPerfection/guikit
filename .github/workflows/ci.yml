@@ -204,3 +204,15 @@ jobs:
       - name: Format check
         working-directory: rust
         run: cargo fmt --check
+
+      - name: Test startup crate
+        working-directory: startup
+        run: cargo test
+
+      - name: Clippy startup crate
+        working-directory: startup
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Format check startup crate
+        working-directory: startup
+        run: cargo fmt --check
