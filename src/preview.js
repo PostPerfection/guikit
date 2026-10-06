@@ -297,6 +297,12 @@ export function initFullPageSurface() {
   reportSurfacePlacement(document.getElementById('preview-surface'), () => true);
 }
 
+// for a load the app made without the page, such as a playlist it runs
+export function enablePreviewTransport() {
+  setTransportEnabled(true);
+  startScrubberPolling();
+}
+
 // for a window shown only while something plays
 export function initLiveTransport() {
   initScrubber();

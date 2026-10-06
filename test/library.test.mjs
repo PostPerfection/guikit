@@ -114,3 +114,25 @@ test('a verifying row has play but no verify or remove', async () => {
   assert.ok(!tableBody.innerHTML.includes('btn-verify'));
   assert.ok(!tableBody.innerHTML.includes('btn-remove'));
 });
+
+test('an app that adds to a playlist gets the button on every row, with the composition', async () => {
+  const added = [];
+  const tableBody = fakeElement();
+  library.initLibraryPanel({
+    tableBody,
+    statusBadge: fakeElement(),
+    load: async () => ({ status: '', packages: [feature()] }),
+    actions: { addToPlaylist: async (libraryPackage, composition) => added.push([libraryPackage.directory, composition.title]) },
+  });
+  await library.refreshLibrary();
+
+  assert.ok(rowsMarkup(tableBody).every((row) => row.includes('btn-add-to-playlist')));
+  await clickButton(tableBody, 'btn-add-to-playlist', 1);
+  assert.deepEqual(added, [['/library/Feature', 'Trailer']]);
+});
+
+test('an app without a playlist gets no Add to playlist button', async () => {
+  const { tableBody } = await panelWith([feature()]);
+
+  assert.ok(rowsMarkup(tableBody).every((row) => !row.includes('btn-add-to-playlist')));
+});

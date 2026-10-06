@@ -30,6 +30,7 @@ mod player;
 pub use player::{Backend, Player};
 
 pub mod player_controls;
+pub mod screening_runner;
 
 /// The OSD overlay the QC drawings occupy. Ids belong to the libmpv client, so
 /// this one is the app's alone.

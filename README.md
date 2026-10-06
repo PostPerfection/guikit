@@ -90,6 +90,30 @@ them through loads and stops. A file mpv plays is left alone, which each command
 reports as `mpvFileUnchanged`. Their argument types are serde structs an app can
 keep in its own settings file. Only dcpscreen registers them.
 
+## Screening playlists
+
+`guikit::preview::screening_runner::ScreeningRunner` plays a postkit
+`ScreeningPlaylist` on the preview player. An app manages
+`ScreeningRunner::new(app_handle)` after the `PreviewPlayer`, and its thread
+ticks the current run every 100 ms. `start(playlist, first_row, lookup)` loads
+the first row and returns the state, `stop()` ends the run and leaves the player
+alone, and `state()` is the `RunnerState` the page polls, or `None` before the
+first run: `activity` (`playing`, `holding`, `finished`, `stopped`), the
+current and next row with their titles, `stillImage` while an intermission
+holds one, `secondsToNextStart` and the errors so far. `lookup(package, cplId)`
+returns the CPL path and content keys of a composition row and is called when
+the row loads or queues, so a KDM ingested during the show counts.
+
+A composition row that follows a composition row with no start time, or with
+one the current row ends after, is queued on the grok player with
+`queue_next` and takes over without a gap. An intermission row stops the player
+and holds for its length, and a start time still ahead stops the player and
+holds black until it arrives. A row that fails to load is skipped and reported
+in `errors`, and a source the runner did not load ends the run. The log lines
+start with `[playlist]`. After `start` the page calls
+`enablePreviewTransport()` from `preview.js`, since the load did not come from
+the page.
+
 ## Preview transport
 
 The transport bar is the app's own markup, wired by element id and every button
@@ -300,7 +324,9 @@ encrypted composition, the verdict lowercased with the error count after
 placeholder spans all seven. Play (`btn-play`) calls
 `actions.play(package, composition)`, Verify (`btn-verify`) and Remove
 (`btn-remove`) call `actions.verify(package)` and `actions.remove(package)` and
-are left out while the verdict is `Verifying`. Each action is followed by
+are left out while the verdict is `Verifying`. An app whose actions include
+`addToPlaylist(package, composition)` gets an Add to playlist button
+(`btn-add-to-playlist`) after Play on every row. Each action is followed by
 `refreshLibrary()`, which is exported for the app to call too.
 
 ## Keys

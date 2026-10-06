@@ -10,10 +10,12 @@ const ENCRYPTED_MARK_TITLE = 'Encrypted';
 const PLAY_BUTTON = { className: 'btn-play', text: 'Play' };
 const VERIFY_BUTTON = { className: 'btn-verify', text: 'Verify' };
 const REMOVE_BUTTON = { className: 'btn-remove', text: 'Remove' };
+const ADD_TO_PLAYLIST_BUTTON = { className: 'btn-add-to-playlist', text: 'Add to playlist' };
 const TABLE_BUTTON_ACTIONS = {
   [PLAY_BUTTON.className]: (row) => libraryActions.play(row.libraryPackage, row.composition),
   [VERIFY_BUTTON.className]: (row) => libraryActions.verify(row.libraryPackage),
   [REMOVE_BUTTON.className]: (row) => libraryActions.remove(row.libraryPackage),
+  [ADD_TO_PLAYLIST_BUTTON.className]: (row) => libraryActions.addToPlaylist(row.libraryPackage, row.composition),
 };
 const TABLE_BUTTON_SELECTOR = Object.keys(TABLE_BUTTON_ACTIONS).map((className) => `.${className}`).join(', ');
 
@@ -30,7 +32,8 @@ let renderedRows = [];
 /// `load` is an async function returning `{ status, packages }`, each package
 /// `{ directory, title, standard, compositions, verdict }`. `actions` holds
 /// `play(package, composition)`, `verify(package)` and `remove(package)`, and
-/// each is followed by a refresh.
+/// each is followed by a refresh. An optional `addToPlaylist(package, composition)`
+/// gives every row an Add to playlist button.
 export function initLibraryPanel({ tableBody, statusBadge, refreshButton, load, actions }) {
   libraryTableBody = tableBody ?? null;
   libraryStatusBadge = statusBadge ?? null;
@@ -74,7 +77,8 @@ function rowButton({ className, text }, index) {
 }
 
 function rowButtons(libraryPackage, index) {
-  const play = rowButton(PLAY_BUTTON, index);
+  const addToPlaylist = libraryActions.addToPlaylist ? rowButton(ADD_TO_PLAYLIST_BUTTON, index) : '';
+  const play = rowButton(PLAY_BUTTON, index) + addToPlaylist;
   if (libraryPackage.verdict.state === VERIFYING_VERDICT_STATE) return play;
   return play + rowButton(VERIFY_BUTTON, index) + rowButton(REMOVE_BUTTON, index);
 }
