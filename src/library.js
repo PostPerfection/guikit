@@ -30,7 +30,8 @@ let renderedRows = [];
 /// to. `refreshButton` gets a click handler when it is given.
 ///
 /// `load` is an async function returning `{ status, packages }`, each package
-/// `{ directory, title, standard, compositions, verdict }`. `actions` holds
+/// `{ directory, title, standard, compositions, verdict }`, an IMF composition
+/// carrying a `picture` text the standard column shows. `actions` holds
 /// `play(package, composition)`, `verify(package)` and `remove(package)`, and
 /// each is followed by a refresh. An optional `addToPlaylist(package, composition)`
 /// gives every row an Add to playlist button.
@@ -83,10 +84,15 @@ function rowButtons(libraryPackage, index) {
   return play + rowButton(VERIFY_BUTTON, index) + rowButton(REMOVE_BUTTON, index);
 }
 
+function standardText(libraryPackage, composition) {
+  if (!composition.picture) return libraryPackage.standard;
+  return `${libraryPackage.standard} (${composition.picture})`;
+}
+
 function rowMarkup({ libraryPackage, composition }, index) {
   const duration = framesToTimecode(composition.durationFrames, composition.editRate);
   return `<tr><td>${escapeHtml(libraryPackage.title)}</td><td>${escapeHtml(composition.title)}</td>` +
-    `<td>${duration}</td><td>${escapeHtml(libraryPackage.standard)}</td>${encryptedCell(composition)}` +
+    `<td>${duration}</td><td>${escapeHtml(standardText(libraryPackage, composition))}</td>${encryptedCell(composition)}` +
     `${verdictCell(libraryPackage.verdict)}<td>${rowButtons(libraryPackage, index)}</td></tr>`;
 }
 

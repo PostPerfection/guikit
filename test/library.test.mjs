@@ -71,6 +71,17 @@ test('each composition is a row with every column, escaped', async () => {
   assert.equal(statusBadge.textContent, 'Watching 2 folders');
 });
 
+test('an IMF composition shows its picture beside the standard', async () => {
+  const imp = {
+    ...feature(),
+    standard: 'IMF',
+    compositions: [{ id: 'urn:uuid:3', title: 'Review', durationFrames: 240, editRate: [24000, 1001], encrypted: false, picture: 'App 2E, Rec.709, BT.709' }],
+  };
+  const { tableBody } = await panelWith([imp]);
+
+  assert.ok(rowsMarkup(tableBody)[0].includes('<td>IMF (App 2E, Rec.709, BT.709)</td>'));
+});
+
 test('a verdict other than failed shows lowercase with no count', async () => {
   const { tableBody } = await panelWith([feature('Unverified')]);
 
