@@ -4,7 +4,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use asdcplib::crypto::{AesEncContext, HmacContext};
-use asdcplib::jp2k::{CodestreamHeader, MxfWriter, PictureDescriptor};
+use asdcplib::jp2k::{
+    CodestreamHeader, MxfWriter, PictureDescriptor, StereoMxfWriter, StereoscopicPhase,
+};
 use asdcplib::{LabelSet, Rational, WriterInfo};
 use postkit::colour::XyzToSrgb;
 use postkit::grok_encoder::{CompressParams, PhaseClocks, RawFrame};
@@ -25,6 +27,9 @@ const PICTURE_PRECISION: u8 = 12;
 const RESOLUTIONS: u8 = 3;
 
 const PICTURE_NAME: &str = "picture.mxf";
+const STEREO_PICTURE_NAME: &str = "stereo.mxf";
+// bytes reserved for the MXF header partition
+const MXF_HEADER_SIZE: u32 = 16_384;
 const CPL_NAME: &str = "CPL_test.xml";
 const ASSET_MAP_UUID: &str = "bbbbbbbb-0000-0000-0000-000000000000";
 const CPL_UUID: &str = "cc10cc10-0000-0000-0000-000000000000";
@@ -208,7 +213,50 @@ fn write_composition(
     std::fs::write(package.join(CPL_NAME), cpl.to_xml()).unwrap();
 }
 
+// the left eye flat body colour, the right eye flat band colour
+pub(super) fn write_stereo_picture_file(directory: &Path, frames: usize) -> PathBuf {
+    let path = directory.join(STEREO_PICTURE_NAME);
+    let left = codestreams_of(&flat_plane(BODY_CODE), frames);
+    let right = codestreams_of(&flat_plane(BAND_CODE), frames);
+    let info = WriterInfo {
+        asset_uuid: [9; 16],
+        label_set: LabelSet::Smpte,
+        ..Default::default()
+    };
+    let mut writer = StereoMxfWriter::new();
+    writer
+        .open_write(
+            &path.to_string_lossy(),
+            &info,
+            &picture_descriptor(&left),
+            MXF_HEADER_SIZE,
+        )
+        .unwrap();
+    for (left, right) in left.iter().zip(&right) {
+        writer
+            .write_frame(left, StereoscopicPhase::Left, None, None)
+            .unwrap();
+        writer
+            .write_frame(right, StereoscopicPhase::Right, None, None)
+            .unwrap();
+    }
+    writer.finalize().unwrap();
+    path
+}
+
+pub(super) fn left_eye_colour() -> [u8; 3] {
+    code_colour(BODY_CODE)
+}
+
+pub(super) fn right_eye_colour() -> [u8; 3] {
+    code_colour(BAND_CODE)
+}
+
 fn codestreams(count: usize) -> Vec<Vec<u8>> {
+    codestreams_of(&banded_plane(), count)
+}
+
+fn codestreams_of(plane: &[i32], count: usize) -> Vec<Vec<u8>> {
     let params = CompressParams {
         irreversible: false,
         compression_ratio: 1.0,
@@ -220,7 +268,6 @@ fn codestreams(count: usize) -> Vec<Vec<u8>> {
     };
     postkit::grok_encoder::initialize(0);
     let directory = tempfile::tempdir().unwrap();
-    let plane = banded_plane();
     let mut next = 0usize;
     let result = postkit::grok_encoder::encode_pipeline(
         directory.path(),
@@ -233,7 +280,7 @@ fn codestreams(count: usize) -> Vec<Vec<u8>> {
                 return None;
             }
             let frame = RawFrame::Planar {
-                components: [plane.clone(), plane.clone(), plane.clone()],
+                components: [plane.to_vec(), plane.to_vec(), plane.to_vec()],
                 width: PICTURE_SIDE,
                 height: PICTURE_SIDE,
                 precision: PICTURE_PRECISION,
@@ -253,6 +300,10 @@ fn codestreams(count: usize) -> Vec<Vec<u8>> {
         .collect()
 }
 
+fn flat_plane(code: i32) -> Vec<i32> {
+    vec![code; (PICTURE_SIDE * PICTURE_SIDE) as usize]
+}
+
 fn banded_plane() -> Vec<i32> {
     let mut plane = Vec::with_capacity((PICTURE_SIDE * PICTURE_SIDE) as usize);
     for row in 0..PICTURE_SIDE {
@@ -266,6 +317,18 @@ fn banded_plane() -> Vec<i32> {
     plane
 }
 
+fn picture_descriptor(frames: &[Vec<u8>]) -> PictureDescriptor {
+    PictureDescriptor {
+        edit_rate: Rational::new(FRAMES_PER_SECOND as i32, 1),
+        sample_rate: Rational::new(FRAMES_PER_SECOND as i32, 1),
+        stored_width: PICTURE_SIDE,
+        stored_height: PICTURE_SIDE,
+        aspect_ratio: Rational::new(PICTURE_SIDE as i32, PICTURE_SIDE as i32),
+        container_duration: frames.len() as u32,
+        codestream: CodestreamHeader::parse(&frames[0]).expect("the fixture is a codestream"),
+    }
+}
+
 fn write_mxf(path: &Path, frames: &[Vec<u8>], encryption: Option<&PictureEncryption>) {
     let info = WriterInfo {
         asset_uuid: [8; 16],
@@ -276,18 +339,14 @@ fn write_mxf(path: &Path, frames: &[Vec<u8>], encryption: Option<&PictureEncrypt
         label_set: LabelSet::Smpte,
         ..Default::default()
     };
-    let descriptor = PictureDescriptor {
-        edit_rate: Rational::new(FRAMES_PER_SECOND as i32, 1),
-        sample_rate: Rational::new(FRAMES_PER_SECOND as i32, 1),
-        stored_width: PICTURE_SIDE,
-        stored_height: PICTURE_SIDE,
-        aspect_ratio: Rational::new(PICTURE_SIDE as i32, PICTURE_SIDE as i32),
-        container_duration: frames.len() as u32,
-        codestream: CodestreamHeader::parse(&frames[0]).expect("the fixture is a codestream"),
-    };
     let mut writer = MxfWriter::new();
     writer
-        .open_write(&path.to_string_lossy(), &info, &descriptor, 16_384)
+        .open_write(
+            &path.to_string_lossy(),
+            &info,
+            &picture_descriptor(frames),
+            MXF_HEADER_SIZE,
+        )
         .unwrap();
     let mut crypto = encryption.map(|encryption| {
         let mut encryptor = AesEncContext::new();

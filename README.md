@@ -90,7 +90,9 @@ scaling `fit`, `fill` or `native`), `preview_set_sound_device`,
 `preview_set_sound_layout` (`stereo`, `fivePointOne`, `sevenPointOne`,
 `automatic`), `preview_set_sound_delay` in milliseconds,
 `preview_set_subtitle_presentation` (offset in percent of the frame height and
-an optional `RRGGBB` colour), `preview_set_display_profile` (a monitor ICC
+an optional `RRGGBB` colour), `preview_set_stereo_output` (`leftEye`, `rightEye`, `sideBySide` or
+`topAndBottom` for a 3D source, the two both-eye modes decoding twice the
+pictures) with `preview_stereo_output` reading it back, `preview_set_display_profile` (a monitor ICC
 profile path for DCP pictures, or null for the built-in sRGB, refused naming
 the file and why when the player cannot use it) and `preview_sound_devices`.
 The grok player keeps them through loads and stops. A file mpv plays is left alone, which each command

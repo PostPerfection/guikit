@@ -1,6 +1,6 @@
 use postkit::grok_player::{
     sound_output_device_names, GrokPlayer, PictureMasks, PictureScaling, PresentationSettings,
-    SoundOutputLayout, SubtitlePresentation,
+    SoundOutputLayout, StereoOutput, SubtitlePresentation,
 };
 use postkit::subtitle_formats::Rgba;
 use serde::{Deserialize, Serialize};
@@ -56,6 +56,28 @@ pub enum SoundLayout {
     FivePointOne,
     SevenPointOne,
     Automatic,
+}
+
+// what a 3D source shows, a mono source ignores it
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StereoMode {
+    #[default]
+    LeftEye,
+    RightEye,
+    SideBySide,
+    TopAndBottom,
+}
+
+impl StereoMode {
+    fn output(self) -> StereoOutput {
+        match self {
+            StereoMode::LeftEye => StereoOutput::LeftEye,
+            StereoMode::RightEye => StereoOutput::RightEye,
+            StereoMode::SideBySide => StereoOutput::SideBySide,
+            StereoMode::TopAndBottom => StereoOutput::TopAndBottom,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -192,6 +214,27 @@ pub fn preview_set_subtitle_presentation(
 ) -> Result<PlayerControlOutcome, String> {
     let presentation = subtitles.presentation()?;
     apply_to_grok(&state, |grok| grok.set_subtitle_presentation(presentation))
+}
+
+pub(super) fn set_stereo_output(player: &Player, mode: StereoMode) -> PlayerControlOutcome {
+    player.grok().set_stereo_output(mode.output());
+    outcome(player)
+}
+
+// side by side and top and bottom decode both eyes, twice the work of one
+#[tauri::command(async)]
+pub fn preview_set_stereo_output(
+    output: StereoMode,
+    state: tauri::State<'_, PreviewPlayer>,
+) -> Result<PlayerControlOutcome, String> {
+    let outcome = set_stereo_output(state.player()?, output);
+    *state.stereo_output.lock().unwrap() = output;
+    Ok(outcome)
+}
+
+#[tauri::command]
+pub fn preview_stereo_output(state: tauri::State<'_, PreviewPlayer>) -> StereoMode {
+    *state.stereo_output.lock().unwrap()
 }
 
 // None goes back to the built-in sRGB

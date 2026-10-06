@@ -118,6 +118,7 @@ pub struct PreviewPlayer {
     overlays: Mutex<PreviewOverlays>,
     drawn_overlay: Mutex<Option<OverlayDrawing>>,
     sent_rectangles: Mutex<Option<Vec<OverlayRectangle>>>,
+    stereo_output: Mutex<player_controls::StereoMode>,
 }
 
 impl PreviewPlayer {
@@ -130,6 +131,7 @@ impl PreviewPlayer {
             overlays: Mutex::new(PreviewOverlays::default()),
             drawn_overlay: Mutex::new(None),
             sent_rectangles: Mutex::new(None),
+            stereo_output: Mutex::new(player_controls::StereoMode::default()),
         }
     }
 
@@ -803,6 +805,9 @@ mod grok_playback_tests;
 
 #[cfg(test)]
 mod display_profile_tests;
+
+#[cfg(test)]
+mod stereo_output_tests;
 
 #[cfg(test)]
 mod overlay_placement_tests;
