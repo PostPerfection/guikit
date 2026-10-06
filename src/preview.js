@@ -1,5 +1,6 @@
 // Preview player - uses mpv via IPC for high-performance video playback
 import { invoke } from '@tauri-apps/api/core';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 
 let scrubberInterval = null;
 let isSeeking = false;
@@ -16,6 +17,7 @@ let loadedPath = null;
 let surfaceCovered = false;
 
 const OVERLAY_CONTROLS_ID = 'preview-controls';
+const FULLSCREEN_CLASS = 'preview-fullscreen';
 
 const PREVIEW_PANEL_DEFAULT_TITLE = 'Preview';
 const SCRUBBER_IDLE_CLASS = 'timeline-scrubber-idle';
@@ -305,9 +307,30 @@ async function initEmbeddedSurface() {
   document.addEventListener('scroll', reportIfMoved, true);
 
   document.getElementById('preview-close')?.addEventListener('click', closePreview);
+  document
+    .getElementById('preview-fullscreen')
+    ?.addEventListener('click', () => setPreviewFullscreen(!isPreviewFullscreen()));
+  // on window so the shortcuts overlay sees Escape first and can claim it
+  window.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || event.defaultPrevented || !isPreviewFullscreen()) return;
+    event.preventDefault();
+    setPreviewFullscreen(false);
+  });
 
   reportSurface = report;
   report();
+}
+
+function isPreviewFullscreen() {
+  return !!document.getElementById('preview-panel')?.classList.contains(FULLSCREEN_CLASS);
+}
+
+function setPreviewFullscreen(fullscreen) {
+  document.getElementById('preview-panel')?.classList.toggle(FULLSCREEN_CLASS, fullscreen);
+  getCurrentWindow()
+    .setFullscreen(fullscreen)
+    .catch((e) => console.error('[preview] Failed to set full screen:', e));
+  reportSurface();
 }
 
 /// Take the picture off the screen while the page draws over it, playback carries
@@ -338,6 +361,7 @@ export function stopPreview() {
 /// ✕ does. The playlist calls it when the last of its rows goes, so nothing keeps
 /// playing behind a hidden panel.
 export function closePreview() {
+  if (isPreviewFullscreen()) setPreviewFullscreen(false);
   stopPreview();
   resetOverlays();
   const panel = document.getElementById('preview-panel');

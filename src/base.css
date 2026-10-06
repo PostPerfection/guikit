@@ -693,6 +693,33 @@ body {
   background: #000;
 }
 
+#preview-fullscreen {
+  margin-left: auto;
+}
+
+/* Full screen fixes the panel's parent so the transport bar beside it stays on screen. */
+.main-area:has(> .preview-panel.preview-fullscreen) {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  background: #000;
+}
+
+.main-area:has(> .preview-panel.preview-fullscreen) > :not(.preview-panel, .timeline-transport) {
+  display: none;
+}
+
+.preview-panel.preview-fullscreen {
+  flex: 1;
+  min-height: 0;
+}
+
+.preview-panel.preview-fullscreen .preview-surface {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+}
+
 /* Playlist: the queued packages, which playlist.js renders into a container the
    app supplies. */
 .playlist {

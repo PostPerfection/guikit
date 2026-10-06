@@ -5,20 +5,37 @@ import test from 'node:test';
 register('./tauri-core-hooks.mjs', import.meta.url);
 
 const bridge = await import('./tauri-core-stub.mjs');
+const tauriWindow = await import('./tauri-window-stub.mjs');
 
 const SHOWN_RECTANGLE = { left: 0, top: 0, width: 640, height: 360 };
 const SCROLLED_RECTANGLE = { left: 0, top: -120, width: 640, height: 360 };
 const RESIZED_RECTANGLE = { left: 0, top: -120, width: 800, height: 450 };
 const SCROLL_EVENTS = 3;
+const FULLSCREEN_CLASS = 'preview-fullscreen';
 
 let surfaceRectangle = SHOWN_RECTANGLE;
 
 function fakeElement() {
+  const classes = new Set();
+  const listeners = {};
   return {
     hidden: false,
     textContent: '',
-    classList: { add() {}, remove() {}, toggle() {} },
-    addEventListener() {},
+    classList: {
+      add: (name) => classes.add(name),
+      remove: (name) => classes.delete(name),
+      contains: (name) => classes.has(name),
+      toggle(name, force = !classes.has(name)) {
+        if (force) classes.add(name);
+        else classes.delete(name);
+      },
+    },
+    addEventListener(name, handler) {
+      listeners[name] = handler;
+    },
+    click() {
+      listeners.click();
+    },
     getBoundingClientRect: () => surfaceRectangle,
     querySelector: () => null,
   };
@@ -26,9 +43,11 @@ function fakeElement() {
 
 const panel = fakeElement();
 const surface = fakeElement();
+const fullscreenButton = fakeElement();
 const elements = new Map([
   ['preview-panel', panel],
   ['preview-surface', surface],
+  ['preview-fullscreen', fullscreenButton],
 ]);
 
 const watchers = {};
@@ -69,6 +88,11 @@ function showPanel() {
   surfaceRectangle = SHOWN_RECTANGLE;
   preview.showEmbeddedPanel();
   bridge.forgetInvocations();
+  tauriWindow.fullscreenRequests.length = 0;
+}
+
+function pressEscape(defaultPrevented) {
+  watchers.keydown({ key: 'Escape', defaultPrevented, preventDefault() {} });
 }
 
 test('the first report is sent and the surface watchers are registered', () => {
@@ -110,4 +134,43 @@ test('scrolling with the panel shown reports each new placement once', () => {
   scroll();
   assert.deepEqual(surfaceReports().at(-1), { x: 0, y: -120, width: 800, height: 450, visible: true });
   assert.equal(surfaceReports().length, 2);
+});
+
+test('the full screen button covers the window, restores it, and places the surface again each time', () => {
+  showPanel();
+
+  fullscreenButton.click();
+  assert.ok(panel.classList.contains(FULLSCREEN_CLASS));
+  assert.deepEqual(tauriWindow.fullscreenRequests, [true]);
+  assert.equal(surfaceReports().length, 1);
+
+  fullscreenButton.click();
+  assert.ok(!panel.classList.contains(FULLSCREEN_CLASS));
+  assert.deepEqual(tauriWindow.fullscreenRequests, [true, false]);
+  assert.equal(surfaceReports().length, 2);
+});
+
+test('Escape restores the window unless another handler already took it', () => {
+  showPanel();
+  fullscreenButton.click();
+
+  pressEscape(true);
+  assert.ok(panel.classList.contains(FULLSCREEN_CLASS));
+
+  pressEscape(false);
+  assert.ok(!panel.classList.contains(FULLSCREEN_CLASS));
+  assert.deepEqual(tauriWindow.fullscreenRequests, [true, false]);
+
+  pressEscape(false);
+  assert.deepEqual(tauriWindow.fullscreenRequests, [true, false]);
+});
+
+test('closing the preview in full screen restores the window', () => {
+  showPanel();
+  fullscreenButton.click();
+
+  preview.closePreview();
+  assert.ok(!panel.classList.contains(FULLSCREEN_CLASS));
+  assert.deepEqual(tauriWindow.fullscreenRequests, [true, false]);
+  assert.equal(surfaceReports().at(-1).visible, false);
 });
