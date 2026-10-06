@@ -226,21 +226,26 @@ and the "No jobs" placeholder spans all six. `refreshJobs()`,
 `startJobsPolling()` and `stopJobsPolling()` are exported for the app to call on
 a view switch.
 
-The rows always include the backend's own jobs, read from `list_jobs` and
-cancelled with `cancel_job`, which is postkit's `JobInfo` and the job registry
-under it. They read `gui` in the Source column. A job's message becomes the row's
-title attribute, and only a running or queued row gets a ✕ button.
+The rows always include the backend's own jobs, read from `list_jobs`,
+cancelled with `cancel_job` and reordered with `move_job`, which is postkit's
+`JobInfo` and the job registry under it. They read `gui` in the Source column. A
+job's message becomes the row's title attribute, and only a running or queued
+row gets a ✕ button. A queued row with a `move` gets ⤒ (Run next), ↑ (Earlier)
+and ↓ (Later) before it, `btn-move-top`, `btn-move-up` and `btn-move-down`,
+except that the first queued row of its source has no ⤒ or ↑ and the last no ↓.
 
 `extraRows` is an app's second source of jobs, an async function returning
 `{ source, status, rows }`. `source` names those rows in the Source column,
 `status` goes in the badge, and each row is
-`{ id, label, state, progress, message, cancel }` with `cancel` an async function
-the ✕ button calls. dcpwizard lists and cancels its batch daemon's jobs through
-it. With no hook the badge reads "Ready".
+`{ id, label, state, progress, message, cancel, move }` with `cancel` an async
+function the ✕ button calls. `move(beforeId)` is optional and puts the job before
+the row with that id, or at the front of the queue for `null`. Later is the next
+queued row moving before this one. dcpwizard lists and cancels its batch
+daemon's jobs through it. With no hook the badge reads "Ready".
 
 `test/playlist.test.mjs` drives the queue headless, with `test/preview-stub.mjs`
 standing in for the player, and `test/transport.test.mjs` and
-`test/jobs.test.mjs` click the transport buttons and the panel's cancels with
+`test/jobs.test.mjs` click the transport buttons and the panel's buttons with
 `test/tauri-core-stub.mjs` standing in for the tauri bridge:
 `node --test 'test/*.test.mjs'`, no dependencies and nothing to build. That is the
 whole JS test suite, and CI runs it beside the syntax check.
