@@ -129,16 +129,7 @@ fn attach_stacked(
     // runs, leaving every draw without a render context.
     let overlay = gtk::Overlay::new();
     gtk_window.remove(&webview_box);
-    match stacking {
-        VideoStacking::OverPage => {
-            overlay.add(&webview_box);
-            overlay.add_overlay(&gl_area);
-        }
-        VideoStacking::UnderPage => {
-            overlay.add(&gl_area);
-            overlay.add_overlay(&webview_box);
-        }
-    }
+    stack_video(&overlay, &webview_box, &gl_area, stacking);
     gtk_window.add(&overlay);
     overlay.show_all();
     if gl_area.is_realized() {
@@ -152,6 +143,27 @@ fn attach_stacked(
         rect,
         events,
     })
+}
+
+fn stack_video(
+    overlay: &gtk::Overlay,
+    webview_box: &gtk::Box,
+    gl_area: &gtk::GLArea,
+    stacking: VideoStacking,
+) {
+    match stacking {
+        VideoStacking::OverPage => {
+            overlay.add(webview_box);
+            overlay.add_overlay(gl_area);
+        }
+        VideoStacking::UnderPage => {
+            // as the overlay's main child the area's size request would be the window's minimum size
+            let video_layer = gtk::Layout::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
+            video_layer.add(gl_area);
+            overlay.add(&video_layer);
+            overlay.add_overlay(webview_box);
+        }
+    }
 }
 
 /// Hand the players the GL area's context. Reached from the realize signal and, when
@@ -311,4 +323,42 @@ fn library_symbol(library_name: &CStr, symbol: &str) -> Option<*mut c_void> {
     let symbol = CString::new(symbol).ok()?;
     let address = unsafe { libc::dlsym(library, symbol.as_ptr()) };
     (!address.is_null()).then_some(address)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const FULL_SCREEN_WIDTH: i32 = 1920;
+    const FULL_SCREEN_HEIGHT: i32 = 1080;
+
+    #[test]
+    fn a_full_screen_surface_under_the_page_leaves_the_window_free_to_shrink() {
+        gtk::init().expect("GTK needs a display, run under xvfb-run -a");
+        let overlay = gtk::Overlay::new();
+        let gl_area = gtk::GLArea::new();
+        stack_video(
+            &overlay,
+            &gtk::Box::new(gtk::Orientation::Vertical, 0),
+            &gl_area,
+            VideoStacking::UnderPage,
+        );
+        overlay.show_all();
+
+        apply_rect(
+            &gl_area,
+            SurfaceRect {
+                x: 0,
+                y: 0,
+                width: FULL_SCREEN_WIDTH,
+                height: FULL_SCREEN_HEIGHT,
+                visible: true,
+            },
+        );
+
+        assert_eq!(gl_area.preferred_width().0, FULL_SCREEN_WIDTH);
+        assert_eq!(gl_area.preferred_height().0, FULL_SCREEN_HEIGHT);
+        assert!(overlay.preferred_width().0 < FULL_SCREEN_WIDTH);
+        assert!(overlay.preferred_height().0 < FULL_SCREEN_HEIGHT);
+    }
 }
