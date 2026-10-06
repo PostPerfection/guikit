@@ -77,6 +77,19 @@ QC overlays and the subtitles into the frame it composes, and starts playing on
 load the way mpv's `loadfile` does. Both players render into the same GL
 framebuffer, and the surface renders whichever one is loaded.
 
+## Player controls
+
+`guikit::preview::player_controls` has the screening controls for the grok
+player: `preview_set_picture` (brightness 0 to 4, masks in percent per edge,
+scaling `fit`, `fill` or `native`), `preview_set_sound_device`,
+`preview_set_sound_layout` (`stereo`, `fivePointOne`, `sevenPointOne`,
+`automatic`), `preview_set_sound_delay` in milliseconds,
+`preview_set_subtitle_presentation` (offset in percent of the frame height and
+an optional `RRGGBB` colour) and `preview_sound_devices`. The grok player keeps
+them through loads and stops. A file mpv plays is left alone, which each command
+reports as `mpvFileUnchanged`. Their argument types are serde structs an app can
+keep in its own settings file. Only dcpscreen registers them.
+
 ## Preview transport
 
 The transport bar is the app's own markup, wired by element id and every button

@@ -29,6 +29,8 @@ pub use overlays::{
 mod player;
 pub use player::{Backend, Player};
 
+pub mod player_controls;
+
 /// The OSD overlay the QC drawings occupy. Ids belong to the libmpv client, so
 /// this one is the app's alone.
 const QC_OVERLAY_ID: i64 = 1;
