@@ -4,8 +4,9 @@ use postkit::grok_player::{
 };
 use postkit::subtitle_formats::Rgba;
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
-use super::{Backend, PreviewPlayer};
+use super::{Backend, Player, PreviewPlayer};
 
 const PERCENT: f32 = 100.0;
 
@@ -123,6 +124,12 @@ impl SubtitleControls {
     }
 }
 
+fn outcome(player: &Player) -> PlayerControlOutcome {
+    PlayerControlOutcome {
+        mpv_file_unchanged: player.active() == Backend::Mpv,
+    }
+}
+
 // the grok player keeps every control through loads and stops
 fn apply_to_grok(
     state: &PreviewPlayer,
@@ -130,9 +137,16 @@ fn apply_to_grok(
 ) -> Result<PlayerControlOutcome, String> {
     let player = state.player()?;
     apply(player.grok());
-    Ok(PlayerControlOutcome {
-        mpv_file_unchanged: player.active() == Backend::Mpv,
-    })
+    Ok(outcome(player))
+}
+
+// a refused profile leaves the one in use, and the error names the file and why
+pub(super) fn set_display_profile(
+    player: &Player,
+    profile: Option<&Path>,
+) -> Result<PlayerControlOutcome, String> {
+    player.grok().set_display_profile(profile)?;
+    Ok(outcome(player))
 }
 
 #[tauri::command(async)]
@@ -178,6 +192,15 @@ pub fn preview_set_subtitle_presentation(
 ) -> Result<PlayerControlOutcome, String> {
     let presentation = subtitles.presentation()?;
     apply_to_grok(&state, |grok| grok.set_subtitle_presentation(presentation))
+}
+
+// None goes back to the built-in sRGB
+#[tauri::command(async)]
+pub fn preview_set_display_profile(
+    profile: Option<PathBuf>,
+    state: tauri::State<'_, PreviewPlayer>,
+) -> Result<PlayerControlOutcome, String> {
+    set_display_profile(state.player()?, profile.as_deref())
 }
 
 #[tauri::command(async)]

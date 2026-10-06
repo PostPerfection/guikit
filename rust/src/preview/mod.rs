@@ -802,6 +802,9 @@ mod content_keys_tests;
 mod grok_playback_tests;
 
 #[cfg(test)]
+mod display_profile_tests;
+
+#[cfg(test)]
 mod overlay_placement_tests;
 
 #[cfg(all(test, target_os = "linux"))]

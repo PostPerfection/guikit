@@ -17,6 +17,7 @@ chrono = "0.4"
 uuid = "1"
 postkit = { git = "https://github.com/PostPerfection/postkit.git", features = [
     "grok-ffi",
+    "icc",
     "libmpv",
 ] }
 
@@ -24,6 +25,8 @@ postkit = { git = "https://github.com/PostPerfection/postkit.git", features = [
 # the backend selection test writes the J2K MXF the grok player is picked for
 asdcplib = { git = "https://github.com/PostPerfection/asdcplib-rs.git", rev = "c8c24cc2d3ed4d22460b744e55b0b840ed98cbfa" }
 tempfile = "3"
+# writes the monitor profiles the display profile test reads frames through
+lcms2 = "6"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"

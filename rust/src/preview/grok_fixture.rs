@@ -44,8 +44,6 @@ const INITIALISATION_VECTOR: [u8; 16] = [0x9c; 16];
 pub(super) const PATIENCE: Duration = Duration::from_secs(30);
 pub(super) const POLL_INTERVAL: Duration = Duration::from_millis(5);
 
-// only the gl presenter test, which is linux only, reads the band
-#[cfg(target_os = "linux")]
 pub(super) fn band_colour() -> [u8; 3] {
     code_colour(BAND_CODE)
 }

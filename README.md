@@ -90,8 +90,10 @@ scaling `fit`, `fill` or `native`), `preview_set_sound_device`,
 `preview_set_sound_layout` (`stereo`, `fivePointOne`, `sevenPointOne`,
 `automatic`), `preview_set_sound_delay` in milliseconds,
 `preview_set_subtitle_presentation` (offset in percent of the frame height and
-an optional `RRGGBB` colour) and `preview_sound_devices`. The grok player keeps
-them through loads and stops. A file mpv plays is left alone, which each command
+an optional `RRGGBB` colour), `preview_set_display_profile` (a monitor ICC
+profile path for DCP pictures, or null for the built-in sRGB, refused naming
+the file and why when the player cannot use it) and `preview_sound_devices`.
+The grok player keeps them through loads and stops. A file mpv plays is left alone, which each command
 reports as `mpvFileUnchanged`. Their argument types are serde structs an app can
 keep in its own settings file. Only dcpscreen registers them.
 
