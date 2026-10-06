@@ -5,6 +5,7 @@ Shared code for the PostPerfection wizard GUIs, frontend and native.
 - `src/preview.js`: preview player and scrubber
 - `src/playlist.js`: the queue that plays packages one after another
 - `src/jobs.js`: the Jobs panel, the backend's jobs and an app's second source
+- `src/builds-in-flight.js`: the titles of the builds a window has queued or running
 - `src/shortcuts.js`: keyboard shortcut handling and the shortcuts dialog
 - `src/project.js`: project files (save, save as, open), the unsaved draft, the recent list and the window title
 - `src/asset-strip-resize.js`: the drag handle under the project view's asset strip
