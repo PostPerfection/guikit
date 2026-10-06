@@ -10,6 +10,8 @@ let qcControls = null;
 let metadataWatcher = () => {};
 let loadWatcher = () => {};
 let shownWatcher = () => {};
+let sourceWatcher = () => {};
+let polledSource = null;
 let endReported = false;
 // set while the page draws something the native surface would otherwise cover
 let surfaceCovered = false;
@@ -83,6 +85,11 @@ export function watchPreviewLoads(watcher) {
 /// directory loaded into it, or null once the player is stopped.
 export function watchPreviewShown(watcher) {
   shownWatcher = watcher;
+}
+
+// what the player has loaded, one watcher at a time, each time the polled source or file name changes
+export function watchPreviewSource(watcher) {
+  sourceWatcher = watcher;
 }
 
 export function isPreviewVisible() {
@@ -332,7 +339,10 @@ function reportSurfacePlacement(surface, isSurfaceShown) {
     if (isSurfaceShown()) sendPlacement(true);
   };
 
-  new ResizeObserver(reportIfMoved).observe(surface);
+  // the panel growing under the surface moves it without resizing it
+  const observer = new ResizeObserver(reportIfMoved);
+  observer.observe(surface);
+  observer.observe(surface.parentElement);
   window.addEventListener('resize', reportIfMoved);
   document.addEventListener('scroll', reportIfMoved, true);
 
@@ -499,6 +509,7 @@ function startScrubberPolling() {
       lastPollError = '';
       updateHud(meta);
       metadataWatcher(meta);
+      reportPolledSource(meta.source ?? meta.filename ?? null);
       // at the end nothing is previewing any more, so the Preview button comes back
       if (meta.eof && !endReported) {
         endReported = true;
@@ -518,6 +529,12 @@ function startScrubberPolling() {
       }
     }
   }, 250);
+}
+
+function reportPolledSource(source) {
+  if (source === polledSource) return;
+  polledSource = source;
+  sourceWatcher(source);
 }
 
 export function stopScrubberPolling() {

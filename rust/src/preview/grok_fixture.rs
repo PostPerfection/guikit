@@ -28,6 +28,7 @@ const RESOLUTIONS: u8 = 3;
 
 const PICTURE_NAME: &str = "picture.mxf";
 const STEREO_PICTURE_NAME: &str = "stereo.mxf";
+const AS02_PICTURE_NAME: &str = "as02.mxf";
 // bytes reserved for the MXF header partition
 const MXF_HEADER_SIZE: u32 = 16_384;
 const CPL_NAME: &str = "CPL_test.xml";
@@ -70,6 +71,30 @@ pub(super) struct PictureEncryption {
 pub(super) fn write_picture_file(directory: &Path, frames: usize) -> PathBuf {
     let path = directory.join(PICTURE_NAME);
     write_mxf(&path, &codestreams(frames), None);
+    path
+}
+
+// the IMF wrapping of the same codestreams
+pub(super) fn write_as02_picture_file(directory: &Path, frames: usize) -> PathBuf {
+    let path = directory.join(AS02_PICTURE_NAME);
+    let frames = codestreams(frames);
+    let info = WriterInfo {
+        label_set: LabelSet::Smpte,
+        ..Default::default()
+    };
+    let mut writer = asdcplib::as02::jp2k::MxfWriter::new();
+    writer
+        .open_write(
+            &path.to_string_lossy(),
+            &info,
+            &picture_descriptor(&frames),
+            MXF_HEADER_SIZE,
+        )
+        .unwrap();
+    for frame in &frames {
+        writer.write_frame(frame, None, None).unwrap();
+    }
+    writer.finalize().unwrap();
     path
 }
 

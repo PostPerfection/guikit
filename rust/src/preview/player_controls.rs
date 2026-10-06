@@ -2,6 +2,7 @@ use postkit::grok_player::{
     sound_output_device_names, GrokPlayer, PictureMasks, PictureScaling, PresentationSettings,
     SoundOutputLayout, StereoOutput, SubtitlePresentation,
 };
+use postkit::preview::resolve_picture;
 use postkit::subtitle_formats::Rgba;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -9,6 +10,11 @@ use std::path::{Path, PathBuf};
 use super::{Backend, Player, PreviewPlayer};
 
 const PERCENT: f32 = 100.0;
+// the grok player's metadata fields the loaded picture is read from
+const SOURCE_FIELD: &str = "source";
+const STEREOSCOPIC_FIELD: &str = "stereoscopic";
+// unavailable while mpv has nothing loaded
+const MPV_PATH_PROPERTY: &str = "path";
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -104,6 +110,18 @@ pub struct SubtitleControls {
 #[serde(rename_all = "camelCase")]
 pub struct PlayerControlOutcome {
     pub mpv_file_unchanged: bool,
+}
+
+// what is loaded, as far as which player controls reach it
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum LoadedPicture {
+    Nothing,
+    MpvFile,
+    // an AS-DCP package or track file, or bare codestreams
+    Dcp { stereoscopic: bool },
+    // AS-02, shown in the colour its track signals rather than through the monitor profile
+    Imf,
 }
 
 impl PictureControls {
@@ -244,6 +262,35 @@ pub fn preview_set_display_profile(
     state: tauri::State<'_, PreviewPlayer>,
 ) -> Result<PlayerControlOutcome, String> {
     set_display_profile(state.player()?, profile.as_deref())
+}
+
+pub(super) fn loaded_picture(player: &Player) -> Result<LoadedPicture, String> {
+    if player.active() == Backend::Mpv {
+        let loaded = player.mpv().get_property_string(MPV_PATH_PROPERTY).is_ok();
+        return Ok(if loaded {
+            LoadedPicture::MpvFile
+        } else {
+            LoadedPicture::Nothing
+        });
+    }
+    let metadata: serde_json::Value =
+        serde_json::from_str(&player.grok().metadata_json()).map_err(|error| error.to_string())?;
+    let Some(source) = metadata[SOURCE_FIELD].as_str() else {
+        return Ok(LoadedPicture::Nothing);
+    };
+    if resolve_picture(Path::new(source)).is_ok_and(|picture| picture.as02) {
+        return Ok(LoadedPicture::Imf);
+    }
+    Ok(LoadedPicture::Dcp {
+        stereoscopic: metadata[STEREOSCOPIC_FIELD] == true,
+    })
+}
+
+#[tauri::command(async)]
+pub fn preview_loaded_picture(
+    state: tauri::State<'_, PreviewPlayer>,
+) -> Result<LoadedPicture, String> {
+    loaded_picture(state.player()?)
 }
 
 #[tauri::command(async)]

@@ -687,6 +687,49 @@ body {
   white-space: nowrap;
 }
 
+/* Player controls: the screening controls, collapsed under the QC strip. */
+.player-controls {
+  flex-shrink: 0;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.player-controls > summary {
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.player-controls fieldset {
+  display: contents;
+}
+
+.player-controls :disabled {
+  opacity: 0.5;
+}
+
+.player-controls input[type="number"] {
+  width: 5em;
+  padding: 2px 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-alt);
+  color: var(--text);
+  font-size: 11px;
+}
+
+.player-controls-reason,
+.player-controls-error {
+  margin: 0;
+  padding: 0 12px;
+  font-style: italic;
+}
+
+.player-controls-error {
+  color: var(--error, #dc2626);
+}
+
 /* Video is painted over this element by the app, not by the page. */
 .preview-surface {
   height: 360px;

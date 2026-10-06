@@ -810,6 +810,9 @@ mod display_profile_tests;
 mod stereo_output_tests;
 
 #[cfg(test)]
+mod loaded_picture_tests;
+
+#[cfg(test)]
 mod overlay_placement_tests;
 
 #[cfg(all(test, target_os = "linux"))]
