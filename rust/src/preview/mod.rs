@@ -9,7 +9,7 @@
 //! good, because the core hands the decoder's buffer allocation to the render
 //! thread while the render thread waits for the core.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use postkit::content_keys::ContentKeys;
@@ -253,13 +253,14 @@ fn resolve_content_keys(paths: Option<ContentKeyPaths>) -> Result<Option<Content
 pub fn preview_load(
     file_path: String,
     content_keys: Option<ContentKeyPaths>,
+    other_packages: Vec<PathBuf>,
     state: tauri::State<'_, PreviewPlayer>,
 ) -> Result<(), String> {
     let keys = resolve_content_keys(content_keys)?;
     let player = state.player()?;
     state.forget_loaded_file();
     send_decode_scale_to_grok(player, &state);
-    player.load_source(&file_path, keys)
+    player.load_source_with_packages(&file_path, keys, &other_packages)
 }
 
 // a source the grok player does not take plays on mpv, where content keys do not apply

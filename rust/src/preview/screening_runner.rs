@@ -16,8 +16,8 @@ const MILLISECONDS_PER_SECOND: f64 = 1000.0;
 
 // the boundary the runner drives, the preview player in the app and a fake in the tests
 pub trait RunnerPlayer {
-    fn load(&self, source: &Path, keys: Option<ContentKeys>) -> Result<(), String>;
-    fn queue_next(&self, source: &Path, keys: Option<ContentKeys>) -> Result<(), String>;
+    fn load(&self, source: RowSource) -> Result<(), String>;
+    fn queue_next(&self, source: RowSource) -> Result<(), String>;
     fn stop(&self) -> Result<(), String>;
     fn status(&self) -> Result<PlayerStatus, String>;
 }
@@ -35,6 +35,8 @@ pub struct PlayerStatus {
 pub struct RowSource {
     pub cpl_path: PathBuf,
     pub keys: Option<ContentKeys>,
+    // where a version file's assets from its original version are
+    pub other_packages: Vec<PathBuf>,
 }
 
 pub type RowSourceLookup = Box<dyn Fn(&Path, Uuid) -> Result<RowSource, String> + Send>;
@@ -231,8 +233,9 @@ impl ScreeningRun {
         player: &impl RunnerPlayer,
     ) -> Result<String, String> {
         let source = (self.lookup)(package_directory, cpl_id)?;
-        player.load(&source.cpl_path, source.keys)?;
-        Ok(source.cpl_path.display().to_string())
+        let loaded = source.cpl_path.display().to_string();
+        player.load(source)?;
+        Ok(loaded)
     }
 
     pub fn tick(&mut self, player: &impl RunnerPlayer, now: NaiveDateTime) {
@@ -342,8 +345,9 @@ impl ScreeningRun {
             return;
         }
         let queued = (self.lookup)(package_directory, *cpl_id).and_then(|source| {
-            player.queue_next(&source.cpl_path, source.keys)?;
-            Ok(source.cpl_path.display().to_string())
+            let queued_source = source.cpl_path.display().to_string();
+            player.queue_next(source)?;
+            Ok(queued_source)
         });
         let queued = match queued {
             Ok(queued_source) => {
@@ -422,15 +426,23 @@ impl ScreeningRun {
 struct PreviewRunnerPlayer<'a>(&'a PreviewPlayer);
 
 impl RunnerPlayer for PreviewRunnerPlayer<'_> {
-    fn load(&self, source: &Path, keys: Option<ContentKeys>) -> Result<(), String> {
+    fn load(&self, source: RowSource) -> Result<(), String> {
         let player = self.0.player()?;
         self.0.forget_loaded_file();
         super::send_decode_scale_to_grok(player, self.0);
-        player.load_source(&source.display().to_string(), keys)
+        player.load_source_with_packages(
+            &source.cpl_path.display().to_string(),
+            source.keys,
+            &source.other_packages,
+        )
     }
 
-    fn queue_next(&self, source: &Path, keys: Option<ContentKeys>) -> Result<(), String> {
-        self.0.player()?.grok().queue_next(source, keys)
+    fn queue_next(&self, source: RowSource) -> Result<(), String> {
+        self.0.player()?.grok().queue_next_with_packages(
+            &source.cpl_path,
+            source.keys,
+            &source.other_packages,
+        )
     }
 
     fn stop(&self) -> Result<(), String> {
@@ -514,6 +526,8 @@ mod tests {
     const TRAILER: &str = "/library/trailer";
     const FEATURE: &str = "/library/feature";
     const SHORT: &str = "/library/short";
+    const VERSION_FILE: &str = "/library/version_file";
+    const ORIGINAL_VERSION: &str = "/library/original_version";
     const COMPOSITION_SECONDS: f64 = 60.0;
 
     #[derive(Default)]
@@ -545,12 +559,12 @@ mod tests {
     }
 
     impl RunnerPlayer for FakePlayer {
-        fn load(&self, source: &Path, _keys: Option<ContentKeys>) -> Result<(), String> {
+        fn load(&self, source: RowSource) -> Result<(), String> {
             self.calls
                 .borrow_mut()
-                .push(format!("load {}", source.display()));
+                .push(format!("load {}", described(&source)));
             *self.status.borrow_mut() = PlayerStatus {
-                source: Some(source.display().to_string()),
+                source: Some(source.cpl_path.display().to_string()),
                 queued_source: None,
                 eof: false,
                 position: Some(0.0),
@@ -559,11 +573,11 @@ mod tests {
             Ok(())
         }
 
-        fn queue_next(&self, source: &Path, _keys: Option<ContentKeys>) -> Result<(), String> {
+        fn queue_next(&self, source: RowSource) -> Result<(), String> {
             self.calls
                 .borrow_mut()
-                .push(format!("queue {}", source.display()));
-            self.status.borrow_mut().queued_source = Some(source.display().to_string());
+                .push(format!("queue {}", described(&source)));
+            self.status.borrow_mut().queued_source = Some(source.cpl_path.display().to_string());
             Ok(())
         }
 
@@ -576,6 +590,18 @@ mod tests {
         fn status(&self) -> Result<PlayerStatus, String> {
             Ok(self.status.borrow().clone())
         }
+    }
+
+    fn described(source: &RowSource) -> String {
+        let packages: Vec<String> = source
+            .other_packages
+            .iter()
+            .map(|package| package.display().to_string())
+            .collect();
+        if packages.is_empty() {
+            return source.cpl_path.display().to_string();
+        }
+        format!("{} with {}", source.cpl_path.display(), packages.join(", "))
     }
 
     fn time(text: &str) -> NaiveDateTime {
@@ -607,15 +633,20 @@ mod tests {
         }
     }
 
-    // the CPL sits in the package, and a package named missing has no KDM
+    // the CPL sits in the package, a package named missing has no KDM and the version file needs its original version
     fn lookup() -> RowSourceLookup {
         Box::new(|package: &Path, _cpl_id: Uuid| {
             if package.ends_with("missing") {
                 return Err("no KDM fits".to_string());
             }
+            let other_packages = match package.to_str() {
+                Some(VERSION_FILE) => vec![PathBuf::from(ORIGINAL_VERSION)],
+                _ => Vec::new(),
+            };
             Ok(RowSource {
                 cpl_path: package.join("CPL.xml"),
                 keys: None,
+                other_packages,
             })
         })
     }
@@ -658,6 +689,27 @@ mod tests {
         assert_eq!(state.current_row, Some(1));
         assert_eq!(state.current_title.as_deref(), Some("feature"));
         assert_eq!(state.next_title.as_deref(), Some("short"));
+    }
+
+    #[test]
+    fn a_version_file_loads_and_queues_with_its_original_version() {
+        let player = FakePlayer::default();
+        start(
+            vec![
+                composition(VERSION_FILE, None),
+                composition(VERSION_FILE, None),
+            ],
+            &player,
+        );
+
+        let with_original = format!("{} with {ORIGINAL_VERSION}", cpl(VERSION_FILE));
+        assert_eq!(
+            player.calls(),
+            [
+                format!("load {with_original}"),
+                format!("queue {with_original}")
+            ]
+        );
     }
 
     #[test]
@@ -825,7 +877,13 @@ mod tests {
         let mut run = start(vec![composition(TRAILER, None), intermission(5)], &player);
         player.calls();
 
-        player.load(Path::new("/elsewhere/CPL.xml"), None).unwrap();
+        player
+            .load(RowSource {
+                cpl_path: PathBuf::from("/elsewhere/CPL.xml"),
+                keys: None,
+                other_packages: Vec::new(),
+            })
+            .unwrap();
         player.calls();
         run.tick(&player, later(1.0));
 

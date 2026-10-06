@@ -11,6 +11,8 @@ const preview = await import('../src/preview.js');
 
 const PACKAGE = '/films/Film_FTR';
 const PICTURE = '/films/Film_FTR/picture.mxf';
+const VERSION_FILE_CPL = '/films/Film_VF/CPL_vf.xml';
+const ORIGINAL_VERSION = '/films/Film_OV';
 const CONTENT_KEYS = { kdm: '/keys/film.kdm.xml', recipient_key: '/keys/recipient.pem', keys: null };
 
 const status = { textContent: '', title: '' };
@@ -36,10 +38,16 @@ test('a package load given no keys sends null', () => {
 
 test('a file load carries its content keys or null', () => {
   assert.deepEqual(loadsAskedFor(() => preview.previewFile(PICTURE, CONTENT_KEYS)).invocations, [
-    ['preview_load', { filePath: PICTURE, contentKeys: CONTENT_KEYS }],
+    ['preview_load', { filePath: PICTURE, contentKeys: CONTENT_KEYS, otherPackages: [] }],
   ]);
   assert.deepEqual(loadsAskedFor(() => preview.previewFile(PICTURE)).invocations, [
-    ['preview_load', { filePath: PICTURE, contentKeys: null }],
+    ['preview_load', { filePath: PICTURE, contentKeys: null, otherPackages: [] }],
+  ]);
+});
+
+test('a version file load carries the packages its original version is in', () => {
+  assert.deepEqual(loadsAskedFor(() => preview.previewFile(VERSION_FILE_CPL, null, [ORIGINAL_VERSION])).invocations, [
+    ['preview_load', { filePath: VERSION_FILE_CPL, contentKeys: null, otherPackages: [ORIGINAL_VERSION] }],
   ]);
 });
 

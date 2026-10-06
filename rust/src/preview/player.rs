@@ -1,5 +1,5 @@
 use std::ffi::c_void;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use postkit::content_keys::ContentKeys;
@@ -119,8 +119,18 @@ impl Player {
     // ─── loading ───────────────────────────────────────────────────────────
 
     pub fn load_source(&self, path: &str, keys: Option<ContentKeys>) -> Result<(), String> {
-        if GrokPlayer::accepts(Path::new(path)) {
-            return self.start_grok(path, keys);
+        self.load_source_with_packages(path, keys, &[])
+    }
+
+    // other_packages hold the assets a version file takes from its original version
+    pub fn load_source_with_packages(
+        &self,
+        path: &str,
+        keys: Option<ContentKeys>,
+        other_packages: &[PathBuf],
+    ) -> Result<(), String> {
+        if GrokPlayer::accepts_with_packages(Path::new(path), other_packages) {
+            return self.start_grok(path, keys, other_packages);
         }
         refuse_keys_for_mpv(path, keys.as_ref())?;
         self.start_mpv(path);
@@ -129,7 +139,7 @@ impl Player {
 
     pub fn load_package_dir(&self, path: &str, keys: Option<ContentKeys>) -> Result<(), String> {
         if GrokPlayer::accepts(Path::new(path)) {
-            return self.start_grok(path, keys);
+            return self.start_grok(path, keys, &[]);
         }
         refuse_keys_for_mpv(path, keys.as_ref())?;
         self.start_mpv(path);
@@ -137,10 +147,16 @@ impl Player {
     }
 
     // the page sends no play after a load, mpv's loadfile starts playing itself
-    fn start_grok(&self, path: &str, keys: Option<ContentKeys>) -> Result<(), String> {
+    fn start_grok(
+        &self,
+        path: &str,
+        keys: Option<ContentKeys>,
+        other_packages: &[PathBuf],
+    ) -> Result<(), String> {
         self.take_over(Backend::Grok, path);
         self.mpv.stop()?;
-        self.grok.load(Path::new(path), keys)?;
+        self.grok
+            .load_with_packages(Path::new(path), keys, other_packages)?;
         self.grok.set_paused(false);
         Ok(())
     }

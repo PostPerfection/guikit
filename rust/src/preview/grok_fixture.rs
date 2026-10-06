@@ -31,6 +31,14 @@ const CPL_UUID: &str = "cc10cc10-0000-0000-0000-000000000000";
 const PICTURE_UUID: &str = "11111111-1111-1111-1111-111111111111";
 const REEL_UUID: &str = "aaaaaaaa-0000-0000-0000-000000000000";
 
+const ORIGINAL_VERSION_CPL_UUID: &str = "0e000000-0000-0000-0000-000000000000";
+const VERSION_FILE_PICTURES: [(&str, &str); 3] = [
+    ("21111111-1111-1111-1111-111111111111", "reel1.mxf"),
+    ("22222222-2222-2222-2222-222222222222", "reel2.mxf"),
+    ("23333333-3333-3333-3333-333333333333", "reel3.mxf"),
+];
+const ORIGINAL_VERSION_REEL: usize = 1;
+
 const INITIALISATION_VECTOR: [u8; 16] = [0x9c; 16];
 
 pub(super) const PATIENCE: Duration = Duration::from_secs(30);
@@ -124,6 +132,82 @@ fn write_package_with(
     };
     std::fs::write(package.join(CPL_NAME), cpl.to_xml()).unwrap();
     package
+}
+
+// the version file's CPL and the original version package, which alone holds reel 2
+pub(super) fn write_version_file_and_original_version(
+    directory: &Path,
+    frames_per_reel: usize,
+) -> (PathBuf, PathBuf) {
+    let version_file = directory.join("version_file");
+    let original_version = directory.join("original_version");
+    let frames = codestreams(frames_per_reel * VERSION_FILE_PICTURES.len());
+    let mut reels = Vec::new();
+    for (index, (picture_id, name)) in VERSION_FILE_PICTURES.iter().enumerate() {
+        let package = match index {
+            ORIGINAL_VERSION_REEL => &original_version,
+            _ => &version_file,
+        };
+        std::fs::create_dir_all(package).unwrap();
+        let reel_frames = &frames[index * frames_per_reel..(index + 1) * frames_per_reel];
+        write_mxf(&package.join(name), reel_frames, None);
+        reels.push(DcpCplReel {
+            reel_id: format!("aaaaaaaa-0000-0000-0000-00000000000{index}"),
+            picture_id: (*picture_id).into(),
+            picture_edit_rate_num: FRAMES_PER_SECOND,
+            picture_edit_rate_den: 1,
+            picture_duration: frames_per_reel as u64,
+            picture_width: PICTURE_SIDE,
+            picture_height: PICTURE_SIDE,
+            ..Default::default()
+        });
+    }
+    let original_version_pictures = [VERSION_FILE_PICTURES[ORIGINAL_VERSION_REEL]];
+    let version_file_pictures: Vec<(&str, &str)> = VERSION_FILE_PICTURES
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| *index != ORIGINAL_VERSION_REEL)
+        .map(|(_, picture)| *picture)
+        .collect();
+    write_composition(
+        &original_version,
+        ORIGINAL_VERSION_CPL_UUID,
+        &original_version_pictures,
+        vec![reels[ORIGINAL_VERSION_REEL].clone()],
+    );
+    write_composition(&version_file, CPL_UUID, &version_file_pictures, reels);
+    (version_file.join(CPL_NAME), original_version)
+}
+
+fn write_composition(
+    package: &Path,
+    cpl_id: &str,
+    pictures: &[(&str, &str)],
+    reels: Vec<DcpCplReel>,
+) {
+    let assets = std::iter::once((cpl_id, CPL_NAME))
+        .chain(pictures.iter().copied())
+        .map(|(id, path)| AssetMapAsset {
+            id: id.into(),
+            path: path.into(),
+            ..Default::default()
+        })
+        .collect();
+    let asset_map = AssetMap {
+        uuid: ASSET_MAP_UUID.into(),
+        namespace: ns::AM_SMPTE.into(),
+        assets,
+        ..Default::default()
+    };
+    std::fs::write(package.join("ASSETMAP.xml"), asset_map.to_xml()).unwrap();
+    let cpl = DcpCpl {
+        uuid: cpl_id.into(),
+        namespace: ns::CPL_SMPTE.into(),
+        title: "Grok Version File Test".into(),
+        reels,
+        ..Default::default()
+    };
+    std::fs::write(package.join(CPL_NAME), cpl.to_xml()).unwrap();
 }
 
 fn codestreams(count: usize) -> Vec<Vec<u8>> {

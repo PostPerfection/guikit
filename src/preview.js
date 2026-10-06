@@ -582,13 +582,14 @@ function formatTimecode(seconds, fps) {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}:${String(f).padStart(2, '0')}`;
 }
 
-/// Load a file into the preview player
-export function previewFile(filePath, contentKeys = null) {
+/// Load a file into the preview player. `otherPackages` are the package
+/// directories a version file CPL takes its original version's assets from.
+export function previewFile(filePath, contentKeys = null, otherPackages = []) {
   showEmbeddedPanel();
   shownWatcher(filePath);
   endReported = false;
   loadWatcher(filePath);
-  const loaded = invoke('preview_load', { filePath, contentKeys }).then(() => true, reportPreviewLoadFailure);
+  const loaded = invoke('preview_load', { filePath, contentKeys, otherPackages }).then(() => true, reportPreviewLoadFailure);
   resetTrackToggles();
   setTransportEnabled(true);
   showPreviewTitle(filePath);

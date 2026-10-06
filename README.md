@@ -72,6 +72,11 @@ directory, CPL or picture MXF, so an app can ask for the keys before it loads.
 Keys given with a source mpv plays fail the load. An app registers
 `preview_needs_content_keys` beside the other commands.
 
+A version file CPL takes some of its assets from its original version.
+`previewFile(filePath, contentKeys, otherPackages)` takes the package
+directories to search after the CPL's own, `[]` by default, and the load goes
+to grok only when those packages complete the composition.
+
 grok decodes with the JPEG 2000 codec rather than through libavcodec, draws the
 QC overlays and the subtitles into the frame it composes, and starts playing on
 load the way mpv's `loadfile` does. Both players render into the same GL
@@ -101,8 +106,9 @@ alone, and `state()` is the `RunnerState` the page polls, or `None` before the
 first run: `activity` (`playing`, `holding`, `finished`, `stopped`), the
 current and next row with their titles, `stillImage` while an intermission
 holds one, `secondsToNextStart` and the errors so far. `lookup(package, cplId)`
-returns the CPL path and content keys of a composition row and is called when
-the row loads or queues, so a KDM ingested during the show counts.
+returns the CPL path, content keys and the packages a version file takes its
+original version's assets from, and is called when the row loads or queues, so
+a KDM ingested during the show counts.
 
 A composition row that follows a composition row with no start time, or with
 one the current row ends after, is queued on the grok player with
