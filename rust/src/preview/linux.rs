@@ -106,6 +106,8 @@ pub fn attach(window: &tauri::Window) -> Result<EmbeddedPreview, String> {
         }
     });
 
+    gl_area.connect_realize(let_pointer_through);
+
     // Signals first: adding the area to a window that is already on screen
     // realizes it right away, and a realize handler connected after that never
     // runs, leaving every draw without a render context.
@@ -113,10 +115,12 @@ pub fn attach(window: &tauri::Window) -> Result<EmbeddedPreview, String> {
     gtk_window.remove(&webview_box);
     overlay.add(&webview_box);
     overlay.add_overlay(&gl_area);
+    overlay.set_overlay_pass_through(&gl_area, true);
     gtk_window.add(&overlay);
     overlay.show_all();
     if gl_area.is_realized() {
         bind_render_context(&gl_area, &player, &events);
+        let_pointer_through(&gl_area);
     }
 
     spawn_event_pump(incoming, gl_area, Arc::clone(&player), Arc::clone(&rect));
@@ -161,6 +165,14 @@ fn bind_render_context(
         gl_string(GL_RENDERER),
         gl_string(GL_VERSION)
     );
+}
+
+// GtkGLArea catches clicks in an input window of its own
+fn let_pointer_through(gl_area: &gtk::GLArea) {
+    let overlay_window = gl_area.window().expect("a realized GL area has a window");
+    for window in overlay_window.children() {
+        window.set_pass_through(true);
+    }
 }
 
 fn apply_rect(gl_area: &gtk::GLArea, rect: SurfaceRect) {
