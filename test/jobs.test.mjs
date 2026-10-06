@@ -50,7 +50,7 @@ function cancels() {
 
 test('a backend job becomes a row, escaped, with its message as the row title', async () => {
   const { tableBody, statusBadge } = await freshPanel([
-    { id: 7, title: 'Build <DCP>', status: 'running', percent: 41.4, message: 'reel 1 & 2' },
+    { id: 7, title: 'Build <DCP>', state: 'Running', percent: 41.4, message: 'reel 1 & 2' },
   ]);
 
   assert.ok(tableBody.innerHTML.includes('<td>7</td><td>gui</td><td>Build &lt;DCP&gt;</td>'));
@@ -68,8 +68,8 @@ test('no jobs anywhere leaves the placeholder', async () => {
 
 test('only running and queued rows get a cancel button', async () => {
   const { tableBody } = await freshPanel([
-    { id: 1, title: 'Done', status: 'completed', percent: 100, message: '' },
-    { id: 2, title: 'Waiting', status: 'queued', percent: 0, message: '' },
+    { id: 1, title: 'Done', state: 'Completed', percent: 100, message: '' },
+    { id: 2, title: 'Waiting', state: 'Queued', percent: 0, message: '' },
   ]);
 
   const buttons = tableBody.innerHTML.match(/btn-cancel/g);
@@ -79,7 +79,7 @@ test('only running and queued rows get a cancel button', async () => {
 
 test('cancelling a backend row asks the backend for that job id', async () => {
   const { tableBody } = await freshPanel([
-    { id: 12, title: 'Build', status: 'running', percent: 5, message: '' },
+    { id: 12, title: 'Build', state: 'Running', percent: 5, message: '' },
   ]);
 
   await clickCancel(tableBody, 0);
@@ -95,7 +95,7 @@ test('hook rows carry the hook source, its status and its own cancel', async () 
     rows: [{ id: 'a7', label: 'transcode', state: 'queued', progress: '10%', message: '', cancel: async () => cancelled.push('a7') }],
   });
   const { tableBody, statusBadge } = await freshPanel(
-    [{ id: 3, title: 'Build', status: 'completed', percent: 100, message: '' }],
+    [{ id: 3, title: 'Build', state: 'Completed', percent: 100, message: '' }],
     { extraRows },
   );
 
@@ -106,4 +106,16 @@ test('hook rows carry the hook source, its status and its own cancel', async () 
 
   assert.deepEqual(cancelled, ['a7']);
   assert.deepEqual(cancels(), []);
+});
+
+test('a capitalised hook row state shows lowercase and keeps its cancel', async () => {
+  const extraRows = async () => ({
+    source: 'daemon',
+    status: 'Online',
+    rows: [{ id: 'b2', label: 'package', state: 'Queued', progress: '', message: '', cancel: async () => {} }],
+  });
+  const { tableBody } = await freshPanel([], { extraRows });
+
+  assert.ok(tableBody.innerHTML.includes('<td>queued</td>'));
+  assert.ok(tableBody.innerHTML.includes('data-job-index="0"'));
 });

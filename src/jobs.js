@@ -75,7 +75,7 @@ function backendRow(job) {
     source: GUI_JOB_SOURCE,
     id: job.id,
     label: job.title,
-    state: job.status,
+    state: job.state,
     progress: job.percent > 0 ? `${Math.round(job.percent)}%` : '',
     message: job.message,
     cancel: () => invoke('cancel_job', { jobId: Number(job.id) }),
@@ -83,12 +83,13 @@ function backendRow(job) {
 }
 
 function rowMarkup({ source, id, label, state, progress, message }, index) {
-  const cancel = CANCELLABLE_JOB_STATES.includes(state)
+  const lowercaseState = state.toLowerCase();
+  const cancel = CANCELLABLE_JOB_STATES.includes(lowercaseState)
     ? `<button class="btn-sm btn-cancel" data-job-index="${index}">✕</button>`
     : '';
   const rowTitle = message ? ` title="${escapeHtml(message)}"` : '';
   return `<tr${rowTitle}><td>${escapeHtml(id)}</td><td>${escapeHtml(source)}</td><td>${escapeHtml(label)}</td>` +
-    `<td>${escapeHtml(state)}</td><td>${escapeHtml(progress)}</td><td>${cancel}</td></tr>`;
+    `<td>${escapeHtml(lowercaseState)}</td><td>${escapeHtml(progress)}</td><td>${cancel}</td></tr>`;
 }
 
 async function handleTableClick(event) {
