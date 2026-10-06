@@ -112,9 +112,11 @@ returns the CPL path, content keys and the packages a version file takes its
 original version's assets from, and is called when the row loads or queues, so
 a KDM ingested during the show counts.
 
-A composition row that follows a composition row with no start time, or with
+A composition row plays its `inFrame` to `outFrame` range when it has one, and
+a composition row that follows a composition row with no start time, or with
 one the current row ends after, is queued on the grok player with
-`queue_next` and takes over without a gap. An intermission row stops the player
+`queue_next_with_options` and takes over without a gap at the current row's out
+point. An intermission row stops the player
 and holds for its length, and a start time still ahead stops the player and
 holds black until it arrives. A row that fails to load is skipped and reported
 in `errors`, and a source the runner did not load ends the run. The log lines

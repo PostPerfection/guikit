@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use chrono::{NaiveDateTime, TimeDelta};
 use postkit::content_keys::ContentKeys;
+use postkit::grok_player::{FrameRange, SourceOptions};
 use postkit::screening_playlist::{PlaylistRow, RowItem, ScreeningPlaylist};
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
@@ -16,8 +17,8 @@ const MILLISECONDS_PER_SECOND: f64 = 1000.0;
 
 // the boundary the runner drives, the preview player in the app and a fake in the tests
 pub trait RunnerPlayer {
-    fn load(&self, source: RowSource) -> Result<(), String>;
-    fn queue_next(&self, source: RowSource) -> Result<(), String>;
+    fn load(&self, source: &Path, options: SourceOptions) -> Result<(), String>;
+    fn queue_next(&self, source: &Path, options: SourceOptions) -> Result<(), String>;
     fn stop(&self) -> Result<(), String>;
     fn status(&self) -> Result<PlayerStatus, String>;
 }
@@ -104,6 +105,25 @@ fn delta_seconds(delta: TimeDelta) -> f64 {
     delta.num_milliseconds() as f64 / MILLISECONDS_PER_SECOND
 }
 
+// the row's in and out points, None plays the whole composition
+fn row_range(in_frame: Option<u64>, out_frame: Option<u64>) -> Option<FrameRange> {
+    if in_frame.is_none() && out_frame.is_none() {
+        return None;
+    }
+    Some(FrameRange {
+        in_frame: in_frame.unwrap_or(0),
+        out_frame,
+    })
+}
+
+fn source_options(source: RowSource, range: Option<FrameRange>) -> SourceOptions {
+    SourceOptions {
+        keys: source.keys,
+        other_packages: source.other_packages,
+        range,
+    }
+}
+
 fn row_title(row: &PlaylistRow) -> String {
     match &row.item {
         RowItem::Composition { title, .. } => title.clone(),
@@ -187,7 +207,14 @@ impl ScreeningRun {
                     package_directory,
                     cpl_id,
                     title,
-                } => match self.load_row(package_directory, *cpl_id, player) {
+                    in_frame,
+                    out_frame,
+                } => match self.load_row(
+                    package_directory,
+                    *cpl_id,
+                    row_range(*in_frame, *out_frame),
+                    player,
+                ) {
                     Ok(source) => {
                         eprintln!("[playlist] row {} loaded: {title}", row + 1);
                         self.phase = Phase::Playing {
@@ -230,12 +257,13 @@ impl ScreeningRun {
         &self,
         package_directory: &Path,
         cpl_id: Uuid,
+        range: Option<FrameRange>,
         player: &impl RunnerPlayer,
     ) -> Result<String, String> {
         let source = (self.lookup)(package_directory, cpl_id)?;
-        let loaded = source.cpl_path.display().to_string();
-        player.load(source)?;
-        Ok(loaded)
+        let cpl_path = source.cpl_path.clone();
+        player.load(&cpl_path, source_options(source, range))?;
+        Ok(cpl_path.display().to_string())
     }
 
     pub fn tick(&mut self, player: &impl RunnerPlayer, now: NaiveDateTime) {
@@ -332,6 +360,8 @@ impl ScreeningRun {
             package_directory,
             cpl_id,
             title,
+            in_frame,
+            out_frame,
         } = &entry.item
         else {
             return;
@@ -344,10 +374,11 @@ impl ScreeningRun {
         if entry.start_time.is_some_and(|start| start > current_end) {
             return;
         }
+        let range = row_range(*in_frame, *out_frame);
         let queued = (self.lookup)(package_directory, *cpl_id).and_then(|source| {
-            let queued_source = source.cpl_path.display().to_string();
-            player.queue_next(source)?;
-            Ok(queued_source)
+            let cpl_path = source.cpl_path.clone();
+            player.queue_next(&cpl_path, source_options(source, range))?;
+            Ok(cpl_path.display().to_string())
         });
         let queued = match queued {
             Ok(queued_source) => {
@@ -426,23 +457,18 @@ impl ScreeningRun {
 struct PreviewRunnerPlayer<'a>(&'a PreviewPlayer);
 
 impl RunnerPlayer for PreviewRunnerPlayer<'_> {
-    fn load(&self, source: RowSource) -> Result<(), String> {
+    fn load(&self, source: &Path, options: SourceOptions) -> Result<(), String> {
         let player = self.0.player()?;
         self.0.forget_loaded_file();
         super::send_decode_scale_to_grok(player, self.0);
-        player.load_source_with_packages(
-            &source.cpl_path.display().to_string(),
-            source.keys,
-            &source.other_packages,
-        )
+        player.load_source_with_options(&source.display().to_string(), options)
     }
 
-    fn queue_next(&self, source: RowSource) -> Result<(), String> {
-        self.0.player()?.grok().queue_next_with_packages(
-            &source.cpl_path,
-            source.keys,
-            &source.other_packages,
-        )
+    fn queue_next(&self, source: &Path, options: SourceOptions) -> Result<(), String> {
+        self.0
+            .player()?
+            .grok()
+            .queue_next_with_options(source, options)
     }
 
     fn stop(&self) -> Result<(), String> {
@@ -528,7 +554,8 @@ mod tests {
     const SHORT: &str = "/library/short";
     const VERSION_FILE: &str = "/library/version_file";
     const ORIGINAL_VERSION: &str = "/library/original_version";
-    const COMPOSITION_SECONDS: f64 = 60.0;
+    const COMPOSITION_FRAMES: u64 = 1440;
+    const FRAMES_PER_SECOND: f64 = 24.0;
 
     #[derive(Default)]
     struct FakePlayer {
@@ -559,25 +586,26 @@ mod tests {
     }
 
     impl RunnerPlayer for FakePlayer {
-        fn load(&self, source: RowSource) -> Result<(), String> {
+        // the grok player counts position and duration from the in frame
+        fn load(&self, source: &Path, options: SourceOptions) -> Result<(), String> {
             self.calls
                 .borrow_mut()
-                .push(format!("load {}", described(&source)));
+                .push(format!("load {}", described(source, &options)));
             *self.status.borrow_mut() = PlayerStatus {
-                source: Some(source.cpl_path.display().to_string()),
+                source: Some(source.display().to_string()),
                 queued_source: None,
                 eof: false,
                 position: Some(0.0),
-                duration: Some(COMPOSITION_SECONDS),
+                duration: Some(played_seconds(options.range)),
             };
             Ok(())
         }
 
-        fn queue_next(&self, source: RowSource) -> Result<(), String> {
+        fn queue_next(&self, source: &Path, options: SourceOptions) -> Result<(), String> {
             self.calls
                 .borrow_mut()
-                .push(format!("queue {}", described(&source)));
-            self.status.borrow_mut().queued_source = Some(source.cpl_path.display().to_string());
+                .push(format!("queue {}", described(source, &options)));
+            self.status.borrow_mut().queued_source = Some(source.display().to_string());
             Ok(())
         }
 
@@ -592,16 +620,33 @@ mod tests {
         }
     }
 
-    fn described(source: &RowSource) -> String {
-        let packages: Vec<String> = source
+    fn played_seconds(range: Option<FrameRange>) -> f64 {
+        let (in_frame, out_frame) = range.map_or((0, COMPOSITION_FRAMES), |range| {
+            (
+                range.in_frame,
+                range.out_frame.unwrap_or(COMPOSITION_FRAMES),
+            )
+        });
+        (out_frame - in_frame) as f64 / FRAMES_PER_SECOND
+    }
+
+    fn described(source: &Path, options: &SourceOptions) -> String {
+        let mut text = source.display().to_string();
+        let packages: Vec<String> = options
             .other_packages
             .iter()
             .map(|package| package.display().to_string())
             .collect();
-        if packages.is_empty() {
-            return source.cpl_path.display().to_string();
+        if !packages.is_empty() {
+            text += &format!(" with {}", packages.join(", "));
         }
-        format!("{} with {}", source.cpl_path.display(), packages.join(", "))
+        if let Some(range) = options.range {
+            let out_frame = range
+                .out_frame
+                .map_or("the end".to_string(), |frame| frame.to_string());
+            text += &format!(" frames {} to {out_frame}", range.in_frame);
+        }
+        text
     }
 
     fn time(text: &str) -> NaiveDateTime {
@@ -619,8 +664,24 @@ mod tests {
                 package_directory: PathBuf::from(package),
                 cpl_id: Uuid::nil(),
                 title: package.rsplit('/').next().unwrap().to_string(),
+                in_frame: None,
+                out_frame: None,
             },
         }
+    }
+
+    fn ranged(package: &str, in_frame: Option<u64>, out_frame: Option<u64>) -> PlaylistRow {
+        let mut row = composition(package, None);
+        if let RowItem::Composition {
+            in_frame: row_in,
+            out_frame: row_out,
+            ..
+        } = &mut row.item
+        {
+            *row_in = in_frame;
+            *row_out = out_frame;
+        }
+        row
     }
 
     fn intermission(seconds: u32) -> PlaylistRow {
@@ -710,6 +771,39 @@ mod tests {
                 format!("queue {with_original}")
             ]
         );
+    }
+
+    #[test]
+    fn ranged_rows_load_and_queue_their_frames_and_hand_off_at_the_out_point() {
+        let player = FakePlayer::default();
+        let mut run = start(
+            vec![
+                ranged(TRAILER, Some(24), Some(48)),
+                ranged(FEATURE, None, Some(240)),
+                ranged(SHORT, Some(120), None),
+            ],
+            &player,
+        );
+        assert_eq!(
+            player.calls(),
+            [
+                format!("load {} frames 24 to 48", cpl(TRAILER)),
+                format!("queue {} frames 0 to 240", cpl(FEATURE)),
+            ]
+        );
+        assert_eq!(
+            run.state(&player, time(NOW)).seconds_to_next_start,
+            Some(1.0)
+        );
+
+        player.reach_the_end();
+        run.tick(&player, later(1.0));
+
+        assert_eq!(
+            player.calls(),
+            [format!("queue {} frames 120 to the end", cpl(SHORT))]
+        );
+        assert_eq!(run.state(&player, later(1.0)).current_row, Some(1));
     }
 
     #[test]
@@ -878,11 +972,7 @@ mod tests {
         player.calls();
 
         player
-            .load(RowSource {
-                cpl_path: PathBuf::from("/elsewhere/CPL.xml"),
-                keys: None,
-                other_packages: Vec::new(),
-            })
+            .load(Path::new("/elsewhere/CPL.xml"), SourceOptions::default())
             .unwrap();
         player.calls();
         run.tick(&player, later(1.0));

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use postkit::content_keys::ContentKeys;
-use postkit::grok_player::{GetProcAddressFn, GrokPlayer};
+use postkit::grok_player::{GetProcAddressFn, GrokPlayer, SourceOptions};
 use postkit::mpv_render::{MpvRenderPlayer, NativeDisplay};
 
 use super::{FRAME_BACK_STEP, FRAME_STEP};
@@ -129,34 +129,45 @@ impl Player {
         keys: Option<ContentKeys>,
         other_packages: &[PathBuf],
     ) -> Result<(), String> {
-        if GrokPlayer::accepts_with_packages(Path::new(path), other_packages) {
-            return self.start_grok(path, keys, other_packages);
+        let options = SourceOptions {
+            keys,
+            other_packages: other_packages.to_vec(),
+            range: None,
+        };
+        self.load_source_with_options(path, options)
+    }
+
+    pub fn load_source_with_options(
+        &self,
+        path: &str,
+        options: SourceOptions,
+    ) -> Result<(), String> {
+        if GrokPlayer::accepts_with_packages(Path::new(path), &options.other_packages) {
+            return self.start_grok(path, options);
         }
-        refuse_keys_for_mpv(path, keys.as_ref())?;
+        refuse_options_for_mpv(path, &options)?;
         self.start_mpv(path);
         self.mpv.load_file(path)
     }
 
     pub fn load_package_dir(&self, path: &str, keys: Option<ContentKeys>) -> Result<(), String> {
+        let options = SourceOptions {
+            keys,
+            ..Default::default()
+        };
         if GrokPlayer::accepts(Path::new(path)) {
-            return self.start_grok(path, keys, &[]);
+            return self.start_grok(path, options);
         }
-        refuse_keys_for_mpv(path, keys.as_ref())?;
+        refuse_options_for_mpv(path, &options)?;
         self.start_mpv(path);
         self.mpv.load_package_dir(path)
     }
 
     // the page sends no play after a load, mpv's loadfile starts playing itself
-    fn start_grok(
-        &self,
-        path: &str,
-        keys: Option<ContentKeys>,
-        other_packages: &[PathBuf],
-    ) -> Result<(), String> {
+    fn start_grok(&self, path: &str, options: SourceOptions) -> Result<(), String> {
         self.take_over(Backend::Grok, path);
         self.mpv.stop()?;
-        self.grok
-            .load_with_packages(Path::new(path), keys, other_packages)?;
+        self.grok.load_with_options(Path::new(path), options)?;
         self.grok.set_paused(false);
         Ok(())
     }
@@ -251,13 +262,18 @@ impl Player {
 
 // mpv's hwdec probe creates the process's cuda context before the grok plugin can, and a plugin
 // kernel loaded lazily at its first launch deadlocks behind the plugin's blocked host callback
-fn refuse_keys_for_mpv(path: &str, keys: Option<&ContentKeys>) -> Result<(), String> {
-    if keys.is_none() {
-        return Ok(());
+fn refuse_options_for_mpv(path: &str, options: &SourceOptions) -> Result<(), String> {
+    if options.keys.is_some() {
+        return Err(format!(
+            "{path} is not JPEG 2000 MXF essence, so content keys do not apply to it"
+        ));
     }
-    Err(format!(
-        "{path} is not JPEG 2000 MXF essence, so content keys do not apply to it"
-    ))
+    if options.range.is_some() {
+        return Err(format!(
+            "{path} is not JPEG 2000 MXF essence, so a frame range does not apply to it"
+        ));
+    }
+    Ok(())
 }
 
 fn load_cuda_kernels_eagerly() {
