@@ -5,6 +5,9 @@ Shared code for the PostPerfection wizard GUIs, frontend and native.
 - `src/preview.js`: preview player and scrubber
 - `src/playlist.js`: the queue that plays packages one after another
 - `src/jobs.js`: the Jobs panel, the backend's jobs and an app's second source
+- `src/library.js`: the Library panel, one row per composition of the packages an app lists
+- `src/keys.js`: the Keys panel, one row per KDM an app holds
+- `src/time-format.js`: durations from a frame count and edit rate, and RFC 3339 dates in local time
 - `src/builds-in-flight.js`: the titles of the builds a window has queued or running
 - `src/drag-label.js`: a one line asset name as the drag image in place of the whole row
 - `src/shortcuts.js`: keyboard shortcut handling and the shortcuts dialog
@@ -251,6 +254,47 @@ standing in for the player, and `test/transport.test.mjs` and
 `test/tauri-core-stub.mjs` standing in for the tauri bridge:
 `node --test 'test/*.test.mjs'`, no dependencies and nothing to build. That is the
 whole JS test suite, and CI runs it beside the syntax check.
+
+## Library
+
+`library.js` renders the table of DCPs dcpscreen shows. The app keeps the
+markup and hands the elements over:
+
+```js
+initLibraryPanel({ tableBody, statusBadge, refreshButton, load, actions });
+```
+
+`load` is an async function returning `{ status, packages }`. `status` goes in
+the badge, and each package is `{ directory, title, standard, compositions,
+verdict }` with `standard` `Interop` or `SMPTE`, each composition
+`{ id, title, durationFrames, editRate: [n, d], encrypted }` and `verdict`
+`{ state, errorCount, verifiedAt }`. The table has one row per composition in
+seven columns: package, composition, duration as HH:MM:SS, standard, 🔒 for an
+encrypted composition, the verdict lowercased with the error count after
+`failed` and `verifiedAt` as its title, and the buttons. The "No packages"
+placeholder spans all seven. Play (`btn-play`) calls
+`actions.play(package, composition)`, Verify (`btn-verify`) and Remove
+(`btn-remove`) call `actions.verify(package)` and `actions.remove(package)` and
+are left out while the verdict is `Verifying`. Each action is followed by
+`refreshLibrary()`, which is exported for the app to call too.
+
+## Keys
+
+`keys.js` renders the table of KDMs dcpscreen holds:
+
+```js
+initKeysPanel({ tableBody, statusBadge, ingestButton, load, actions });
+```
+
+`load` is an async function returning `{ status, kdms }`, each KDM
+`{ path, cplId, contentTitle, notValidBefore, notValidAfter, fit }` with the two
+dates RFC 3339 and `fit` one of `Valid`, `NotYetValid`, `Expired` and
+`WrongRecipient`. The six columns are content title, CPL id, the window as both
+dates in local time without seconds, the fit as `valid`, `not yet valid`,
+`expired` or `wrong recipient`, the file name with the full path as its title,
+and a Remove button (`btn-remove`) calling `actions.remove(kdm)`. The "No KDMs"
+placeholder spans all six. `ingestButton` calls `actions.ingest()`, which opens
+the app's own file dialog. Both are followed by `refreshKeys()`, also exported.
 
 ## Project files
 
