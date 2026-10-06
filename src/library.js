@@ -1,5 +1,5 @@
 import { escapeHtml } from './html.js';
-import { framesToTimecode } from './time-format.js';
+import { formatDateTime, framesToTimecode } from './time-format.js';
 
 const LIBRARY_TABLE_COLUMNS = 7;
 const PLACEHOLDER_ROW = `<tr><td colspan="${LIBRARY_TABLE_COLUMNS}" style="text-align:center">No packages</td></tr>`;
@@ -60,7 +60,7 @@ function verdictText({ state, errorCount }) {
 }
 
 function verdictCell(verdict) {
-  const title = verdict.verifiedAt ? ` title="${escapeHtml(verdict.verifiedAt)}"` : '';
+  const title = verdict.verifiedAt ? ` title="${escapeHtml(formatDateTime(verdict.verifiedAt))}"` : '';
   return `<td${title}>${escapeHtml(verdictText(verdict))}</td>`;
 }
 

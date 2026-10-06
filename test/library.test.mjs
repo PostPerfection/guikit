@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+process.env.TZ = 'UTC';
 const library = await import('../src/library.js');
 
 function fakeElement() {
@@ -65,8 +66,8 @@ test('each composition is a row with every column, escaped', async () => {
 
   assert.ok(first.includes('<td>Feature &lt;FTR&gt;</td><td>Feature &amp; Credits</td><td>02:00:00</td><td>SMPTE</td>'));
   assert.ok(first.includes('<td title="Encrypted">🔒</td>'));
-  assert.ok(first.includes('<td title="2026-10-06T12:00:00Z">failed (3)</td>'));
-  assert.ok(second.includes('<td>Trailer</td><td>00:02:00</td><td>SMPTE</td><td></td><td title="2026-10-06T12:00:00Z">failed (3)</td>'));
+  assert.ok(first.includes('<td title="2026-10-06 12:00">failed (3)</td>'));
+  assert.ok(second.includes('<td>Trailer</td><td>00:02:00</td><td>SMPTE</td><td></td><td title="2026-10-06 12:00">failed (3)</td>'));
   assert.equal(statusBadge.textContent, 'Watching 2 folders');
 });
 
