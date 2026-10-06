@@ -658,7 +658,7 @@ mod tests {
     }
 
     fn cpl(package: &str) -> String {
-        format!("{package}/CPL.xml")
+        Path::new(package).join("CPL.xml").display().to_string()
     }
 
     #[test]
