@@ -280,6 +280,19 @@ body {
   line-height: 1.6;
 }
 
+.drag-label {
+  position: fixed;
+  top: -1000px;
+  left: 0;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-alt);
+  color: var(--text);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .asset-item {
   display: flex;
   align-items: center;
