@@ -40,12 +40,15 @@ time, with `PKG_CONFIG_PATH` (Linux, macOS) or `FFMPEG_DIR` and `MPV_LIB_DIR`
 `preview_is_embedded` reporting false so the page hides the preview.
 
 An app that plays in a window of its own creates that window at setup with
-`guikit::startup::create_hidden_window(app, &window, "player.html")`, passes its
-label to `create_player`, and shows the window when playback starts. The page
-in that window calls `initFullPageSurface()` from `preview.js`, which only
-reports where `#preview-surface` sits. The main page calls `initPreview()` with
-no `#preview-panel` and runs the transport. Clicks on the video reach the page
-under it, so a double click there arrives as a page event.
+`guikit::startup::create_player_window(app, &window, "player.html")`, which
+starts hidden with a transparent webview, and manages
+`guikit::preview::create_player_under_page(app, label)` for it, which puts the
+video under the page instead of over it (Linux only). The page in that window
+keeps its body transparent, calls `initFullPageSurface()` from `preview.js` so
+the video fills it, and `initLiveTransport()` to wire the transport ids in its
+own markup with every control enabled, since the window only shows while
+something plays. The main page calls `initPreview()` with no `#preview-panel`
+and runs the same transport against the same player.
 
 The crate depends on postkit by git url. Both wizards redirect that to their
 own `extern/postkit` submodule with a `[patch]` in their gui `Cargo.toml`, so a

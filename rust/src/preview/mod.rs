@@ -84,7 +84,7 @@ const EOF_PROPERTY: &str = "eof-reached";
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
-pub use linux::{attach, EmbeddedPreview};
+pub use linux::{attach, attach_under_page, EmbeddedPreview};
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -176,6 +176,20 @@ impl PreviewPlayer {
 /// Put the video surface on the app's window. Failure leaves the app running
 /// with playback disabled, so it never stops the app from starting.
 pub fn create_player(app: &tauri::App, window_label: &str) -> PreviewPlayer {
+    create_player_with(app, window_label, attach)
+}
+
+// for a window whose page draws over the video, made by create_player_window
+#[cfg(target_os = "linux")]
+pub fn create_player_under_page(app: &tauri::App, window_label: &str) -> PreviewPlayer {
+    create_player_with(app, window_label, attach_under_page)
+}
+
+fn create_player_with(
+    app: &tauri::App,
+    window_label: &str,
+    attach: fn(&tauri::Window) -> Result<EmbeddedPreview, String>,
+) -> PreviewPlayer {
     let Some(window) = app.get_window(window_label) else {
         return PreviewPlayer::new(PreviewSurface::Unavailable(format!(
             "no window labelled {window_label}"

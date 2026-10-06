@@ -18,24 +18,31 @@ const MAIN_PAGE: &str = "index.html";
 /// lets the preview render underneath it.
 #[cfg(target_os = "linux")]
 pub fn create_main_window(app: &tauri::App, window: &MainWindow) -> tauri::Result<()> {
-    create_window(app, window, MAIN_PAGE, true)
+    let webview = webview_builder(window, MAIN_PAGE).background_color(window.background);
+    create_window(app, window, webview, true)
 }
 
-// a second window built the same way, which the app shows when it needs it
+// starts hidden, its page sits over the video of create_player_under_page
 #[cfg(target_os = "linux")]
-pub fn create_hidden_window(
+pub fn create_player_window(
     app: &tauri::App,
     window: &MainWindow,
     page: &str,
 ) -> tauri::Result<()> {
-    create_window(app, window, page, false)
+    let webview = webview_builder(window, page).transparent(true);
+    create_window(app, window, webview, false)
+}
+
+#[cfg(target_os = "linux")]
+fn webview_builder(window: &MainWindow, page: &str) -> tauri::webview::WebviewBuilder<tauri::Wry> {
+    tauri::webview::WebviewBuilder::new(window.webview_label, tauri::WebviewUrl::App(page.into()))
 }
 
 #[cfg(target_os = "linux")]
 fn create_window(
     app: &tauri::App,
     window: &MainWindow,
-    page: &str,
+    webview: tauri::webview::WebviewBuilder<tauri::Wry>,
     visible: bool,
 ) -> tauri::Result<()> {
     let built = tauri::window::WindowBuilder::new(app, window.label)
@@ -46,11 +53,6 @@ fn create_window(
         .visible(visible)
         .build()?;
     let size = built.inner_size()?;
-    let webview = tauri::webview::WebviewBuilder::new(
-        window.webview_label,
-        tauri::WebviewUrl::App(page.into()),
-    )
-    .background_color(window.background);
     built.add_child(webview, tauri::LogicalPosition::new(0, 0), size)?;
     Ok(())
 }

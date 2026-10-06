@@ -66,9 +66,27 @@ impl EmbeddedPreview {
     }
 }
 
+#[derive(Clone, Copy)]
+enum VideoStacking {
+    OverPage,
+    // the page needs a transparent webview to show the video
+    UnderPage,
+}
+
 /// Put a GL area over the window's webview and hand back the player driving it.
 /// Everything here touches GTK, so it must run on the main thread.
 pub fn attach(window: &tauri::Window) -> Result<EmbeddedPreview, String> {
+    attach_stacked(window, VideoStacking::OverPage)
+}
+
+pub fn attach_under_page(window: &tauri::Window) -> Result<EmbeddedPreview, String> {
+    attach_stacked(window, VideoStacking::UnderPage)
+}
+
+fn attach_stacked(
+    window: &tauri::Window,
+    stacking: VideoStacking,
+) -> Result<EmbeddedPreview, String> {
     let gtk_window = window.gtk_window().map_err(|e| e.to_string())?;
     let webview_box = window.default_vbox().map_err(|e| e.to_string())?;
 
@@ -106,21 +124,25 @@ pub fn attach(window: &tauri::Window) -> Result<EmbeddedPreview, String> {
         }
     });
 
-    gl_area.connect_realize(let_pointer_through);
-
     // Signals first: adding the area to a window that is already on screen
     // realizes it right away, and a realize handler connected after that never
     // runs, leaving every draw without a render context.
     let overlay = gtk::Overlay::new();
     gtk_window.remove(&webview_box);
-    overlay.add(&webview_box);
-    overlay.add_overlay(&gl_area);
-    overlay.set_overlay_pass_through(&gl_area, true);
+    match stacking {
+        VideoStacking::OverPage => {
+            overlay.add(&webview_box);
+            overlay.add_overlay(&gl_area);
+        }
+        VideoStacking::UnderPage => {
+            overlay.add(&gl_area);
+            overlay.add_overlay(&webview_box);
+        }
+    }
     gtk_window.add(&overlay);
     overlay.show_all();
     if gl_area.is_realized() {
         bind_render_context(&gl_area, &player, &events);
-        let_pointer_through(&gl_area);
     }
 
     spawn_event_pump(incoming, gl_area, Arc::clone(&player), Arc::clone(&rect));
@@ -165,14 +187,6 @@ fn bind_render_context(
         gl_string(GL_RENDERER),
         gl_string(GL_VERSION)
     );
-}
-
-// GtkGLArea catches clicks in an input window of its own
-fn let_pointer_through(gl_area: &gtk::GLArea) {
-    let overlay_window = gl_area.window().expect("a realized GL area has a window");
-    for window in overlay_window.children() {
-        window.set_pass_through(true);
-    }
 }
 
 fn apply_rect(gl_area: &gtk::GLArea, rect: SurfaceRect) {

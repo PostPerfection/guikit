@@ -11,8 +11,6 @@ let metadataWatcher = () => {};
 let loadWatcher = () => {};
 let shownWatcher = () => {};
 let endReported = false;
-// the file or directory the player holds, null when it holds nothing
-let loadedPath = null;
 // set while the page draws something the native surface would otherwise cover
 let surfaceCovered = false;
 
@@ -294,9 +292,15 @@ async function initEmbeddedSurface() {
   reportSurfacePlacement(surface, () => !panel.hidden);
 }
 
-// a window that shows only the video, its transport runs on another page
+// the video fills the whole page
 export function initFullPageSurface() {
   reportSurfacePlacement(document.getElementById('preview-surface'), () => true);
+}
+
+// for a window shown only while something plays
+export function initLiveTransport() {
+  initScrubber();
+  setTransportEnabled(true);
 }
 
 function reportSurfacePlacement(surface, isSurfaceShown) {
@@ -361,7 +365,6 @@ export function stopPreview() {
   invoke('preview_stop').catch(() => {});
   shownWatcher(null);
   resetTrackToggles();
-  loadedPath = null;
   setTransportEnabled(false);
   showPreviewTitle(null);
 }
@@ -438,7 +441,7 @@ function initScrubber() {
   // released over it never arrives and the seek would stay latched, freezing
   // every poll-driven control until some later click landed in the page.
   scrubber.addEventListener('pointerdown', (e) => {
-    if (!loadedPath) return;
+    if (scrubber.classList.contains(SCRUBBER_IDLE_CLASS)) return;
     scrubber.setPointerCapture(e.pointerId);
     isSeeking = true;
     seekToMouse(e);
@@ -581,7 +584,6 @@ export function previewFile(filePath, contentKeys = null) {
   loadWatcher(filePath);
   const loaded = invoke('preview_load', { filePath, contentKeys }).then(() => true, reportPreviewLoadFailure);
   resetTrackToggles();
-  loadedPath = filePath;
   setTransportEnabled(true);
   showPreviewTitle(filePath);
   startScrubberPolling();
@@ -596,7 +598,6 @@ export function previewDcp(dirPath, contentKeys = null) {
   loadWatcher(dirPath);
   const loaded = invoke('preview_load_dcp', { dirPath, contentKeys }).then(() => true, reportPreviewLoadFailure);
   resetTrackToggles();
-  loadedPath = dirPath;
   setTransportEnabled(true);
   showPreviewTitle(dirPath);
   startScrubberPolling();
