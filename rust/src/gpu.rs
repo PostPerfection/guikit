@@ -61,6 +61,11 @@ pub fn set_gpu(
     Ok(postkit::grok_encoder::gpu_active())
 }
 
+#[tauri::command]
+pub fn gpu_active() -> bool {
+    postkit::grok_encoder::gpu_active()
+}
+
 pub fn accelerator_status() -> AcceleratorStatus {
     let last = LAST_REQUEST.lock().expect("accelerator request lock");
     AcceleratorStatus {
