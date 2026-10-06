@@ -710,6 +710,22 @@ pub fn preview_set_subtitle_visibility(
     set_track_visibility(player.mpv(), track, visible)
 }
 
+// the choice carries over to the compositions that follow
+#[tauri::command(async)]
+pub fn preview_set_subtitle_language(
+    track: SubtitleTrackSlot,
+    language: String,
+    state: tauri::State<'_, PreviewPlayer>,
+) -> Result<(), String> {
+    let player = state.player()?;
+    if player.active() != Backend::Grok {
+        return Err("only a composition the grok player plays has subtitle languages".to_string());
+    }
+    player
+        .grok()
+        .set_subtitle_language(track.grok_slot(), &language)
+}
+
 fn set_track_visibility(
     player: &MpvRenderPlayer,
     track: SubtitleTrackSlot,
@@ -1034,6 +1050,7 @@ mod tests {
                 preview_set_decode_scale,
                 preview_set_subtitle_file,
                 preview_set_subtitle_visibility,
+                preview_set_subtitle_language,
             ]);
     }
 }

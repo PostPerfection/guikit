@@ -152,6 +152,12 @@ preview view cannot cover it. An app only has to register `preview_set_overlays`
 `preview_set_decode_scale`, `preview_set_subtitle_file` and
 `preview_set_subtitle_visibility` beside the other commands.
 
+A CPL the grok player loads fills both subtitle slots with its own subtitle and
+closed caption tracks. `preview_set_subtitle_language` shows a slot's track in
+another language the composition has, and the compositions after it keep that
+language when they have it. The languages are in the metadata's
+`subtitle_track` and `caption_track`.
+
 Crop, Sub and CC start disabled, because they have nothing to show until the
 page hands them one. `setPreviewCrop({ left, right, top, bottom })` gives the
 crop overlay the pixels the job takes off each edge of the source picture, and
