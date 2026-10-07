@@ -6,9 +6,12 @@
 //! webview box and is positioned from the page: the frontend reports where its
 //! placeholder element sits and the area is moved to match.
 
+use std::cell::Cell;
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::ptr;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use gtk::glib;
 use gtk::glib::translate::ToGlibPtr;
@@ -103,6 +106,7 @@ fn attach_stacked(
     apply_rect(&gl_area, SurfaceRect::default());
 
     let (events, incoming) = async_channel::unbounded::<SurfaceEvent>();
+    let pacing = Rc::new(RenderPacing::default());
 
     gl_area.connect_realize({
         let player = Arc::clone(&player);
@@ -125,7 +129,9 @@ fn attach_stacked(
 
     gl_area.connect_render({
         let player = Arc::clone(&player);
+        let pacing = Rc::clone(&pacing);
         move |area, _context| {
+            let started = Instant::now();
             let scale = area.scale_factor();
             let width = area.allocated_width() * scale;
             let height = area.allocated_height() * scale;
@@ -133,6 +139,7 @@ fn attach_stacked(
                 eprintln!("[preview] render failed: {error}");
             }
             player.report_swap();
+            pacing.rendered(started.elapsed());
             glib::Propagation::Stop
         }
     });
@@ -149,7 +156,13 @@ fn attach_stacked(
         bind_render_context(&gl_area, &player, &events);
     }
 
-    spawn_event_pump(incoming, gl_area, Arc::clone(&player), Arc::clone(&rect));
+    spawn_event_pump(
+        incoming,
+        gl_area,
+        Arc::clone(&player),
+        Arc::clone(&rect),
+        pacing,
+    );
 
     Ok(EmbeddedPreview {
         player,
@@ -235,6 +248,7 @@ fn spawn_event_pump(
     gl_area: gtk::GLArea,
     player: Arc<Player>,
     rect: Arc<Mutex<SurfaceRect>>,
+    pacing: Rc<RenderPacing>,
 ) {
     glib::MainContext::default().spawn_local(async move {
         while let Ok(event) = incoming.recv().await {
@@ -245,7 +259,7 @@ fn spawn_event_pump(
                     }
                     gl_area.make_current();
                     if player.wants_redraw() {
-                        gl_area.queue_render();
+                        pacing.queue_render(&gl_area);
                     }
                 }
                 SurfaceEvent::Layout => {
@@ -255,6 +269,45 @@ fn spawn_event_pump(
             }
         }
     });
+}
+
+// longer than one 60 Hz refresh, which a GPU render does not take
+const SLOW_RENDER: Duration = Duration::from_millis(17);
+
+// a render slower than a frame, as in software GL, would otherwise fill the main loop and the page stops getting answers
+#[derive(Default)]
+struct RenderPacing {
+    next_render: Cell<Option<Instant>>,
+    render_waiting: Cell<bool>,
+}
+
+impl RenderPacing {
+    fn rendered(&self, took: Duration) {
+        let next = (took > SLOW_RENDER).then(|| Instant::now() + took);
+        self.next_render.set(next);
+    }
+
+    fn queue_render(self: &Rc<Self>, gl_area: &gtk::GLArea) {
+        if self.render_waiting.get() {
+            return;
+        }
+        let wait = self
+            .next_render
+            .get()
+            .map(|next| next.saturating_duration_since(Instant::now()))
+            .unwrap_or_default();
+        if wait.is_zero() {
+            gl_area.queue_render();
+            return;
+        }
+        self.render_waiting.set(true);
+        let pacing = Rc::clone(self);
+        let gl_area = gl_area.clone();
+        glib::timeout_add_local_once(wait, move || {
+            pacing.render_waiting.set(false);
+            gl_area.queue_render();
+        });
+    }
 }
 
 fn current_framebuffer() -> i32 {
