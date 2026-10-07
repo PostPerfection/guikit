@@ -110,6 +110,13 @@ define_class!(
             context.flushBuffer();
             player.report_swap();
         }
+
+        // SAFETY: The signature matches NSView's hitTest:.
+        #[unsafe(method_id(hitTest:))]
+        fn hit_test(&self, _point: NSPoint) -> Option<Retained<NSView>> {
+            // nil hands the pointer moves over the picture to the webview beneath
+            None
+        }
     }
 );
 

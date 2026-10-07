@@ -24,9 +24,9 @@ use windows::Win32::Graphics::OpenGL::{
 use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress, LoadLibraryW};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, GetWindowLongPtrW, LoadCursorW,
-    RegisterClassExW, SetWindowLongPtrW, SetWindowPos, CS_OWNDC, GWLP_USERDATA, HWND_TOP,
-    IDC_ARROW, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_SHOWWINDOW, WINDOW_EX_STYLE, WM_ERASEBKGND,
-    WM_NCDESTROY, WM_PAINT, WNDCLASSEXW, WS_CHILD, WS_CLIPSIBLINGS,
+    RegisterClassExW, SetWindowLongPtrW, SetWindowPos, CS_OWNDC, GWLP_USERDATA, HTTRANSPARENT,
+    HWND_TOP, IDC_ARROW, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_SHOWWINDOW, WINDOW_EX_STYLE,
+    WM_ERASEBKGND, WM_NCDESTROY, WM_NCHITTEST, WM_PAINT, WNDCLASSEXW, WS_CHILD, WS_CLIPSIBLINGS,
 };
 
 const PREVIEW_WINDOW_CLASS: PCWSTR = w!("PostPerfectionEmbeddedPreview");
@@ -53,6 +53,8 @@ const HIDDEN_SURFACE_SIZE: i32 = 1;
 /// the background is already erased, which it is: the video covers every pixel.
 const MESSAGE_HANDLED: LRESULT = LRESULT(0);
 const BACKGROUND_ERASED: LRESULT = LRESULT(1);
+// hands the pointer moves over the picture to the WebView2 child beneath
+const POINTER_PASSES_THROUGH: LRESULT = LRESULT(HTTRANSPARENT as isize);
 
 /// The window, its device context and its GL context, all created together and
 /// destroyed together.
@@ -315,8 +317,8 @@ fn module_handle() -> Result<HMODULE, String> {
         .map_err(|error| format!("GetModuleHandleW failed: {error}"))
 }
 
-/// The window takes no input, so painting and the teardown of what painting
-/// reads are the only messages it answers itself.
+/// The window takes no input, so hit testing, painting and the teardown of what
+/// painting reads are the only messages it answers itself.
 unsafe extern "system" fn preview_window_procedure(
     window: HWND,
     message: u32,
@@ -329,6 +331,7 @@ unsafe extern "system" fn preview_window_procedure(
             MESSAGE_HANDLED
         }
         WM_ERASEBKGND => BACKGROUND_ERASED,
+        WM_NCHITTEST => POINTER_PASSES_THROUGH,
         WM_NCDESTROY => {
             release_paint_target(window);
             unsafe { DefWindowProcW(window, message, wparam, lparam) }

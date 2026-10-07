@@ -766,6 +766,7 @@ body {
 .preview-panel.preview-fullscreen {
   flex: 1;
   min-height: 0;
+  border-top: none;
 }
 
 .preview-panel.preview-fullscreen .preview-surface {

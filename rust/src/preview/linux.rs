@@ -155,6 +155,8 @@ fn stack_video(
         VideoStacking::OverPage => {
             overlay.add(webview_box);
             overlay.add_overlay(gl_area);
+            // the page still needs the pointer moves over the picture
+            overlay.set_overlay_pass_through(gl_area, true);
         }
         VideoStacking::UnderPage => {
             // as the overlay's main child the area's size request would be the window's minimum size
