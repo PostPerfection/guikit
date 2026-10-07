@@ -109,6 +109,19 @@ fn attach_stacked(
         let events = events.clone();
         move |area| bind_render_context(area, &player, &events)
     });
+    if matches!(stacking, VideoStacking::OverPage) {
+        // the area realizes an input-only gdk window that takes the pointer, the page needs it
+        gl_area.connect_realize(|area| {
+            let Some(parent) = area.window() else {
+                return;
+            };
+            for window in parent.children() {
+                if window.is_input_only() {
+                    window.set_pass_through(true);
+                }
+            }
+        });
+    }
 
     gl_area.connect_render({
         let player = Arc::clone(&player);
