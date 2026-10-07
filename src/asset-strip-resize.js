@@ -28,6 +28,8 @@ export function initAssetStripResize(wizard) {
   };
   handle.addEventListener("pointerdown", (event) => {
     if (event.button !== PRIMARY_BUTTON) return;
+    // left alone, the press starts a text selection that WebKit then drags away, release included
+    event.preventDefault();
     dragStart = { pointerId: event.pointerId, pointerY: event.clientY, height: strip.getBoundingClientRect().height };
     handle.setPointerCapture(event.pointerId);
   });

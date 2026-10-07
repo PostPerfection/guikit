@@ -49,7 +49,11 @@ function setUp() {
   globalThis.localStorage = { getItem: (key) => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) };
   initAssetStripResize('wizard');
   const { handle } = strip;
-  const fire = (name, event = {}) => handle.handlers[name]({ pointerId: POINTER, ...event });
+  const fire = (name, event = {}) => {
+    const fired = { pointerId: POINTER, defaultPrevented: false, preventDefault: () => (fired.defaultPrevented = true), ...event };
+    handle.handlers[name](fired);
+    return fired;
+  };
   return { strip, handle, saved, fire };
 }
 
@@ -88,4 +92,10 @@ test('a secondary button press does not start a drag', () => {
   fire('pointermove', { buttons: PRIMARY_HELD, clientY: 300 });
   assert.equal(strip.height, START_HEIGHT);
   assert.equal(handle.hasPointerCapture(POINTER), false);
+});
+
+test('pressing the handle stops the press from selecting page text', () => {
+  const { fire } = setUp();
+  // a selection started here is what WebKit drags away, taking the release with it
+  assert.equal(fire('pointerdown', { button: PRIMARY, clientY: 100 }).defaultPrevented, true);
 });

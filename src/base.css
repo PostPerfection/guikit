@@ -1545,6 +1545,7 @@ body.preview-fullscreen-hud-hidden * {
 }
 .asset-strip-handle {
   flex: none;
+  user-select: none;
   height: var(--asset-strip-handle-height);
   display: flex;
   align-items: center;
