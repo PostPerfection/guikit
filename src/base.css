@@ -865,6 +865,10 @@ body.preview-fullscreen-hud-hidden .main-area:has(> .preview-panel.preview-fulls
   visibility: hidden;
 }
 
+body.preview-fullscreen-hud-hidden .preview-panel.preview-fullscreen {
+  background: #000;
+}
+
 body.preview-fullscreen-hud-hidden,
 body.preview-fullscreen-hud-hidden * {
   cursor: none;
