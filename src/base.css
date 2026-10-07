@@ -775,10 +775,10 @@ body {
   min-height: 0;
 }
 
-/* The native video view is stacked over the page, so idle controls leave the layout instead of sitting under it. */
+/* Idle controls keep their space so the picture does not move when they hide. */
 body.preview-fullscreen-hud-hidden .preview-panel.preview-fullscreen > :not(.preview-surface),
 body.preview-fullscreen-hud-hidden .main-area:has(> .preview-panel.preview-fullscreen) > .timeline-transport {
-  display: none;
+  visibility: hidden;
 }
 
 body.preview-fullscreen-hud-hidden,
