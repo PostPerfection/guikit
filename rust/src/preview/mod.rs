@@ -57,6 +57,12 @@ const SOURCE_HEIGHT_PROPERTY: &str = "current-tracks/video/demux-h";
 /// only where the decoder implements lowres.
 const DECODED_WIDTH_PROPERTY: &str = "video-params/w";
 const DECODED_HEIGHT_PROPERTY: &str = "video-params/h";
+// the frame size after mpv's video filters, the decoded size while there are none
+const FILTERED_WIDTH_PROPERTY: &str = "video-out-params/w";
+const FILTERED_HEIGHT_PROPERTY: &str = "video-out-params/h";
+// mpv replaces a filter added under a label it already has
+const PICTURE_FILTERS_LABEL: &str = "@picturefilters";
+const NO_PICTURE_FILTERS_ON_GROK: &str = "the grok player has no picture filter chain";
 /// How many tracks the loaded file has, all types counted together.
 const TRACK_COUNT_PROPERTY: &str = "track-list/count";
 /// The external subtitle files a reload has to load again, as a per-file option.
@@ -84,6 +90,11 @@ const HUD_COUNTER_PROPERTIES: [(&str, &str); 5] = [
 /// postkit's player starts mpv with `keep-open` on.
 const EOF_FIELD: &str = "eof";
 const EOF_PROPERTY: &str = "eof-reached";
+// the size of the frame mpv shows, after the picture filters when they are set
+const SHOWN_FRAME_SIZE_PROPERTIES: [(&str, &str); 2] = [
+    ("shown_frame_width", FILTERED_WIDTH_PROPERTY),
+    ("shown_frame_height", FILTERED_HEIGHT_PROPERTY),
+];
 // the source channel levels the page's meter draws, null while the meter is off
 const AUDIO_LEVELS_FIELD: &str = "audio_levels";
 
@@ -122,6 +133,7 @@ pub struct PreviewPlayer {
     drawn_overlay: Mutex<Option<OverlayDrawing>>,
     sent_rectangles: Mutex<Option<Vec<OverlayRectangle>>>,
     stereo_output: Mutex<player_controls::StereoMode>,
+    picture_filters: Mutex<Option<Vec<String>>>,
 }
 
 impl PreviewPlayer {
@@ -135,6 +147,7 @@ impl PreviewPlayer {
             drawn_overlay: Mutex::new(None),
             sent_rectangles: Mutex::new(None),
             stereo_output: Mutex::new(player_controls::StereoMode::default()),
+            picture_filters: Mutex::new(None),
         }
     }
 
@@ -144,8 +157,13 @@ impl PreviewPlayer {
     /// read stands until another one arrives.
     fn source_size(&self, player: &MpvRenderPlayer) -> Option<SourceSize> {
         let decode_scale = *self.decode_scale.lock().unwrap();
+        let read = if self.picture_filters_set() {
+            read_size(player, FILTERED_WIDTH_PROPERTY, FILTERED_HEIGHT_PROPERTY)
+        } else {
+            read_source_size(player, decode_scale)
+        };
         let mut remembered = self.source_size.lock().unwrap();
-        if let Some(size) = read_source_size(player, decode_scale) {
+        if let Some(size) = read {
             *remembered = Some(size);
         }
         *remembered
@@ -175,9 +193,15 @@ impl PreviewPlayer {
     /// Loading or stopping takes mpv's external subtitle tracks with it, so the
     /// track ids held here would name tracks that no longer exist, and the size
     /// held here would be another file's.
-    fn forget_loaded_file(&self) {
+    fn forget_loaded_file(&self, mpv: &MpvRenderPlayer) -> Result<(), String> {
         *self.subtitle_tracks.lock().unwrap() = SubtitleTracks::default();
         *self.source_size.lock().unwrap() = None;
+        // mpv keeps its video filters across loads
+        set_picture_filters(mpv, self, None)
+    }
+
+    fn picture_filters_set(&self) -> bool {
+        self.picture_filters.lock().unwrap().is_some()
     }
 }
 
@@ -263,7 +287,7 @@ pub fn preview_load(
 ) -> Result<(), String> {
     let keys = resolve_content_keys(content_keys)?;
     let player = state.player()?;
-    state.forget_loaded_file();
+    state.forget_loaded_file(player.mpv())?;
     send_decode_scale_to_grok(player, &state);
     player.load_source_with_packages(&file_path, keys, &other_packages)
 }
@@ -324,7 +348,7 @@ pub fn preview_frame_back_step(state: tauri::State<'_, PreviewPlayer>) -> Result
 #[tauri::command(async)]
 pub fn preview_stop(state: tauri::State<'_, PreviewPlayer>) -> Result<(), String> {
     let player = state.player()?;
-    state.forget_loaded_file();
+    state.forget_loaded_file(player.mpv())?;
     player.stop()
 }
 
@@ -370,6 +394,11 @@ fn player_metadata(player: &MpvRenderPlayer) -> Result<String, String> {
         .iter()
         .map(|(field, property)| (*field, json_number(player.get_property_f64(property).ok())))
         .collect();
+    fields.extend(
+        SHOWN_FRAME_SIZE_PROPERTIES
+            .iter()
+            .map(|(field, property)| (*field, json_number(player.get_property_f64(property).ok()))),
+    );
     fields.push((
         EOF_FIELD,
         json_bool(player.get_property_bool(EOF_PROPERTY).ok()),
@@ -389,7 +418,7 @@ pub fn preview_load_dcp(
 ) -> Result<(), String> {
     let keys = resolve_content_keys(content_keys)?;
     let player = state.player()?;
-    state.forget_loaded_file();
+    state.forget_loaded_file(player.mpv())?;
     send_decode_scale_to_grok(player, &state);
     player.load_package_dir(&dir_path, keys)
 }
@@ -444,7 +473,11 @@ fn grok_source_size(player: &GrokPlayer) -> Option<SourceSize> {
 /// picture and where it sits on the surface as they are now. The drawing already
 /// installed is remembered, so a poll that finds nothing moved sends nothing.
 fn apply_overlays(player: &MpvRenderPlayer, state: &PreviewPlayer) -> Result<(), String> {
-    let overlays = state.overlays.lock().unwrap();
+    let mut overlays = *state.overlays.lock().unwrap();
+    // the filtered frame has had the crop taken off already
+    if state.picture_filters_set() {
+        overlays.crop_visible = false;
+    }
     let mut drawn = state.drawn_overlay.lock().unwrap();
     if !overlays.any() && drawn.is_none() {
         return Ok(());
@@ -467,6 +500,52 @@ fn apply_overlays(player: &MpvRenderPlayer, state: &PreviewPlayer) -> Result<(),
     )?;
     *drawn = wanted;
     Ok(())
+}
+
+// the build's ffmpeg filters, to show the frame the build writes
+#[tauri::command(async)]
+pub fn preview_set_picture_filters(
+    filters: Option<Vec<String>>,
+    state: tauri::State<'_, PreviewPlayer>,
+) -> Result<(), String> {
+    let player = state.player()?;
+    if player.active() == Backend::Grok {
+        return match filters {
+            Some(_) => Err(NO_PICTURE_FILTERS_ON_GROK.to_string()),
+            None => Ok(()),
+        };
+    }
+    set_picture_filters(player.mpv(), &state, filters)?;
+    apply_overlays(player.mpv(), &state)
+}
+
+// grok has no filter chain
+#[tauri::command(async)]
+pub fn preview_takes_picture_filters(path: String) -> bool {
+    !GrokPlayer::accepts(Path::new(&path))
+}
+
+// an empty chain is a source already at the build's raster
+fn set_picture_filters(
+    player: &MpvRenderPlayer,
+    state: &PreviewPlayer,
+    filters: Option<Vec<String>>,
+) -> Result<(), String> {
+    let mut installed = state.picture_filters.lock().unwrap();
+    let wanted_graph = filters.as_ref().filter(|chain| !chain.is_empty());
+    let installed_graph = installed.as_ref().is_some_and(|chain| !chain.is_empty());
+    match wanted_graph {
+        Some(chain) => player.command(&["vf", "add", &picture_filter_entry(chain)])?,
+        None if installed_graph => player.command(&["vf", "remove", PICTURE_FILTERS_LABEL])?,
+        None => {}
+    }
+    *installed = filters;
+    Ok(())
+}
+
+// mpv reads everything between the brackets as one lavfi graph
+fn picture_filter_entry(chain: &[String]) -> String {
+    format!("{PICTURE_FILTERS_LABEL}:lavfi=[{}]", chain.join(","))
 }
 
 /// Where mpv put the picture on the surface, which it only knows once it has
@@ -849,6 +928,9 @@ mod level_meter_tests;
 #[cfg(test)]
 mod overlay_placement_tests;
 
+#[cfg(test)]
+mod picture_filters_tests;
+
 #[cfg(all(test, target_os = "linux"))]
 mod grok_presenter_tests;
 
@@ -1069,6 +1151,8 @@ mod tests {
                 preview_set_subtitle_file,
                 preview_set_subtitle_visibility,
                 preview_set_subtitle_language,
+                preview_set_picture_filters,
+                preview_takes_picture_filters,
             ]);
     }
 }

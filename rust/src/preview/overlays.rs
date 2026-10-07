@@ -97,7 +97,7 @@ const SMALLEST_MASK_BAND_PIXELS: f64 = 1.0;
 
 /// The picture size the container declares, which every drawing is measured
 /// against. Built only by reading it off the player, so it is never zero.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SourceSize {
     width: f64,
     height: f64,
@@ -130,7 +130,7 @@ pub struct OsdRectangle {
 }
 
 /// What the page asked to see. All off is the default, and draws nothing.
-#[derive(Default, Deserialize)]
+#[derive(Clone, Copy, Default, Deserialize)]
 pub struct PreviewOverlays {
     pub safe_area_percent: Option<u8>,
     pub aspect_mask: Option<f64>,

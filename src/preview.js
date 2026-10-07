@@ -243,6 +243,18 @@ export function setPreviewCrop(crop) {
   applyOverlays();
 }
 
+// ffmpeg filter strings run on the picture mpv plays, null plays the source as it is
+export function setPreviewPictureFilters(filters) {
+  return invoke('preview_set_picture_filters', { filters }).catch((e) => {
+    console.error('[preview] Failed to set picture filters:', e);
+  });
+}
+
+// false for a source the grok player plays
+export function previewTakesPictureFilters(path) {
+  return invoke('preview_takes_picture_filters', { path });
+}
+
 /// Render a subtitle file over playback as the bottom track, or null to drop it.
 /// Only what libass reads natively: SRT, ASS or SSA and WebVTT, so a wizard
 /// converts its subtitle XML to SRT first. The clip has to be loaded already.

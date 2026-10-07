@@ -198,6 +198,18 @@ moment where mpv reports none and the page sends the overlays again inside it.
 The crop is the one overlay the page gives in pixels, off each edge of the source
 picture, and it is drawn in those same pixels.
 
+`setPreviewPictureFilters(filters)` runs a list of ffmpeg filter strings on the
+picture mpv plays, as one lavfi graph under the `@picturefilters` label, so a
+wizard can show the frame its build writes: the crop, rotation, scale and the
+container with its bands. `null` takes the graph off, and loading or stopping
+takes it off too, so the wizard sends it again for each source. While it is set
+the overlays are measured against `video-out-params/w` and `h`, the filtered
+frame, and the crop overlay is not drawn, since the frame has the crop taken
+off already. The grok player has no filter chain and refuses a list.
+`previewTakesPictureFilters(path)` is false for a source grok would play. An app
+registers `preview_set_picture_filters` and `preview_takes_picture_filters`
+beside the other commands.
+
 `preview_get_metadata` installs the overlay again whenever the picture or the
 surface has moved under it, since nothing tells the page when either happens: a
 load, a resized window and a decode scale change all move it. The drawing
@@ -222,7 +234,9 @@ ids they had.
 `preview_get_metadata` carries the counters beside position and duration:
 `dropped_frames` (mpv `frame-drop-count`), `delayed_frames`
 (`vo-delayed-frame-count`), `cache_seconds` (`demuxer-cache-duration`),
-`decoder_fps` (`estimated-vf-fps`) and `container_fps` (`container-fps`). Each
+``decoder_fps` (`estimated-vf-fps`) and `container_fps` (`container-fps`), and
+`shown_frame_width` and `shown_frame_height` (`video-out-params/w` and `h`), the
+frame mpv shows after any picture filters. Each
 is null until the backend has a value for it, and grok leaves `cache_seconds`
 null always. The scrubber poll reads them, so the HUD costs no second timer.
 

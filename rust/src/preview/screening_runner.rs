@@ -459,7 +459,7 @@ struct PreviewRunnerPlayer<'a>(&'a PreviewPlayer);
 impl RunnerPlayer for PreviewRunnerPlayer<'_> {
     fn load(&self, source: &Path, options: SourceOptions) -> Result<(), String> {
         let player = self.0.player()?;
-        self.0.forget_loaded_file();
+        self.0.forget_loaded_file(player.mpv())?;
         super::send_decode_scale_to_grok(player, self.0);
         player.load_source_with_options(&source.display().to_string(), options)
     }
@@ -473,7 +473,7 @@ impl RunnerPlayer for PreviewRunnerPlayer<'_> {
 
     fn stop(&self) -> Result<(), String> {
         let player = self.0.player()?;
-        self.0.forget_loaded_file();
+        self.0.forget_loaded_file(player.mpv())?;
         player.stop()
     }
 
