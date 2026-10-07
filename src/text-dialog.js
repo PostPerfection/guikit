@@ -64,7 +64,10 @@ function buildDialog() {
   cancelButton.addEventListener('click', () => finish(null));
   dialog.addEventListener('cancel', () => finish(null));
   input.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') finish(input.value.trim());
+    if (event.key !== 'Enter') return;
+    // focus goes back to the opening button, which would take this Enter as a click
+    event.preventDefault();
+    finish(input.value.trim());
   });
 
   document.body.appendChild(dialog);

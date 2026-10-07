@@ -145,9 +145,12 @@ test('Enter in the field answers the trimmed text', async () => {
   input.value = TYPED;
 
   bridge.forgetInvocations();
-  input.handlers.keydown({ key: 'Enter' });
+  let defaultPrevented = false;
+  input.handlers.keydown({ key: 'Enter', preventDefault: () => (defaultPrevented = true) });
   assert.equal(await asked, TYPED.trim());
   assert.equal(dialog.open, false);
+  // otherwise the button that opened the dialog takes the same Enter and opens it again
+  assert.equal(defaultPrevented, true);
   assert.equal(lastSurfaceVisibility(), true);
 });
 
