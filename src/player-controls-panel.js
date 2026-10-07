@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
-import { watchPreviewSource } from './preview.js';
+import { watchPreviewAudioLevels, watchPreviewSource } from './preview.js';
+import { createLevelMeter } from './level-meter.js';
 import {
   DISPLAY_PROFILE_COMMAND,
   displayProfileText,
@@ -88,6 +89,11 @@ const PANEL_MARKUP = `
       <input type="color" id="player-control-subtitle-colour">
     </div>
   </fieldset>
+  <div class="preview-controls">
+    <span class="preview-controls-label">Meter</span>
+    <label><input type="checkbox" id="player-control-level-meter"> Level meter</label>
+  </div>
+  <div id="player-control-level-meter-bars" class="level-meter" hidden></div>
   <p id="player-control-error" class="player-controls-error" hidden></p>`;
 
 function element(id) {
@@ -142,6 +148,8 @@ function panelFields() {
     subtitleOffsetPercent: element('player-control-subtitle-offset'),
     subtitleColourOverridden: element('player-control-subtitle-colour-overridden'),
     subtitleColour: element('player-control-subtitle-colour'),
+    levelMeter: element('player-control-level-meter'),
+    levelMeterBars: element('player-control-level-meter-bars'),
     error: element('player-control-error'),
   };
 }
@@ -175,7 +183,7 @@ async function fillSoundDevices(fields, savedDevice) {
 }
 
 function fillFields(fields, controls) {
-  const { playerPicture, playerSound, playerSubtitles, playerDisplayProfile, playerStereo } = controls;
+  const { playerPicture, playerSound, playerSubtitles, playerDisplayProfile, playerStereo, playerLevelMeter } = controls;
   fields.brightness.value = playerPicture.brightness;
   fields.maskTop.value = playerPicture.masksPercent.top;
   fields.maskBottom.value = playerPicture.masksPercent.bottom;
@@ -189,6 +197,7 @@ function fillFields(fields, controls) {
   fields.subtitleOffsetPercent.value = playerSubtitles.offsetPercent;
   fields.subtitleColourOverridden.checked = playerSubtitles.colour !== null;
   fields.subtitleColour.value = playerSubtitles.colour ?? DEFAULT_SUBTITLE_COLOUR;
+  fields.levelMeter.checked = playerLevelMeter;
   showBrightness(fields);
   enableSubtitleColour(fields);
 }
@@ -209,6 +218,7 @@ function controlsFromFields(fields) {
     subtitleColour: fields.subtitleColour.value,
     displayProfile: fields.profile.dataset.path,
     stereo: fields.stereo.value,
+    levelMeter: fields.levelMeter.checked,
   });
 }
 
@@ -257,6 +267,9 @@ export async function initPlayerControlsPanel({ preferences, save }) {
 
   await applyChanges();
   fields.all.addEventListener('change', applyAndSave);
+  // outside the fieldset the mpv reason disables, the meter reads mpv files too
+  fields.levelMeter.addEventListener('change', applyAndSave);
+  watchPreviewAudioLevels(createLevelMeter(fields.levelMeterBars));
   fields.brightness.addEventListener('input', () => {
     showBrightness(fields);
     applyChanges();

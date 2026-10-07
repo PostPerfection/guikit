@@ -29,6 +29,7 @@ const FIELDS = {
   subtitleColour: '#ffcc00',
   displayProfile: '',
   stereo: 'sideBySide',
+  levelMeter: false,
 };
 
 test('a preferences file without the controls gives the player defaults, and stored ones are kept', () => {
@@ -39,6 +40,7 @@ test('a preferences file without the controls gives the player defaults, and sto
     playerSubtitles: { offsetPercent: 0, colour: null },
     playerDisplayProfile: null,
     playerStereo: 'leftEye',
+    playerLevelMeter: false,
   });
 
   const stored = playerControlsFromPreferences({ gpu: true, playerDisplayProfile: PROFILE, playerStereo: 'rightEye' });
@@ -54,6 +56,7 @@ test('the fields read as the controls the commands take', () => {
     playerSubtitles: { offsetPercent: 8, colour: null },
     playerDisplayProfile: null,
     playerStereo: 'sideBySide',
+    playerLevelMeter: false,
   });
 
   const overridden = playerControlsFromFields({ ...FIELDS, subtitleColourOverridden: true, displayProfile: PROFILE });
@@ -73,12 +76,16 @@ test('nothing applied yet sends every control, after that only what changed', ()
       'preview_set_subtitle_presentation',
       'preview_set_stereo_output',
       DISPLAY_PROFILE_COMMAND,
+      'preview_set_level_meter',
     ],
   );
 
   const delayed = playerControlsFromFields({ ...FIELDS, soundDelayMilliseconds: '120' });
   assert.deepEqual(playerControlCommands(controls, delayed), [['preview_set_sound_delay', { milliseconds: 120 }]]);
   assert.deepEqual(playerControlCommands(controls, controls), []);
+
+  const metered = playerControlsFromFields({ ...FIELDS, levelMeter: true });
+  assert.deepEqual(playerControlCommands(controls, metered), [['preview_set_level_meter', { enabled: true }]]);
 });
 
 test('a saved sound device the system no longer lists stays a choice', () => {

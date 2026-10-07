@@ -298,6 +298,20 @@ pub fn preview_sound_devices() -> Result<Vec<String>, String> {
     sound_output_device_names()
 }
 
+// set on both players, so whichever plays the next load is metered
+pub(super) fn set_level_meter(player: &Player, enabled: bool) -> Result<(), String> {
+    player.grok().set_level_meter(enabled);
+    player.mpv().set_level_meter(enabled)
+}
+
+#[tauri::command(async)]
+pub fn preview_set_level_meter(
+    enabled: bool,
+    state: tauri::State<'_, PreviewPlayer>,
+) -> Result<(), String> {
+    set_level_meter(state.player()?, enabled)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

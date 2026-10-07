@@ -741,6 +741,90 @@ body {
   color: var(--error, #dc2626);
 }
 
+/* Level meter: a bar per source channel, RMS as the body and the held peak as a line. */
+.level-meter {
+  --level-meter-height: 96px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 0 12px 8px;
+  font-size: 10px;
+}
+
+.level-meter[hidden] {
+  display: none;
+}
+
+.level-meter-clip {
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.level-meter-clip-lit {
+  background: var(--error, #dc2626);
+  border-color: var(--error, #dc2626);
+  color: #fff;
+}
+
+.level-meter-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.level-meter-scale {
+  position: relative;
+  width: 24px;
+  height: var(--level-meter-height);
+}
+
+.level-meter-tick {
+  position: absolute;
+  right: 0;
+  line-height: 1;
+  transform: translateY(50%);
+}
+
+.level-meter-channel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 24px;
+}
+
+.level-meter-bar {
+  position: relative;
+  width: 10px;
+  height: var(--level-meter-height);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--surface-alt);
+}
+
+.level-meter-rms {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background: var(--accent);
+}
+
+.level-meter-peak {
+  position: absolute;
+  right: 0;
+  left: 0;
+  height: 2px;
+  transform: translateY(50%);
+  background: var(--text);
+}
+
+.level-meter-label {
+  white-space: nowrap;
+}
+
 /* Video is painted over this element by the app, not by the page. */
 .preview-surface {
   height: 360px;

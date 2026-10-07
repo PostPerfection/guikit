@@ -14,6 +14,7 @@ const DEFAULT_PLAYER_CONTROLS = {
   playerSubtitles: { offsetPercent: 0, colour: null },
   playerDisplayProfile: null,
   playerStereo: 'leftEye',
+  playerLevelMeter: false,
 };
 const PLAYER_CONTROL_KEYS = Object.keys(DEFAULT_PLAYER_CONTROLS);
 
@@ -52,6 +53,7 @@ export function playerControlsFromFields({
   subtitleColour,
   displayProfile,
   stereo,
+  levelMeter,
 }) {
   return {
     playerPicture: {
@@ -75,6 +77,7 @@ export function playerControlsFromFields({
     },
     playerDisplayProfile: displayProfile || null,
     playerStereo: stereo,
+    playerLevelMeter: levelMeter,
   };
 }
 
@@ -106,6 +109,9 @@ export function playerControlCommands(applied, settings) {
   }
   if (changed((controls) => controls.playerDisplayProfile)) {
     commands.push([DISPLAY_PROFILE_COMMAND, { profile: settings.playerDisplayProfile }]);
+  }
+  if (changed((controls) => controls.playerLevelMeter)) {
+    commands.push(['preview_set_level_meter', { enabled: settings.playerLevelMeter }]);
   }
   return commands;
 }

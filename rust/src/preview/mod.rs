@@ -12,6 +12,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use postkit::audio_levels::ChannelLevel;
 use postkit::content_keys::ContentKeys;
 use postkit::grok_player::{
     DecodeScale as GrokDecodeScale, GrokPlayer, SubtitleSlot as GrokSubtitleSlot,
@@ -83,6 +84,8 @@ const HUD_COUNTER_PROPERTIES: [(&str, &str); 5] = [
 /// postkit's player starts mpv with `keep-open` on.
 const EOF_FIELD: &str = "eof";
 const EOF_PROPERTY: &str = "eof-reached";
+// the source channel levels the page's meter draws, null while the meter is off
+const AUDIO_LEVELS_FIELD: &str = "audio_levels";
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -348,10 +351,18 @@ pub fn preview_get_metadata(state: tauri::State<'_, PreviewPlayer>) -> Result<St
 fn poll_metadata(player: &Player, state: &PreviewPlayer) -> Result<String, String> {
     if player.active() == Backend::Grok {
         apply_grok_overlays(player.grok(), state);
-        return Ok(player.grok().metadata_json());
+        let levels = audio_levels_json(player.grok().audio_levels())?;
+        return with_extra_fields(
+            &player.grok().metadata_json(),
+            &[(AUDIO_LEVELS_FIELD, levels)],
+        );
     }
     apply_overlays(player.mpv(), state)?;
     player_metadata(player.mpv())
+}
+
+fn audio_levels_json(levels: Option<Vec<ChannelLevel>>) -> Result<String, String> {
+    serde_json::to_string(&levels).map_err(|error| error.to_string())
 }
 
 fn player_metadata(player: &MpvRenderPlayer) -> Result<String, String> {
@@ -362,6 +373,10 @@ fn player_metadata(player: &MpvRenderPlayer) -> Result<String, String> {
     fields.push((
         EOF_FIELD,
         json_bool(player.get_property_bool(EOF_PROPERTY).ok()),
+    ));
+    fields.push((
+        AUDIO_LEVELS_FIELD,
+        audio_levels_json(player.audio_levels())?,
     ));
     with_extra_fields(&player.get_metadata()?, &fields)
 }
@@ -827,6 +842,9 @@ mod stereo_output_tests;
 
 #[cfg(test)]
 mod loaded_picture_tests;
+
+#[cfg(test)]
+mod level_meter_tests;
 
 #[cfg(test)]
 mod overlay_placement_tests;

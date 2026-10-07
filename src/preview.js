@@ -12,6 +12,7 @@ let metadataWatcher = () => {};
 let loadWatcher = () => {};
 let shownWatcher = () => {};
 let sourceWatcher = () => {};
+let audioLevelsWatcher = () => {};
 let polledSource = null;
 let endReported = false;
 // set while the page draws something the native surface would otherwise cover
@@ -101,6 +102,11 @@ export function watchPreviewShown(watcher) {
 // what the player has loaded, one watcher at a time, each time the polled source or file name changes
 export function watchPreviewSource(watcher) {
   sourceWatcher = watcher;
+}
+
+// the poll's audio_levels, one watcher at a time, null while the level meter is off or nothing sounds
+export function watchPreviewAudioLevels(watcher) {
+  audioLevelsWatcher = watcher;
 }
 
 export function isPreviewVisible() {
@@ -580,6 +586,7 @@ function startScrubberPolling() {
       lastPollError = '';
       updateHud(meta);
       metadataWatcher(meta);
+      audioLevelsWatcher(meta.audio_levels ?? null);
       reportPolledSource(meta.source ?? meta.filename ?? null);
       // at the end nothing is previewing any more, so the Preview button comes back
       if (meta.eof && !endReported) {
