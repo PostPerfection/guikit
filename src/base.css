@@ -774,6 +774,17 @@ body {
   min-height: 0;
 }
 
+/* The native video view is stacked over the page, so idle controls leave the layout instead of sitting under it. */
+body.preview-fullscreen-hud-hidden .preview-panel.preview-fullscreen > :not(.preview-surface),
+body.preview-fullscreen-hud-hidden .main-area:has(> .preview-panel.preview-fullscreen) > .timeline-transport {
+  display: none;
+}
+
+body.preview-fullscreen-hud-hidden,
+body.preview-fullscreen-hud-hidden * {
+  cursor: none;
+}
+
 /* Playlist: the queued packages, which playlist.js renders into a container the
    app supplies. */
 .playlist {

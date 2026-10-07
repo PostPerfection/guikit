@@ -1,6 +1,7 @@
 // Preview player - uses mpv via IPC for high-performance video playback
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { FULLSCREEN_HUD_IDLE_TIMEOUT_MS, fullscreenHudStaysShown, pointIsInsideAnyRectangle } from './fullscreen-hud.js';
 
 let scrubberInterval = null;
 let isSeeking = false;
@@ -15,9 +16,19 @@ let polledSource = null;
 let endReported = false;
 // set while the page draws something the native surface would otherwise cover
 let surfaceCovered = false;
+let previewPaused = false;
+// in page coordinates, null once a resize has moved the page under the pointer
+let lastPointer = null;
+let fullscreenHudTimer = null;
 
 const OVERLAY_CONTROLS_ID = 'preview-controls';
 const FULLSCREEN_CLASS = 'preview-fullscreen';
+const LEAVE_FULLSCREEN_KEY = 'Escape';
+// on body, hides the cursor along with the controls
+const FULLSCREEN_HUD_HIDDEN_CLASS = 'preview-fullscreen-hud-hidden';
+// must match the elements the stylesheet hides for FULLSCREEN_HUD_HIDDEN_CLASS
+const FULLSCREEN_HUD_SELECTOR =
+  '.preview-panel.preview-fullscreen > :not(.preview-surface), .main-area:has(> .preview-panel.preview-fullscreen) > .timeline-transport';
 
 const PREVIEW_PANEL_DEFAULT_TITLE = 'Preview';
 const SCRUBBER_IDLE_CLASS = 'timeline-scrubber-idle';
@@ -291,7 +302,7 @@ async function initEmbeddedSurface() {
     ?.addEventListener('click', () => setPreviewFullscreen(!isPreviewFullscreen()));
   // on window so the shortcuts overlay sees Escape first and can claim it
   window.addEventListener('keydown', (event) => {
-    if (event.key !== 'Escape' || event.defaultPrevented || !isPreviewFullscreen()) return;
+    if (event.key !== LEAVE_FULLSCREEN_KEY || event.defaultPrevented || !isPreviewFullscreen()) return;
     event.preventDefault();
     setPreviewFullscreen(false);
   });
@@ -356,10 +367,70 @@ function isPreviewFullscreen() {
 
 function setPreviewFullscreen(fullscreen) {
   document.getElementById('preview-panel')?.classList.toggle(FULLSCREEN_CLASS, fullscreen);
+  if (fullscreen) startFullscreenHud();
+  else stopFullscreenHud();
   getCurrentWindow()
     .setFullscreen(fullscreen)
     .catch((e) => console.error('[preview] Failed to set full screen:', e));
   reportSurface();
+}
+
+function setFullscreenHudHidden(hidden) {
+  document.body.classList.toggle(FULLSCREEN_HUD_HIDDEN_CLASS, hidden);
+  reportSurface();
+}
+
+function showFullscreenHud() {
+  clearTimeout(fullscreenHudTimer);
+  fullscreenHudTimer = setTimeout(hideFullscreenHudUnlessHeld, FULLSCREEN_HUD_IDLE_TIMEOUT_MS);
+  if (document.body.classList.contains(FULLSCREEN_HUD_HIDDEN_CLASS)) setFullscreenHudHidden(false);
+}
+
+function pointerIsOverFullscreenHud() {
+  if (!lastPointer) return false;
+  const rectangles = [...document.querySelectorAll(FULLSCREEN_HUD_SELECTOR)].map((element) =>
+    element.getBoundingClientRect(),
+  );
+  return pointIsInsideAnyRectangle(lastPointer, rectangles);
+}
+
+function hideFullscreenHudUnlessHeld() {
+  if (fullscreenHudStaysShown({ paused: previewPaused, pointerOverHud: pointerIsOverFullscreenHud() })) {
+    fullscreenHudTimer = setTimeout(hideFullscreenHudUnlessHeld, FULLSCREEN_HUD_IDLE_TIMEOUT_MS);
+    return;
+  }
+  setFullscreenHudHidden(true);
+}
+
+function showFullscreenHudAtPointer(event) {
+  lastPointer = { x: event.clientX, y: event.clientY };
+  showFullscreenHud();
+}
+
+function showFullscreenHudOnKey(event) {
+  if (event.key !== LEAVE_FULLSCREEN_KEY) showFullscreenHud();
+}
+
+function forgetPointer() {
+  lastPointer = null;
+}
+
+const FULLSCREEN_HUD_LISTENERS = [
+  ['mousemove', showFullscreenHudAtPointer],
+  ['keydown', showFullscreenHudOnKey],
+  ['resize', forgetPointer],
+];
+
+function startFullscreenHud() {
+  for (const [name, handler] of FULLSCREEN_HUD_LISTENERS) window.addEventListener(name, handler);
+  showFullscreenHud();
+}
+
+function stopFullscreenHud() {
+  for (const [name, handler] of FULLSCREEN_HUD_LISTENERS) window.removeEventListener(name, handler);
+  clearTimeout(fullscreenHudTimer);
+  lastPointer = null;
+  document.body.classList.remove(FULLSCREEN_HUD_HIDDEN_CLASS);
 }
 
 /// Take the picture off the screen while the page draws over it, playback carries
@@ -521,6 +592,7 @@ function startScrubberPolling() {
         updateTimecode(meta.position, meta.duration, meta.container_fps);
       }
       updatePlayBtn(meta.paused);
+      previewPaused = !!meta.paused;
     } catch (error) {
       const text = String(error);
       if (text !== lastPollError) {
