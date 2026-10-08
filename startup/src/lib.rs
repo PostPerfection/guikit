@@ -97,6 +97,66 @@ fn should_force_shared_memory_frames(
             .all(|name| environment_variable(name).is_none())
 }
 
+#[cfg(target_os = "linux")]
+const DRM_NODE_BOOT_DISPLAY_FILE: &str = "device/boot_vga";
+#[cfg(target_os = "linux")]
+const BOOT_DISPLAY: &str = "1";
+#[cfg(target_os = "linux")]
+const EGL_VENDOR_FILES_VARIABLE: &str = "__EGL_VENDOR_LIBRARY_FILENAMES";
+#[cfg(target_os = "linux")]
+const EGL_VENDOR_DIRECTORIES: [&str; 2] =
+    ["/etc/glvnd/egl_vendor.d", "/usr/share/glvnd/egl_vendor.d"];
+#[cfg(target_os = "linux")]
+const MESA_EGL_VENDOR_FILE: &str = "50_mesa.json";
+
+// NVIDIA's EGL leaks a sync file per WebKit frame until the page runs out of files and hangs
+#[cfg(target_os = "linux")]
+pub fn render_webkit_on_display_gpu() {
+    let drm_directory = std::path::Path::new(DRM_DEVICES_DIRECTORY);
+    let vendor_directories = EGL_VENDOR_DIRECTORIES.map(std::path::Path::new);
+    if let Some(mesa_vendor_file) =
+        mesa_egl_vendor_file_for_webkit(drm_directory, &vendor_directories, |name| {
+            std::env::var_os(name)
+        })
+    {
+        std::env::set_var(EGL_VENDOR_FILES_VARIABLE, mesa_vendor_file);
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn mesa_egl_vendor_file_for_webkit(
+    drm_directory: &std::path::Path,
+    vendor_directories: &[&std::path::Path],
+    environment_variable: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> Option<std::path::PathBuf> {
+    let display_on_another_gpu =
+        display_gpu_vendor(drm_directory).is_some_and(|vendor| vendor != NVIDIA_PCI_VENDOR_ID);
+    let applies = environment_variable(EGL_VENDOR_FILES_VARIABLE).is_none()
+        && nvidia_gpu_present(drm_directory)
+        && display_on_another_gpu;
+    if !applies {
+        return None;
+    }
+    vendor_directories
+        .iter()
+        .map(|directory| directory.join(MESA_EGL_VENDOR_FILE))
+        .find(|file| file.is_file())
+}
+
+#[cfg(target_os = "linux")]
+fn display_gpu_vendor(drm_directory: &std::path::Path) -> Option<String> {
+    let nodes = std::fs::read_dir(drm_directory).ok()?;
+    nodes.flatten().find_map(|node| {
+        let boot_display =
+            std::fs::read_to_string(node.path().join(DRM_NODE_BOOT_DISPLAY_FILE)).ok()?;
+        if boot_display.trim() != BOOT_DISPLAY {
+            return None;
+        }
+        let vendor = std::fs::read_to_string(node.path().join(DRM_NODE_VENDOR_FILE)).ok()?;
+        Some(vendor.trim().to_string())
+    })
+}
+
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
@@ -112,6 +172,88 @@ mod tests {
         if let Some(vendor) = vendor {
             std::fs::write(device.join("vendor"), format!("{vendor}\n")).unwrap();
         }
+    }
+
+    fn mark_boot_display(drm_directory: &Path, node: &str) {
+        std::fs::write(
+            drm_directory.join(node).join(DRM_NODE_BOOT_DISPLAY_FILE),
+            "1\n",
+        )
+        .unwrap();
+    }
+
+    fn vendor_directory_with_mesa() -> tempfile::TempDir {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join(MESA_EGL_VENDOR_FILE), "{}").unwrap();
+        directory
+    }
+
+    fn hybrid_drm_directory(display_vendor: &str) -> tempfile::TempDir {
+        let drm_directory = tempfile::tempdir().unwrap();
+        add_drm_node(drm_directory.path(), "card0", Some(NVIDIA_PCI_VENDOR_ID));
+        add_drm_node(drm_directory.path(), "card1", Some(AMD_PCI_VENDOR_ID));
+        let display_node = if display_vendor == NVIDIA_PCI_VENDOR_ID {
+            "card0"
+        } else {
+            "card1"
+        };
+        mark_boot_display(drm_directory.path(), display_node);
+        drm_directory
+    }
+
+    #[test]
+    fn an_amd_display_beside_an_nvidia_gpu_puts_webkit_on_mesa() {
+        let drm_directory = hybrid_drm_directory(AMD_PCI_VENDOR_ID);
+        let vendors = vendor_directory_with_mesa();
+
+        let chosen = mesa_egl_vendor_file_for_webkit(
+            drm_directory.path(),
+            &[vendors.path()],
+            no_environment,
+        );
+
+        assert_eq!(chosen, Some(vendors.path().join(MESA_EGL_VENDOR_FILE)));
+    }
+
+    #[test]
+    fn an_nvidia_display_keeps_nvidia_egl() {
+        let drm_directory = hybrid_drm_directory(NVIDIA_PCI_VENDOR_ID);
+        let vendors = vendor_directory_with_mesa();
+
+        assert_eq!(
+            mesa_egl_vendor_file_for_webkit(
+                drm_directory.path(),
+                &[vendors.path()],
+                no_environment
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn an_egl_vendor_choice_the_user_made_wins() {
+        let drm_directory = hybrid_drm_directory(AMD_PCI_VENDOR_ID);
+        let vendors = vendor_directory_with_mesa();
+        let environment =
+            HashMap::from([(EGL_VENDOR_FILES_VARIABLE, OsString::from("/elsewhere.json"))]);
+
+        let chosen =
+            mesa_egl_vendor_file_for_webkit(drm_directory.path(), &[vendors.path()], |lookup| {
+                environment.get(lookup).cloned()
+            });
+
+        assert_eq!(chosen, None);
+    }
+
+    #[test]
+    fn no_mesa_vendor_file_leaves_egl_alone() {
+        let drm_directory = hybrid_drm_directory(AMD_PCI_VENDOR_ID);
+        let empty = tempfile::tempdir().unwrap();
+
+        assert_eq!(
+            mesa_egl_vendor_file_for_webkit(drm_directory.path(), &[empty.path()], no_environment),
+            None
+        );
     }
 
     fn no_environment(_name: &str) -> Option<OsString> {
