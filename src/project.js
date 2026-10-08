@@ -174,7 +174,7 @@ export function projectPathBeside(packagePath) {
   return `${packagePath.replace(/[\\/]+$/, '')}.${extension()}`;
 }
 
-function packagePathBeside(projectPath) {
+export function packagePathBeside(projectPath) {
   return projectPath.slice(0, -(extension().length + 1));
 }
 
@@ -276,7 +276,7 @@ export async function openProjectFile(path) {
   }
   const upgraded = projectFile.version < configuration.projectFileVersion;
   const relocation = await relocateMissingPaths(projectFile.form, folderOf(path), configuration.outputFields, configuration.textFields);
-  const notRestored = (await configuration.restore(relocation.form)) || [];
+  const notRestored = (await configuration.restore(relocation.form, path)) || [];
   currentProjectPath = path;
   restoredFromDraft = false;
   projectFileForm = upgraded ? null : JSON.stringify(configuration.serialize());
@@ -409,7 +409,7 @@ async function restoreDraft() {
   const projectPath = typeof draftOf === 'string' ? draftOf : null;
   const projectFolder = projectPath ? folderOf(projectPath) : null;
   const relocation = await relocateMissingPaths(form, projectFolder, configuration.outputFields, configuration.textFields);
-  const notRestored = (await configuration.restore(relocation.form)) || [];
+  const notRestored = (await configuration.restore(relocation.form, projectPath)) || [];
   currentProjectPath = projectPath;
   restoredFromDraft = true;
   projectFileForm = null;
@@ -521,7 +521,7 @@ export function removeRecentProject(path) {
 }
 
 // the fs scope refuses paths under a dot folder, which reads here as not there
-async function existsInScope(path) {
+export async function existsInScope(path) {
   try {
     return await exists(path);
   } catch {
