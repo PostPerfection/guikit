@@ -1,4 +1,5 @@
 :root {
+  --timeline-track-label-width: 80px;
   --bg: #0f0f14;
   --surface: #1a1a24;
   --surface-alt: #222233;
@@ -994,7 +995,7 @@ body.preview-fullscreen-hud-hidden * {
 }
 
 .timeline-track-label {
-  width: 80px;
+  width: var(--timeline-track-label-width);
   padding: 8px 12px;
   font-size: 11px;
   font-weight: 500;
@@ -1052,7 +1053,9 @@ body.preview-fullscreen-hud-hidden * {
 }
 
 /* Timeline ruler */
+/* starts where the track contents start, so a frame sits at the same x in both */
 .timeline-ruler {
+  margin-left: var(--timeline-track-label-width);
   height: 28px;
   background: var(--surface-alt);
   border-bottom: 1px solid var(--border);
