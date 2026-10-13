@@ -1,5 +1,18 @@
+import { initAccessKeys, pressAccessKey, handleKeyboardScopeKey, openBrowseDialog, titleWithAccessKey } from "./access-keys.js";
+
 const OVERLAY_BINDING = "Ctrl+K";
 const OVERLAY_LABEL = "Show keyboard shortcuts";
+const SUBMIT_BINDING = "Ctrl+Enter";
+const BROWSE_BINDING = "Alt+ArrowDown";
+const LEAVE_FIELD_KEY = "Escape";
+const FIXED_SHORTCUTS = [
+  { label: OVERLAY_LABEL, binding: OVERLAY_BINDING },
+  { label: "Run the action of the focused section", binding: SUBMIT_BINDING },
+  { label: "Press the button with that underlined letter", binding: "Alt+letter" },
+  { label: "Browse for the focused path field", binding: BROWSE_BINDING },
+  { label: "Leave the text field", binding: LEAVE_FIELD_KEY },
+];
+const ALT_LETTER_BINDING = /^Alt\+[A-Z]$/;
 const OVERLAY_CATEGORY = "Help";
 const CAPTURE_PROMPT = "press new shortcut";
 const UNBOUND_LABEL = "unassigned";
@@ -118,20 +131,34 @@ button.shortcuts-binding:hover {
 
 let storageKey = "";
 let actions = [];
-let onChange = null;
 let overrides = {};
 let overlay = null;
 let listElement = null;
 let warningElement = null;
 let capturingId = null;
 
+// an action with a buttonId clicks that button
 export function initShortcuts(config) {
   storageKey = config.storageKey;
-  actions = config.actions;
-  onChange = config.onChange || null;
+  actions = config.actions.map((action) => (action.buttonId && !action.handler ? { ...action, handler: () => buttonOf(action)?.click() } : action));
   overrides = loadOverrides();
   buildOverlay();
+  initAccessKeys();
+  refreshButtonTooltips();
   document.addEventListener("keydown", onKeyDown);
+}
+
+function buttonOf(action) {
+  return action.button || (action.buttonId ? document.getElementById(action.buttonId) : null);
+}
+
+function refreshButtonTooltips() {
+  for (const action of actions) {
+    const button = buttonOf(action);
+    if (!button) continue;
+    const binding = bindingOf(action);
+    button.title = titleWithAccessKey(button, binding ? `${action.label} (${binding})` : action.label);
+  }
 }
 
 export function getBinding(id) {
@@ -163,14 +190,22 @@ function defaultBinding(action) {
   return action.binding || null;
 }
 
+// a binding you chose wins over a default that came later and clashes with it
+export function effectiveBinding(action, overrides) {
+  if (action.id in overrides) return overrides[action.id];
+  const binding = action.binding || null;
+  const claimed = Object.entries(overrides).some(([id, chosen]) => id !== action.id && chosen === binding);
+  return claimed ? null : binding;
+}
+
 function bindingOf(action) {
-  return action.id in overrides ? overrides[action.id] : defaultBinding(action);
+  return effectiveBinding(action, overrides);
 }
 
 function commitChange() {
   saveOverrides();
   renderList();
-  if (onChange) onChange();
+  refreshButtonTooltips();
 }
 
 function setBinding(action, binding) {
@@ -204,9 +239,17 @@ function isTextEntry(target) {
 }
 
 function conflictLabel(binding, exceptId) {
-  if (binding === OVERLAY_BINDING) return OVERLAY_LABEL;
+  const fixed = FIXED_SHORTCUTS.find((shortcut) => shortcut.binding === binding);
+  if (fixed) return fixed.label;
+  if (ALT_LETTER_BINDING.test(binding)) return "the underlined letters";
   const clash = actions.find((action) => action.id !== exceptId && bindingOf(action) === binding);
   return clash ? clash.label : null;
+}
+
+function submitFocusedSection() {
+  const section = document.activeElement?.closest("[data-submit]");
+  const button = section && document.getElementById(section.dataset.submit);
+  if (button && !button.disabled) button.click();
 }
 
 function onKeyDown(event) {
@@ -214,13 +257,32 @@ function onKeyDown(event) {
     handleOverlayKey(event);
     return;
   }
-  if (isTextEntry(event.target)) return;
-
+  if (event.defaultPrevented) return;
   const binding = bindingFromEvent(event);
   if (!binding) return;
+  const typing = isTextEntry(event.target);
+  if (binding === BROWSE_BINDING && typing && openBrowseDialog(event.target)) {
+    event.preventDefault();
+    return;
+  }
+  if (handleKeyboardScopeKey(event)) return;
+  if (binding === LEAVE_FIELD_KEY) {
+    if (!typing) return;
+    event.preventDefault();
+    event.target.blur();
+    return;
+  }
+  // a bare key or an Alt letter would land in the text being typed
+  if (typing && !binding.startsWith("Ctrl+")) return;
+
   if (binding === OVERLAY_BINDING) {
     event.preventDefault();
     openOverlay();
+    return;
+  }
+  if (binding === SUBMIT_BINDING) {
+    event.preventDefault();
+    submitFocusedSection();
     return;
   }
   for (const action of actions) {
@@ -230,6 +292,7 @@ function onKeyDown(event) {
     action.handler();
     return;
   }
+  pressAccessKey(event);
 }
 
 function handleOverlayKey(event) {
@@ -337,7 +400,7 @@ function renderList() {
   for (const [category, members] of groups) {
     appendGroup(category, members.map(actionRow));
   }
-  appendGroup(OVERLAY_CATEGORY, [overlayRow()]);
+  appendGroup(OVERLAY_CATEGORY, FIXED_SHORTCUTS.map(fixedRow));
 }
 
 function appendGroup(category, rows) {
@@ -379,17 +442,17 @@ function actionRow(action) {
   return row;
 }
 
-function overlayRow() {
+function fixedRow(shortcut) {
   const row = document.createElement("div");
   row.className = "shortcuts-row";
 
   const label = document.createElement("span");
   label.className = "shortcuts-label";
-  label.textContent = OVERLAY_LABEL;
+  label.textContent = shortcut.label;
 
   const binding = document.createElement("span");
   binding.className = "shortcuts-binding";
-  binding.textContent = OVERLAY_BINDING;
+  binding.textContent = shortcut.binding;
 
   row.append(label, binding);
   return row;

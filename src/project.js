@@ -5,6 +5,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { escapeHtml } from './html.js';
+import { focusFirstMenuItem } from './access-keys.js';
 
 const FIRST_PROJECT_FILE_VERSION = 1;
 
@@ -484,6 +485,8 @@ let projectMenuCollapsed = true;
 function setProjectMenuCollapsed(collapsed) {
   projectMenuCollapsed = collapsed;
   applyProjectMenuCollapsed();
+  const menu = document.getElementById(PROJECT_MENU_ID);
+  if (!collapsed && menu) focusFirstMenuItem(menu);
 }
 
 function placeProjectMenuUnderButton(button, menu) {
@@ -569,7 +572,7 @@ function recentRowHtml(entry, packageIsBeside) {
     : `
       <button class="recent-forget" title="Remove this project from the list">✕</button>`;
   return `
-    <div class="recent-item" data-path="${path}" data-package-path="${packagePath}" title="${path}">
+    <div class="recent-item" role="menuitem" tabindex="0" data-path="${path}" data-package-path="${packagePath}" title="${path}">
       <div class="recent-item-text">
         <span class="recent-title">${title}</span>
         <span class="recent-path">${path}</span>

@@ -11,6 +11,8 @@ Shared code for the PostPerfection wizard GUIs, frontend and native.
 - `src/builds-in-flight.js`: the titles of the builds a window has queued or running
 - `src/drag-label.js`: a one line asset name as the drag image in place of the whole row
 - `src/shortcuts.js`: keyboard shortcut handling and the shortcuts dialog
+- `src/access-keys.js`: the Alt+letter on each view button, the letters actions in both apps share, and the keys an open menu or dialog takes
+- `src/shared-shortcuts.js`: the Ctrl chords both apps bind, the finished-build row and Ctrl+1 to Ctrl+9 in sidebar order
 - `src/project.js`: project files (save, save as, open), the unsaved draft, the recent list and the window title
 - `src/asset-strip-resize.js`: the drag handle under the project view's asset strip
 - `src/base.css`: the shared stylesheet

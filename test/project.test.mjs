@@ -38,6 +38,9 @@ function fakeElement() {
     querySelectorAll() {
       return [];
     },
+    querySelector() {
+      return null;
+    },
   };
 }
 

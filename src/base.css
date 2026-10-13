@@ -1393,6 +1393,10 @@ body.preview-fullscreen-hud-hidden * {
 .project-menu-item:hover {
   background: var(--surface-hover);
 }
+.project-menu [role="menuitem"]:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
 .recent-list {
   display: flex;
   flex-direction: column;
@@ -1615,3 +1619,10 @@ body.preview-fullscreen-hud-hidden * {
   clear: both;
 }
 /* === end project view === */
+
+/* Access keys */
+.show-access-keys .access-key,
+[role="menu"] .access-key {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}

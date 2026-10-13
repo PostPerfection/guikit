@@ -109,6 +109,18 @@ export function watchPreviewAudioLevels(watcher) {
   audioLevelsWatcher = watcher;
 }
 
+const PREVIEW_SHORTCUT_CATEGORY = 'Preview';
+
+export const PREVIEW_SHORTCUTS = [
+  { id: 'preview-play-pause', label: 'Play / pause', binding: 'Space', handler: previewPlayPause },
+  { id: 'preview-back', label: `Back ${PREVIEW_SEEK_SECONDS} seconds`, binding: 'ArrowLeft', handler: () => previewSeek(-PREVIEW_SEEK_SECONDS) },
+  { id: 'preview-forward', label: `Forward ${PREVIEW_SEEK_SECONDS} seconds`, binding: 'ArrowRight', handler: () => previewSeek(PREVIEW_SEEK_SECONDS) },
+  { id: 'preview-frame-back', label: 'Step back one frame', binding: ',', handler: previewFrameStepBack },
+  { id: 'preview-frame-forward', label: 'Step forward one frame', binding: '.', handler: previewFrameStepForward },
+  { id: 'preview-start', label: 'Go to start', binding: 'Home', handler: () => previewSeekAbsolute(0) },
+  { id: 'preview-fullscreen', label: 'Full screen', binding: 'F', buttonId: 'preview-fullscreen' },
+].map((shortcut) => ({ ...shortcut, category: PREVIEW_SHORTCUT_CATEGORY, when: isPreviewVisible }));
+
 export function isPreviewVisible() {
   const panel = document.getElementById('preview-panel');
   return !!panel && !panel.hidden;
