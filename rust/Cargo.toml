@@ -59,3 +59,7 @@ windows = { version = "0.61", features = [
     "Win32_System_LibraryLoader",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+# bindgen in the ffmpeg-sys-next build script overflows the stack on Windows when unoptimised
+[profile.dev.build-override]
+opt-level = 1
