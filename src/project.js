@@ -22,9 +22,10 @@ const SHORTCUT_HANDLERS = {
   'project-save-as': () => saveProjectAs(),
 };
 
-const RECENT_BUTTON_ID = 'btn-recent-projects';
+const PROJECT_MENU_BUTTON_ID = 'btn-project-menu';
+const PROJECT_MENU_ID = 'project-menu';
 const RECENT_LIST_ID = 'recent-list';
-const RECENT_LIST_WINDOW_MARGIN_PIXELS = 8;
+const PROJECT_MENU_WINDOW_MARGIN_PIXELS = 8;
 const PROJECT_NAME_ID = 'project-name';
 const MAX_RECENT = 20;
 
@@ -62,19 +63,22 @@ export async function initProjects(options) {
   currentProjectPath = null;
   restoredFromDraft = false;
   shownOrder = [];
-  recentProjectsCollapsed = true;
+  projectMenuCollapsed = true;
   for (const { id, buttonId } of PROJECT_FILE_SHORTCUTS) {
-    document.getElementById(buttonId)?.addEventListener('click', SHORTCUT_HANDLERS[id]);
+    document.getElementById(buttonId)?.addEventListener('click', () => {
+      setProjectMenuCollapsed(true);
+      return SHORTCUT_HANDLERS[id]();
+    });
   }
-  document.getElementById(RECENT_BUTTON_ID)?.addEventListener('click', () => {
-    setRecentProjectsCollapsed(!recentProjectsCollapsed);
+  document.getElementById(PROJECT_MENU_BUTTON_ID)?.addEventListener('click', () => {
+    setProjectMenuCollapsed(!projectMenuCollapsed);
   });
   document.addEventListener('click', (event) => {
-    const button = document.getElementById(RECENT_BUTTON_ID);
-    const list = document.getElementById(RECENT_LIST_ID);
-    if (!button?.contains(event.target) && !list?.contains(event.target)) setRecentProjectsCollapsed(true);
+    const button = document.getElementById(PROJECT_MENU_BUTTON_ID);
+    const menu = document.getElementById(PROJECT_MENU_ID);
+    if (!button?.contains(event.target) && !menu?.contains(event.target)) setProjectMenuCollapsed(true);
   });
-  window.addEventListener('resize', () => setRecentProjectsCollapsed(true));
+  window.addEventListener('resize', () => setProjectMenuCollapsed(true));
   updateWindowTitle();
 
   draftPath = joinPath(await appDataDir(), `${DRAFT_FILE_STEM}.${extension()}`);
@@ -475,27 +479,27 @@ function recentKey() {
   return `${configuration.wizard}-recent-projects`;
 }
 
-let recentProjectsCollapsed = true;
+let projectMenuCollapsed = true;
 
-function setRecentProjectsCollapsed(collapsed) {
-  recentProjectsCollapsed = collapsed;
-  applyRecentProjectsCollapsed();
+function setProjectMenuCollapsed(collapsed) {
+  projectMenuCollapsed = collapsed;
+  applyProjectMenuCollapsed();
 }
 
-function placeRecentListUnderButton(button, list) {
+function placeProjectMenuUnderButton(button, menu) {
   const { left, bottom } = button.getBoundingClientRect();
-  const furthestLeft = window.innerWidth - list.offsetWidth - RECENT_LIST_WINDOW_MARGIN_PIXELS;
-  list.style.left = `${Math.max(RECENT_LIST_WINDOW_MARGIN_PIXELS, Math.min(left, furthestLeft))}px`;
-  list.style.top = `${bottom}px`;
+  const furthestLeft = window.innerWidth - menu.offsetWidth - PROJECT_MENU_WINDOW_MARGIN_PIXELS;
+  menu.style.left = `${Math.max(PROJECT_MENU_WINDOW_MARGIN_PIXELS, Math.min(left, furthestLeft))}px`;
+  menu.style.top = `${bottom}px`;
 }
 
-function applyRecentProjectsCollapsed() {
-  const button = document.getElementById(RECENT_BUTTON_ID);
-  const list = document.getElementById(RECENT_LIST_ID);
-  if (!button || !list) return;
-  list.hidden = recentProjectsCollapsed;
-  button.setAttribute('aria-expanded', String(!recentProjectsCollapsed));
-  if (!recentProjectsCollapsed) placeRecentListUnderButton(button, list);
+function applyProjectMenuCollapsed() {
+  const button = document.getElementById(PROJECT_MENU_BUTTON_ID);
+  const menu = document.getElementById(PROJECT_MENU_ID);
+  if (!button || !menu) return;
+  menu.hidden = projectMenuCollapsed;
+  button.setAttribute('aria-expanded', String(!projectMenuCollapsed));
+  if (!projectMenuCollapsed) placeProjectMenuUnderButton(button, menu);
 }
 
 export function getRecentProjects() {
@@ -574,19 +578,13 @@ function recentRowHtml(entry, packageIsBeside) {
 }
 
 export async function renderRecentProjects() {
-  const button = document.getElementById(RECENT_BUTTON_ID);
   const list = document.getElementById(RECENT_LIST_ID);
-  if (!button || !list) return;
-  applyRecentProjectsCollapsed();
+  if (!list) return;
+  applyProjectMenuCollapsed();
   const generation = ++renderGeneration;
   const recent = getRecentProjects();
   const packagesBeside = await Promise.all(recent.map((entry) => existsInScope(packagePathBeside(entry.path))));
   if (generation !== renderGeneration) return;
-  button.disabled = recent.length === 0;
-  if (recent.length === 0) {
-    setRecentProjectsCollapsed(true);
-    return;
-  }
   const besideByPath = new Map(recent.map((entry, index) => [entry.path, packagesBeside[index]]));
   list.innerHTML = rowsInShownOrder(recent).map((entry) => recentRowHtml(entry, besideByPath.get(entry.path))).join('');
   wireRecentRows(list);
@@ -614,7 +612,7 @@ function wireRecentRows(list) {
   }
   list.querySelectorAll('.recent-item').forEach((row) => {
     row.addEventListener('click', () => {
-      setRecentProjectsCollapsed(true);
+      setProjectMenuCollapsed(true);
       openProjectFile(row.dataset.path);
     });
   });

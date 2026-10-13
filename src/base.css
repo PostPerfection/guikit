@@ -1360,26 +1360,48 @@ body.preview-fullscreen-hud-hidden * {
   background: var(--surface-hover);
 }
 
-/* Recent projects */
-.recent-list {
+/* Project menu */
+.project-menu {
   position: fixed;
   margin-top: 4px;
   z-index: 100;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  gap: 4px;
   padding: 8px;
   width: min(640px, calc(100vw - 16px));
-  max-height: min(440px, 60vh);
+  max-height: min(520px, 70vh);
   overflow-y: auto;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: 0 4px 12px rgba(0,0,0,0.3);
 }
-.recent-list[hidden] {
+.project-menu[hidden] {
   display: none;
+}
+.project-menu-item {
+  padding: 6px 12px;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.project-menu-item:hover {
+  background: var(--surface-hover);
+}
+.recent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.recent-list:not(:empty) {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
 }
 .recent-item {
   display: flex;

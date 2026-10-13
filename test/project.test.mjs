@@ -307,29 +307,34 @@ test('a recent row with its package offers to delete it, a row without one offer
   assert.doesNotMatch(shortRow, /recent-delete/);
 });
 
-test('the Recent button opens the list under it, and a click outside both closes it', async () => {
+test('the Project button opens the menu under it, and a click outside both closes it', async () => {
   await launch({ title: '' }, { '/out/Film.dcpwizard': '' }, [{ path: '/out/Film.dcpwizard', title: 'Film', time: 1 }]);
-  const button = document.getElementById('btn-recent-projects');
-  const list = document.getElementById('recent-list');
+  const button = document.getElementById('btn-project-menu');
+  const menu = document.getElementById('project-menu');
   button.rectangle = { left: 900, bottom: 36 };
-  list.offsetWidth = 640;
-  assert.equal(button.disabled, false);
-  assert.equal(list.hidden, true);
+  menu.offsetWidth = 640;
+  assert.equal(menu.hidden, true);
 
   button.handlers.click();
-  assert.equal(list.hidden, false);
-  assert.deepEqual(list.style, { left: '852px', top: '36px' });
+  assert.equal(menu.hidden, false);
+  assert.deepEqual(menu.style, { left: '852px', top: '36px' });
 
-  documentHandlers.click({ target: list });
-  assert.equal(list.hidden, false);
+  documentHandlers.click({ target: menu });
+  assert.equal(menu.hidden, false);
 
   documentHandlers.click({ target: document.getElementById('asset-list') });
-  assert.equal(list.hidden, true);
+  assert.equal(menu.hidden, true);
 });
 
-test('the Recent button is disabled with no recent projects', async () => {
-  await launch({ title: '' });
-  assert.equal(document.getElementById('btn-recent-projects').disabled, true);
+test('a project menu action closes the menu', async () => {
+  await launch({ title: 'Film' });
+  const menu = document.getElementById('project-menu');
+  document.getElementById('btn-project-menu').handlers.click();
+  assert.equal(menu.hidden, false);
+  tauri.answerDialog('save', null);
+
+  await document.getElementById('btn-project-save-as').handlers.click();
+  assert.equal(menu.hidden, true);
 });
 
 test('opening a project replaces the form, names the missing paths and titles the window', async () => {
