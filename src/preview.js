@@ -14,7 +14,9 @@ let shownWatcher = () => {};
 let sourceWatcher = () => {};
 let audioLevelsWatcher = () => {};
 let polledSource = null;
-let endReported = false;
+// the file or directory the last load passed
+let loadedPath = null;
+let playbackEnded = false;
 // set while the page draws something the native surface would otherwise cover
 let surfaceCovered = false;
 let previewPaused = false;
@@ -480,7 +482,9 @@ export function uncoverPreviewSurface() {
 /// the backend drops.
 export function stopPreview() {
   invoke('preview_stop').catch(() => {});
-  shownWatcher(null);
+  shownWatcher(null, false);
+  loadedPath = null;
+  playbackEnded = false;
   resetTrackToggles();
   setTransportEnabled(false);
   showPreviewTitle(null);
@@ -612,10 +616,10 @@ function startScrubberPolling() {
       metadataWatcher(meta);
       audioLevelsWatcher(meta.audio_levels ?? null);
       reportPolledSource(meta.source ?? meta.filename ?? null);
-      // at the end nothing is previewing any more, so the Preview button comes back
-      if (meta.eof && !endReported) {
-        endReported = true;
-        shownWatcher(null);
+      // the last frame stays on screen at the end, so the path stays loaded
+      if (!!meta.eof !== playbackEnded) {
+        playbackEnded = !!meta.eof;
+        shownWatcher(loadedPath, playbackEnded);
       }
       if (meta.position != null && meta.duration != null && meta.duration > 0) {
         const pct = meta.position / meta.duration;
@@ -706,8 +710,9 @@ function formatTimecode(seconds, fps) {
 /// directories a version file CPL takes its original version's assets from.
 export function previewFile(filePath, contentKeys = null, otherPackages = []) {
   showEmbeddedPanel();
-  shownWatcher(filePath);
-  endReported = false;
+  shownWatcher(filePath, false);
+  loadedPath = filePath;
+  playbackEnded = false;
   loadWatcher(filePath);
   const loaded = invoke('preview_load', { filePath, contentKeys, otherPackages }).then(() => true, reportPreviewLoadFailure);
   resetTrackToggles();
@@ -720,8 +725,9 @@ export function previewFile(filePath, contentKeys = null, otherPackages = []) {
 /// Load a DCP directory into the preview player
 export function previewDcp(dirPath, contentKeys = null) {
   showEmbeddedPanel();
-  shownWatcher(dirPath);
-  endReported = false;
+  shownWatcher(dirPath, false);
+  loadedPath = dirPath;
+  playbackEnded = false;
   loadWatcher(dirPath);
   const loaded = invoke('preview_load_dcp', { dirPath, contentKeys }).then(() => true, reportPreviewLoadFailure);
   resetTrackToggles();
