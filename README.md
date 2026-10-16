@@ -14,7 +14,8 @@ Shared code for the PostPerfection wizard GUIs, frontend and native.
 - `src/access-keys.js`: the Alt+letter on each view button, the letters actions in both apps share, and the keys an open menu or dialog takes
 - `src/shared-shortcuts.js`: the Ctrl chords both apps bind, the finished-build row and Ctrl+1 to Ctrl+9 in sidebar order
 - `src/project.js`: project files (save, save as, open), the unsaved draft, the recent list and the window title
-- `src/asset-strip-resize.js`: the drag handle under the project view's asset strip
+- `src/properties-layout.js`: the project view's Properties width handle, and the preview docked above the assets while that view shows
+- `src/preview-resize.js`: the drag handle that sets the preview's picture height
 - `src/base.css`: the shared stylesheet
 - `rust/`: the `guikit` crate, holding the native side of the preview
 - `startup/`: the `guikit-startup` crate, the process setup every desktop app runs first. `prefer_shared_memory_webkit_frames_on_nvidia` sets `WEBKIT_DMABUF_RENDERER_FORCE_SHM=1` on a Linux box with an NVIDIA GPU unless one of WebKit's renderer variables is already set, and `fork_terminal_guard` keeps the terminal usable after the app exits. It depends on libc alone, so an app that links neither the preview nor tauri's unstable features can take it
