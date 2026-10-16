@@ -63,6 +63,7 @@ fn code_colour(code: i32) -> [u8; 3] {
     XyzToSrgb::new().pixel(code, code, code)
 }
 
+#[cfg(target_os = "linux")]
 pub(super) fn body_colour16() -> [u16; 3] {
     let code = BODY_CODE as u16;
     XyzToSrgb::new().pixel16(code, code, code)
