@@ -615,11 +615,32 @@ body {
 
 /* Embedded preview */
 .preview-panel {
+  --preview-surface-default-height: 360px;
+  --preview-surface-min-height: 120px;
+  --preview-resize-handle-height: 10px;
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
   background: var(--surface-alt);
   border-top: 1px solid var(--border);
+}
+
+.preview-panel.preview-docked {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+/* a docked panel has the picture on top, so the handle goes under it */
+.preview-panel.preview-docked > .preview-resize-handle {
+  order: 1;
+}
+
+.preview-resize-handle {
+  height: var(--preview-resize-handle-height);
+}
+
+.preview-panel.preview-fullscreen > .preview-resize-handle {
+  display: none;
 }
 
 .preview-panel[hidden] {
@@ -705,7 +726,7 @@ body {
 
 .preview-panel:has(> .player-controls[open]) > .preview-surface {
   flex-shrink: 1;
-  min-height: 120px;
+  min-height: var(--preview-surface-min-height);
 }
 
 .player-controls > summary {
@@ -828,7 +849,7 @@ body {
 
 /* Video is painted over this element by the app, not by the page. */
 .preview-surface {
-  height: 360px;
+  height: max(var(--preview-surface-min-height), var(--preview-surface-height, var(--preview-surface-default-height)));
   background: #000;
 }
 
@@ -1572,24 +1593,29 @@ body.preview-fullscreen-hud-hidden * {
   flex-wrap: wrap;
   gap: 6px;
 }
-.asset-strip-handle {
+.asset-strip-handle,
+.preview-resize-handle {
   flex: none;
   user-select: none;
-  height: var(--asset-strip-handle-height);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: row-resize;
   touch-action: none;
 }
-.asset-strip-handle::before {
+.asset-strip-handle {
+  height: var(--asset-strip-handle-height);
+}
+.asset-strip-handle::before,
+.preview-resize-handle::before {
   content: "";
   width: 48px;
   height: 4px;
   border-radius: var(--radius);
   background: var(--border-light);
 }
-.asset-strip-handle:hover::before {
+.asset-strip-handle:hover::before,
+.preview-resize-handle:hover::before {
   background: var(--primary);
 }
 #view-project .properties-panel {

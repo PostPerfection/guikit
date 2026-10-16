@@ -23,9 +23,12 @@ let previewPaused = false;
 // in page coordinates, null once a resize has moved the page under the pointer
 let lastPointer = null;
 let fullscreenHudTimer = null;
+let dockContainer = null;
+let panelHome = null;
 
 const OVERLAY_CONTROLS_ID = 'preview-controls';
 const FULLSCREEN_CLASS = 'preview-fullscreen';
+export const PREVIEW_DOCKED_CLASS = 'preview-docked';
 const LEAVE_FULLSCREEN_KEY = 'Escape';
 // on body, hides the cursor along with the controls
 const FULLSCREEN_HUD_HIDDEN_CLASS = 'preview-fullscreen-hud-hidden';
@@ -398,13 +401,44 @@ function isPreviewFullscreen() {
 }
 
 function setPreviewFullscreen(fullscreen) {
+  // the full screen rules match the panel only as a child of .main-area
+  if (fullscreen) movePanelHome();
   document.getElementById('preview-panel')?.classList.toggle(FULLSCREEN_CLASS, fullscreen);
+  if (!fullscreen && dockContainer) movePanelToDock();
   if (fullscreen) startFullscreenHud();
   else stopFullscreenHud();
   getCurrentWindow()
     .setFullscreen(fullscreen)
     .catch((e) => console.error('[preview] Failed to set full screen:', e));
   reportSurface();
+}
+
+export function dockPreviewPanel(container) {
+  dockContainer = container;
+  if (isPreviewFullscreen()) return;
+  if (movePanelToDock()) reportSurface();
+}
+
+export function undockPreviewPanel() {
+  dockContainer = null;
+  if (movePanelHome()) reportSurface();
+}
+
+function movePanelToDock() {
+  const panel = document.getElementById('preview-panel');
+  if (!panel || dockContainer.firstElementChild === panel) return false;
+  panelHome ??= { parent: panel.parentElement, nextSibling: panel.nextElementSibling };
+  dockContainer.prepend(panel);
+  panel.classList.add(PREVIEW_DOCKED_CLASS);
+  return true;
+}
+
+function movePanelHome() {
+  const panel = document.getElementById('preview-panel');
+  if (!panel || !panelHome || panel.parentElement === panelHome.parent) return false;
+  panelHome.parent.insertBefore(panel, panelHome.nextSibling);
+  panel.classList.remove(PREVIEW_DOCKED_CLASS);
+  return true;
 }
 
 function setFullscreenHudHidden(hidden) {

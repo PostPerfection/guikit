@@ -4,7 +4,7 @@
 // two things the real player would call back with.
 
 // What the queue asked the player to do, in order: ['load', path],
-// ['play_pause'], ['stop'] or ['close'].
+// ['play_pause'], ['stop'], ['close'], ['dock', container] or ['undock'].
 export const calls = [];
 
 const watchers = {
@@ -28,6 +28,14 @@ export function stopPreview() {
 
 export function closePreview() {
   calls.push(['close']);
+}
+
+export function dockPreviewPanel(container) {
+  calls.push(['dock', container]);
+}
+
+export function undockPreviewPanel() {
+  calls.push(['undock']);
 }
 
 export function watchPreviewMetadata(watcher) {
