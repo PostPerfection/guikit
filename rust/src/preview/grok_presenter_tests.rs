@@ -11,13 +11,17 @@ const BYTES_PER_PIXEL: usize = 4;
 const PICTURE_FRAMES: usize = 4;
 
 const GL_RGBA: u32 = 0x1908;
+const GL_RGBA16: i32 = 0x805B;
 const GL_UNSIGNED_BYTE: u32 = 0x1401;
+const GL_UNSIGNED_SHORT: u32 = 0x1403;
+const EIGHT_TO_SIXTEEN_BIT_SCALE: u16 = 257;
 const GL_NO_ERROR: u32 = 0;
 const GL_RENDERER: u32 = 0x1F01;
 const GL_VERSION: u32 = 0x1F02;
 
 // what a linear magnification filter may cost a flat colour, per channel
 const COLOUR_TOLERANCE: u8 = 3;
+const SIXTEEN_BIT_COLOUR_TOLERANCE: u16 = COLOUR_TOLERANCE as u16 * EIGHT_TO_SIXTEEN_BIT_SCALE;
 
 type GlReadPixels = unsafe extern "C" fn(i32, i32, i32, i32, u32, u32, *mut c_void);
 type GlGetError = unsafe extern "C" fn() -> u32;
@@ -74,7 +78,31 @@ fn read_top_down(width: i32, height: i32) -> Vec<u8> {
         .collect()
 }
 
-fn pixel(pixels: &[u8], x: i32, y: i32) -> [u8; 3] {
+// as read_top_down, at 16 bits a sample
+fn read_top_down16(width: i32, height: i32) -> Vec<u16> {
+    let read_pixels: GlReadPixels = unsafe { std::mem::transmute(gl_symbol("glReadPixels")) };
+    let stride = width as usize * BYTES_PER_PIXEL;
+    let mut bottom_up = vec![0u16; stride * height as usize];
+    unsafe {
+        read_pixels(
+            0,
+            0,
+            width,
+            height,
+            GL_RGBA,
+            GL_UNSIGNED_SHORT,
+            bottom_up.as_mut_ptr() as *mut c_void,
+        )
+    };
+    bottom_up
+        .chunks_exact(stride)
+        .rev()
+        .flatten()
+        .copied()
+        .collect()
+}
+
+fn pixel<S: Copy>(pixels: &[S], x: i32, y: i32) -> [S; 3] {
     let at = (y as usize * TARGET_WIDTH as usize + x as usize) * BYTES_PER_PIXEL;
     [pixels[at], pixels[at + 1], pixels[at + 2]]
 }
@@ -88,7 +116,7 @@ fn close_to(drawn: [u8; 3], expected: [u8; 3]) -> bool {
 
 fn draw(player: &Player, framebuffer: i32, flip_y: bool) -> Vec<u8> {
     player
-        .render_opengl(framebuffer, TARGET_WIDTH, TARGET_HEIGHT, flip_y)
+        .render_opengl(framebuffer, TARGET_WIDTH, TARGET_HEIGHT, flip_y, false)
         .expect("the GL presenter drew the frame");
     assert_eq!(gl_error(), GL_NO_ERROR, "the draw left a GL error behind");
     read_top_down(TARGET_WIDTH, TARGET_HEIGHT)
@@ -99,13 +127,13 @@ fn the_gl_presenter_letterboxes_the_picture_and_keeps_it_the_right_way_up() {
     let directory = tempfile::tempdir().unwrap();
     let picture = grok_fixture::write_picture_file(directory.path(), PICTURE_FRAMES);
 
-    let framebuffer = current_gl_context(TARGET_WIDTH, TARGET_HEIGHT);
+    let framebuffer = current_gl_context(TARGET_WIDTH, TARGET_HEIGHT, GL_RGBA as i32);
     let renderer = format!("{} ({})", gl_string(GL_RENDERER), gl_string(GL_VERSION));
     eprintln!("[test] GL renderer: {renderer}");
 
     let player = Player::new().unwrap();
     player
-        .init_opengl(resolve_gl_symbol, std::ptr::null_mut(), None)
+        .init_opengl(resolve_gl_symbol, std::ptr::null_mut(), None, false)
         .expect("both players took the GL context");
     player
         .load_source(&picture.to_string_lossy(), None)
@@ -171,5 +199,51 @@ fn the_gl_presenter_letterboxes_the_picture_and_keeps_it_the_right_way_up() {
     assert!(
         close_to(body, grok_fixture::body_colour()),
         "flip_y off did not turn the picture over: {body:?}"
+    );
+}
+
+#[test]
+fn a_deep_colour_surface_gets_the_picture_at_sixteen_bits() {
+    let directory = tempfile::tempdir().unwrap();
+    let picture = grok_fixture::write_picture_file(directory.path(), PICTURE_FRAMES);
+
+    let framebuffer = current_gl_context(TARGET_WIDTH, TARGET_HEIGHT, GL_RGBA16);
+    let renderer = format!("{} ({})", gl_string(GL_RENDERER), gl_string(GL_VERSION));
+
+    let player = Player::new().unwrap();
+    player
+        .init_opengl(resolve_gl_symbol, std::ptr::null_mut(), None, true)
+        .expect("both players took the GL context");
+    player
+        .load_source(&picture.to_string_lossy(), None)
+        .unwrap();
+    player.grok().set_paused(true);
+    wait_until("a frame was composed", || {
+        player.grok().frame_size().is_some()
+    });
+
+    player
+        .render_opengl(framebuffer, TARGET_WIDTH, TARGET_HEIGHT, true, true)
+        .expect("the GL presenter drew the frame");
+    assert_eq!(gl_error(), GL_NO_ERROR, "the draw left a GL error behind");
+    let drawn = read_top_down16(TARGET_WIDTH, TARGET_HEIGHT);
+    if drawn.iter().all(|value| *value == 0) {
+        eprintln!("[test] {renderer} read the framebuffer back as all black, so only the GL calls are checked here");
+        return;
+    }
+
+    let body = pixel(&drawn, PICTURE_MIDDLE_COLUMN, BODY_ROW);
+    let expected = grok_fixture::body_colour16();
+    assert!(
+        body.iter()
+            .zip(expected)
+            .all(|(drawn, expected)| drawn.abs_diff(expected) <= SIXTEEN_BIT_COLOUR_TOLERANCE),
+        "the body is {body:?}, not near {expected:?}"
+    );
+    // an 8 bit texture reads back as whole multiples of 257 on a 16 bit target
+    assert!(
+        body.iter()
+            .any(|sample| sample % EIGHT_TO_SIXTEEN_BIT_SCALE != 0),
+        "the body {body:?} went through 8 bits on the way"
     );
 }

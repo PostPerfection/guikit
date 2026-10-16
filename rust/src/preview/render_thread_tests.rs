@@ -110,8 +110,8 @@ pub(super) fn gl_symbol(name: &str) -> *mut c_void {
 }
 
 /// An OpenGL context current on this thread, drawing into a texture of the size
-/// asked for. Hands back the framebuffer the player is given.
-pub(super) fn current_gl_context(width: i32, height: i32) -> i32 {
+/// and internal format asked for. Hands back the framebuffer the player is given.
+pub(super) fn current_gl_context(width: i32, height: i32, internal_format: i32) -> i32 {
     unsafe {
         let get_display: EglGetDisplay = std::mem::transmute(egl_symbol("eglGetDisplay"));
         let initialize: EglInitialize = std::mem::transmute(egl_symbol("eglInitialize"));
@@ -180,7 +180,7 @@ pub(super) fn current_gl_context(width: i32, height: i32) -> i32 {
         tex_image(
             GL_TEXTURE_2D,
             0,
-            GL_RGBA as i32,
+            internal_format,
             width,
             height,
             0,
@@ -218,7 +218,7 @@ impl RenderThread {
     /// Binds the render context to the calling thread, which is the render thread
     /// from here on.
     fn bound_to_this_thread() -> Self {
-        let framebuffer = current_gl_context(TARGET_WIDTH, TARGET_HEIGHT);
+        let framebuffer = current_gl_context(TARGET_WIDTH, TARGET_HEIGHT, GL_RGBA as i32);
         let player = Arc::new(MpvRenderPlayer::new().unwrap());
         player
             .init_opengl(resolve_gl_symbol, std::ptr::null_mut(), None)
@@ -234,7 +234,7 @@ impl RenderThread {
     fn pump_once(&self) {
         if self.player.wants_redraw() {
             self.player
-                .render_opengl(self.framebuffer, TARGET_WIDTH, TARGET_HEIGHT, FLIP_Y)
+                .render_opengl(self.framebuffer, TARGET_WIDTH, TARGET_HEIGHT, FLIP_Y, false)
                 .unwrap();
             self.player.report_swap();
         }

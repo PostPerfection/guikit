@@ -21,11 +21,13 @@ use objc2::{
     define_class, msg_send, AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, Message,
 };
 use objc2_app_kit::{
-    NSOpenGLContext, NSOpenGLPFAAccelerated, NSOpenGLPFAAlphaSize, NSOpenGLPFAColorSize,
-    NSOpenGLPFADoubleBuffer, NSOpenGLPFAOpenGLProfile, NSOpenGLPixelFormat,
-    NSOpenGLPixelFormatAttribute, NSOpenGLProfileVersion3_2Core, NSOpenGLView, NSView,
+    NSOpenGLContext, NSOpenGLContextParameter, NSOpenGLPFAAccelerated, NSOpenGLPFAAlphaSize,
+    NSOpenGLPFAColorFloat, NSOpenGLPFAColorSize, NSOpenGLPFADoubleBuffer, NSOpenGLPFAOpenGLProfile,
+    NSOpenGLPixelFormat, NSOpenGLPixelFormatAttribute, NSOpenGLProfileVersion3_2Core, NSOpenGLView,
+    NSView,
 };
 use objc2_foundation::{NSPoint, NSRect, NSSize};
+use objc2_quartz_core::kCAContentsFormatRGBA16Float;
 use tauri::Manager;
 
 const GL_RENDERER: u32 = 0x1F01;
@@ -45,6 +47,20 @@ const COLOR_BITS: NSOpenGLPixelFormatAttribute = 24;
 const ALPHA_BITS: NSOpenGLPixelFormatAttribute = 8;
 const ATTRIBUTES_END: NSOpenGLPixelFormatAttribute = 0;
 
+// half float RGBA, what mpv asks for to get a 10 bit or deeper surface
+const DEEP_COLOUR_BITS: NSOpenGLPixelFormatAttribute = 64;
+
+const DEEP_PIXEL_FORMAT_ATTRIBUTES: [NSOpenGLPixelFormatAttribute; 8] = [
+    NSOpenGLPFAOpenGLProfile,
+    NSOpenGLProfileVersion3_2Core,
+    NSOpenGLPFAAccelerated,
+    NSOpenGLPFADoubleBuffer,
+    NSOpenGLPFAColorSize,
+    DEEP_COLOUR_BITS,
+    NSOpenGLPFAColorFloat,
+    ATTRIBUTES_END,
+];
+
 const PIXEL_FORMAT_ATTRIBUTES: [NSOpenGLPixelFormatAttribute; 9] = [
     NSOpenGLPFAOpenGLProfile,
     NSOpenGLProfileVersion3_2Core,
@@ -56,6 +72,11 @@ const PIXEL_FORMAT_ATTRIBUTES: [NSOpenGLPixelFormatAttribute; 9] = [
     ALPHA_BITS,
     ATTRIBUTES_END,
 ];
+
+// an 8 bit RGBA pixel format reports at most this colour size
+const EIGHT_BIT_COLOUR_SIZE: i32 = 32;
+const FIRST_VIRTUAL_SCREEN: i32 = 0;
+const SWAP_ON_EVERY_VSYNC: i32 = 1;
 
 /// Where the view sits with no preview on screen. It stays in the window rather
 /// than being torn down: mpv's render context lives on this GL context, and
@@ -76,6 +97,7 @@ struct SurfaceRect {
 struct PreviewViewIvars {
     /// Weak so the view, which is never released, cannot keep mpv alive forever.
     player: Weak<Player>,
+    deep_colour: bool,
 }
 
 define_class!(
@@ -104,6 +126,7 @@ define_class!(
                 pixels.size.width as i32,
                 pixels.size.height as i32,
                 FLIP_Y,
+                self.ivars().deep_colour,
             ) {
                 eprintln!("[preview] render failed: {error}");
             }
@@ -125,9 +148,11 @@ impl PreviewView {
         mtm: MainThreadMarker,
         pixel_format: &NSOpenGLPixelFormat,
         player: &Arc<Player>,
+        deep_colour: bool,
     ) -> Option<Retained<Self>> {
         let this = Self::alloc(mtm).set_ivars(PreviewViewIvars {
             player: Arc::downgrade(player),
+            deep_colour,
         });
         // SAFETY: The signature of NSOpenGLView's designated initializer is
         // correct, and it may return nil.
@@ -189,21 +214,26 @@ pub fn attach(window: &tauri::Window) -> Result<EmbeddedPreview, String> {
     }
     let container: &NSView = unsafe { &*content_view.cast::<NSView>() };
 
-    let mut attributes = PIXEL_FORMAT_ATTRIBUTES;
-    let pixel_format = unsafe {
-        NSOpenGLPixelFormat::initWithAttributes(
-            NSOpenGLPixelFormat::alloc(),
-            NonNull::from(&mut attributes).cast(),
-        )
-    }
-    .ok_or("no OpenGL pixel format matches what the preview asks for")?;
+    let pixel_format = pixel_format(DEEP_PIXEL_FORMAT_ATTRIBUTES)
+        .or_else(|| pixel_format(PIXEL_FORMAT_ATTRIBUTES))
+        .ok_or("no OpenGL pixel format matches what the preview asks for")?;
+    let colour_size = colour_size(&pixel_format);
+    let deep_colour = colour_size > EIGHT_BIT_COLOUR_SIZE;
+    eprintln!("[preview] framebuffer colour size: {colour_size} bits");
 
     let player = Arc::new(Player::new()?);
-    let gl_view = PreviewView::new(mtm, &pixel_format, &player)
+    let gl_view = PreviewView::new(mtm, &pixel_format, &player, deep_colour)
         .ok_or("the OpenGL view could not be created")?;
     gl_view.setWantsBestResolutionOpenGLSurface(true);
     // Last subview is topmost, which is what puts the video over the webview.
     container.addSubview(&gl_view);
+    if deep_colour {
+        // Core Animation keeps 8 bit layer contents unless told otherwise
+        match gl_view.layer() {
+            Some(layer) => layer.setContentsFormat(unsafe { kCAContentsFormatRGBA16Float }),
+            None => eprintln!("[preview] the OpenGL view has no layer to make 16 bit"),
+        }
+    }
 
     // The context only gets a drawable once its view is in a window, so this
     // has to come after the view is a subview.
@@ -211,10 +241,18 @@ pub fn attach(window: &tauri::Window) -> Result<EmbeddedPreview, String> {
         .openGLContext()
         .ok_or("the OpenGL view has no context")?;
     context.makeCurrentContext();
+    let swap_interval = SWAP_ON_EVERY_VSYNC;
+    let () = unsafe {
+        msg_send![
+            &*context,
+            setValues: NonNull::from(&swap_interval),
+            forParameter: NSOpenGLContextParameter::SwapInterval
+        ]
+    };
 
     // mpv has no display handle to take on macOS, hardware decode is negotiated
     // by its own hwdec option instead.
-    player.init_opengl(resolve_gl_symbol, ptr::null_mut(), None)?;
+    player.init_opengl(resolve_gl_symbol, ptr::null_mut(), None, deep_colour)?;
     eprintln!(
         "[preview] GL renderer: {} ({})",
         gl_string(GL_RENDERER),
@@ -255,6 +293,31 @@ pub fn attach(window: &tauri::Window) -> Result<EmbeddedPreview, String> {
         rect,
         app_handle,
     })
+}
+
+fn pixel_format<const COUNT: usize>(
+    mut attributes: [NSOpenGLPixelFormatAttribute; COUNT],
+) -> Option<Retained<NSOpenGLPixelFormat>> {
+    unsafe {
+        NSOpenGLPixelFormat::initWithAttributes(
+            NSOpenGLPixelFormat::alloc(),
+            NonNull::from(&mut attributes).cast(),
+        )
+    }
+}
+
+// what the driver gave, which can be less than the attributes asked for
+fn colour_size(pixel_format: &NSOpenGLPixelFormat) -> i32 {
+    let mut colour_size = 0i32;
+    let () = unsafe {
+        msg_send![
+            pixel_format,
+            getValues: NonNull::from(&mut colour_size),
+            forAttribute: NSOpenGLPFAColorSize,
+            forVirtualScreen: FIRST_VIRTUAL_SCREEN
+        ]
+    };
+    colour_size
 }
 
 /// The main-thread half of the render loop. Advanced control makes calling

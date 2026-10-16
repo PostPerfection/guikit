@@ -57,16 +57,18 @@ impl Player {
         self.mpv.is_initialized()
     }
 
+    // deep_colour is the host's measured framebuffer depth, 10 bits or more per channel
     pub fn init_opengl(
         &self,
         get_proc_address: GetProcAddressFn,
         get_proc_address_ctx: *mut c_void,
         native_display: Option<NativeDisplay>,
+        deep_colour: bool,
     ) -> Result<(), String> {
         self.mpv
             .init_opengl(get_proc_address, get_proc_address_ctx, native_display)?;
         self.grok
-            .init_opengl(get_proc_address, get_proc_address_ctx)
+            .init_opengl(get_proc_address, get_proc_address_ctx, deep_colour)
     }
 
     pub fn init_software(&self) -> Result<(), String> {
@@ -93,10 +95,16 @@ impl Player {
         width: i32,
         height: i32,
         flip_y: bool,
+        deep_colour: bool,
     ) -> Result<(), String> {
         match self.active() {
-            Backend::Mpv => self.mpv.render_opengl(framebuffer, width, height, flip_y),
-            Backend::Grok => self.grok.render_opengl(framebuffer, width, height, flip_y),
+            Backend::Mpv => self
+                .mpv
+                .render_opengl(framebuffer, width, height, flip_y, deep_colour),
+            Backend::Grok => {
+                self.grok
+                    .render_opengl(framebuffer, width, height, flip_y, deep_colour)
+            }
         }
     }
 

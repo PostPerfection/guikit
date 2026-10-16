@@ -63,6 +63,11 @@ fn code_colour(code: i32) -> [u8; 3] {
     XyzToSrgb::new().pixel(code, code, code)
 }
 
+pub(super) fn body_colour16() -> [u16; 3] {
+    let code = BODY_CODE as u16;
+    XyzToSrgb::new().pixel16(code, code, code)
+}
+
 pub(super) struct PictureEncryption {
     pub(super) content_key: [u8; 16],
     pub(super) key_id: [u8; 16],

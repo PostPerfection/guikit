@@ -30,6 +30,9 @@ const GL_VERSION: u32 = 0x1F02;
 /// mpv draws by default, so the image arrives upside down without this.
 const FLIP_Y: bool = true;
 
+// GTK composites the GL area into its own 8 bit window surface
+const DEEP_COLOUR: bool = false;
+
 #[derive(Clone, Copy, Default)]
 struct SurfaceRect {
     x: i32,
@@ -135,7 +138,9 @@ fn attach_stacked(
             let scale = area.scale_factor();
             let width = area.allocated_width() * scale;
             let height = area.allocated_height() * scale;
-            if let Err(error) = player.render_opengl(current_framebuffer(), width, height, FLIP_Y) {
+            if let Err(error) =
+                player.render_opengl(current_framebuffer(), width, height, FLIP_Y, DEEP_COLOUR)
+            {
                 eprintln!("[preview] render failed: {error}");
             }
             player.report_swap();
@@ -214,7 +219,12 @@ fn bind_render_context(
     if native_display.is_none() {
         eprintln!("[preview] no native display handle, hardware decode will be off");
     }
-    if let Err(error) = player.init_opengl(resolve_gl_symbol, ptr::null_mut(), native_display) {
+    if let Err(error) = player.init_opengl(
+        resolve_gl_symbol,
+        ptr::null_mut(),
+        native_display,
+        DEEP_COLOUR,
+    ) {
         eprintln!("[preview] OpenGL init failed: {error}");
         return;
     }

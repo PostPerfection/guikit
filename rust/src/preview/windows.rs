@@ -13,13 +13,14 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use super::player::Player;
 use tauri::Manager;
-use windows::core::{w, Error, PCSTR, PCWSTR};
+use windows::core::{s, w, Error, PCSTR, PCWSTR};
 use windows::Win32::Foundation::{HINSTANCE, HMODULE, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{BeginPaint, EndPaint, GetDC, HDC, PAINTSTRUCT};
 use windows::Win32::Graphics::OpenGL::{
     glGetString, wglCreateContext, wglDeleteContext, wglGetProcAddress, wglMakeCurrent,
-    ChoosePixelFormat, SetPixelFormat, SwapBuffers, GL_RENDERER, GL_VERSION, HGLRC,
-    PFD_DOUBLEBUFFER, PFD_DRAW_TO_WINDOW, PFD_SUPPORT_OPENGL, PFD_TYPE_RGBA, PIXELFORMATDESCRIPTOR,
+    ChoosePixelFormat, DescribePixelFormat, SetPixelFormat, SwapBuffers, GL_RENDERER, GL_VERSION,
+    HGLRC, PFD_DOUBLEBUFFER, PFD_DRAW_TO_WINDOW, PFD_SUPPORT_OPENGL, PFD_TYPE_RGBA,
+    PIXELFORMATDESCRIPTOR,
 };
 use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress, LoadLibraryW};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -44,6 +45,51 @@ const FLIP_Y: bool = false;
 const PIXEL_FORMAT_VERSION: u16 = 1;
 const COLOR_BITS: u8 = 32;
 
+// WGL_ARB_pixel_format attribute names and values, from the Khronos wglext.h
+const WGL_DRAW_TO_WINDOW_ARB: i32 = 0x2001;
+const WGL_ACCELERATION_ARB: i32 = 0x2003;
+const WGL_SUPPORT_OPENGL_ARB: i32 = 0x2010;
+const WGL_DOUBLE_BUFFER_ARB: i32 = 0x2011;
+const WGL_PIXEL_TYPE_ARB: i32 = 0x2013;
+const WGL_RED_BITS_ARB: i32 = 0x2015;
+const WGL_GREEN_BITS_ARB: i32 = 0x2017;
+const WGL_BLUE_BITS_ARB: i32 = 0x2019;
+const WGL_ALPHA_BITS_ARB: i32 = 0x201B;
+const WGL_FULL_ACCELERATION_ARB: i32 = 0x2027;
+const WGL_TYPE_RGBA_ARB: i32 = 0x202B;
+const WGL_TRUE: i32 = 1;
+const ATTRIBUTES_END: i32 = 0;
+const DEEP_COLOUR_CHANNEL_BITS: i32 = 10;
+const DEEP_COLOUR_ALPHA_BITS: i32 = 2;
+
+const DEEP_PIXEL_FORMAT_ATTRIBUTES: [i32; 19] = [
+    WGL_DRAW_TO_WINDOW_ARB,
+    WGL_TRUE,
+    WGL_SUPPORT_OPENGL_ARB,
+    WGL_TRUE,
+    WGL_DOUBLE_BUFFER_ARB,
+    WGL_TRUE,
+    WGL_ACCELERATION_ARB,
+    WGL_FULL_ACCELERATION_ARB,
+    WGL_PIXEL_TYPE_ARB,
+    WGL_TYPE_RGBA_ARB,
+    WGL_RED_BITS_ARB,
+    DEEP_COLOUR_CHANNEL_BITS,
+    WGL_GREEN_BITS_ARB,
+    DEEP_COLOUR_CHANNEL_BITS,
+    WGL_BLUE_BITS_ARB,
+    DEEP_COLOUR_CHANNEL_BITS,
+    WGL_ALPHA_BITS_ARB,
+    DEEP_COLOUR_ALPHA_BITS,
+    ATTRIBUTES_END,
+];
+const ONE_PIXEL_FORMAT: u32 = 1;
+const SWAP_ON_EVERY_VSYNC: i32 = 1;
+
+type WglChoosePixelFormatArb =
+    unsafe extern "system" fn(HDC, *const i32, *const f32, u32, *mut i32, *mut u32) -> i32;
+type WglSwapIntervalExt = unsafe extern "system" fn(i32) -> i32;
+
 /// An inactive preview shrinks to this rather than being torn down: mpv's
 /// render context lives on the GL context, and advanced control needs the
 /// render loop still answering.
@@ -62,6 +108,8 @@ struct GlSurface {
     window: HWND,
     device_context: HDC,
     gl_context: HGLRC,
+    // the pixel format holds 10 bits or more per channel
+    deep_colour: bool,
 }
 
 // Sound because the handles are only ever touched from the main thread, which
@@ -176,7 +224,12 @@ pub fn attach(window: &tauri::Window) -> Result<EmbeddedPreview, String> {
     let player = Arc::new(Player::new()?);
     // `create_gl_surface` left the GL context current on this thread. Windows
     // has no native display handle to pass, so mpv negotiates hardware decode.
-    player.init_opengl(resolve_gl_symbol, ptr::null_mut(), None)?;
+    player.init_opengl(
+        resolve_gl_symbol,
+        ptr::null_mut(),
+        None,
+        surface.deep_colour,
+    )?;
     eprintln!(
         "[preview] GL renderer: {} ({})",
         gl_string(GL_RENDERER),
@@ -217,9 +270,26 @@ pub fn attach(window: &tauri::Window) -> Result<EmbeddedPreview, String> {
 }
 
 fn create_gl_surface(parent: HWND) -> Result<GlSurface, String> {
+    let deep_pixel_format = deep_pixel_format(parent);
+    let window = create_preview_window(parent)?;
+    match create_gl_context(window, deep_pixel_format) {
+        Ok((device_context, gl_context, deep_colour)) => Ok(GlSurface {
+            window,
+            device_context,
+            gl_context,
+            deep_colour,
+        }),
+        Err(error) => {
+            let _ = unsafe { DestroyWindow(window) };
+            Err(error)
+        }
+    }
+}
+
+fn create_preview_window(parent: HWND) -> Result<HWND, String> {
     register_window_class()?;
     let instance = module_handle()?;
-    let window = unsafe {
+    unsafe {
         CreateWindowExW(
             WINDOW_EX_STYLE::default(),
             PREVIEW_WINDOW_CLASS,
@@ -237,53 +307,139 @@ fn create_gl_surface(parent: HWND) -> Result<GlSurface, String> {
             None,
         )
     }
-    .map_err(|error| format!("creating the preview window failed: {error}"))?;
-
-    match create_gl_context(window) {
-        Ok((device_context, gl_context)) => Ok(GlSurface {
-            window,
-            device_context,
-            gl_context,
-        }),
-        Err(error) => {
-            let _ = unsafe { DestroyWindow(window) };
-            Err(error)
-        }
-    }
+    .map_err(|error| format!("creating the preview window failed: {error}"))
 }
 
-/// Give the window a double-buffered RGBA pixel format and a GL context, and
-/// leave that context current on the calling thread.
-fn create_gl_context(window: HWND) -> Result<(HDC, HGLRC), String> {
+fn window_device_context(window: HWND) -> Result<HDC, String> {
     // The class is registered with `CS_OWNDC`, so this device context belongs
     // to the window and stays valid until the window is destroyed.
     let device_context = unsafe { GetDC(Some(window)) };
     if device_context.is_invalid() {
         return Err("the preview window has no device context".to_string());
     }
+    Ok(device_context)
+}
 
-    let descriptor = PIXELFORMATDESCRIPTOR {
+fn eight_bit_descriptor() -> PIXELFORMATDESCRIPTOR {
+    PIXELFORMATDESCRIPTOR {
         nSize: size_of::<PIXELFORMATDESCRIPTOR>() as u16,
         nVersion: PIXEL_FORMAT_VERSION,
         dwFlags: PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER,
         iPixelType: PFD_TYPE_RGBA,
         cColorBits: COLOR_BITS,
         ..Default::default()
+    }
+}
+
+/// Give the window a double-buffered RGBA pixel format, the deep one when there
+/// is one, and a GL context, and leave that context current on the calling
+/// thread. Hands back whether the format holds 10 bits or more per channel.
+fn create_gl_context(window: HWND, deep_format: Option<i32>) -> Result<(HDC, HGLRC, bool), String> {
+    let device_context = window_device_context(window)?;
+    let format = match deep_format {
+        Some(format) => format,
+        None => unsafe { ChoosePixelFormat(device_context, &eight_bit_descriptor()) },
     };
-    let format = unsafe { ChoosePixelFormat(device_context, &descriptor) };
     if format == 0 {
         return Err(format!("no usable pixel format: {}", Error::from_win32()));
     }
+    let mut descriptor = PIXELFORMATDESCRIPTOR::default();
+    let described = unsafe {
+        DescribePixelFormat(
+            device_context,
+            format,
+            size_of::<PIXELFORMATDESCRIPTOR>() as u32,
+            Some(&raw mut descriptor),
+        )
+    };
+    if described == 0 {
+        return Err(format!(
+            "DescribePixelFormat failed: {}",
+            Error::from_win32()
+        ));
+    }
     unsafe { SetPixelFormat(device_context, format, &descriptor) }
         .map_err(|error| format!("SetPixelFormat failed: {error}"))?;
+    let deep_colour = i32::from(descriptor.cRedBits) >= DEEP_COLOUR_CHANNEL_BITS;
+    eprintln!(
+        "[preview] framebuffer: {} bits per channel",
+        descriptor.cRedBits
+    );
 
+    let gl_context = make_current_context(device_context)?;
+    set_swap_interval();
+    Ok((device_context, gl_context, deep_colour))
+}
+
+fn make_current_context(device_context: HDC) -> Result<HGLRC, String> {
     let gl_context = unsafe { wglCreateContext(device_context) }
         .map_err(|error| format!("creating the GL context failed: {error}"))?;
     if let Err(error) = unsafe { wglMakeCurrent(device_context, gl_context) } {
         let _ = unsafe { wglDeleteContext(gl_context) };
         return Err(format!("wglMakeCurrent failed: {error}"));
     }
-    Ok((device_context, gl_context))
+    Ok(gl_context)
+}
+
+/// A window takes one pixel format for life, and wglChoosePixelFormatARB needs
+/// a current context to be looked up, so the lookup runs on a throwaway window.
+/// None when the driver has no 10 bit format or no WGL_ARB_pixel_format.
+fn deep_pixel_format(parent: HWND) -> Option<i32> {
+    let window = create_preview_window(parent).ok()?;
+    let format = deep_pixel_format_through(window);
+    let _ = unsafe { DestroyWindow(window) };
+    format
+}
+
+fn deep_pixel_format_through(throwaway_window: HWND) -> Option<i32> {
+    let device_context = window_device_context(throwaway_window).ok()?;
+    let descriptor = eight_bit_descriptor();
+    let format = unsafe { ChoosePixelFormat(device_context, &descriptor) };
+    unsafe { SetPixelFormat(device_context, format, &descriptor) }.ok()?;
+    let gl_context = make_current_context(device_context).ok()?;
+    let entry_point = unsafe { wglGetProcAddress(s!("wglChoosePixelFormatARB")) };
+    let deep_format = entry_point.and_then(|entry_point| {
+        let choose_pixel_format = unsafe {
+            std::mem::transmute::<unsafe extern "system" fn() -> isize, WglChoosePixelFormatArb>(
+                entry_point,
+            )
+        };
+        let mut format = 0;
+        let mut count = 0;
+        let chosen = unsafe {
+            choose_pixel_format(
+                device_context,
+                DEEP_PIXEL_FORMAT_ATTRIBUTES.as_ptr(),
+                ptr::null(),
+                ONE_PIXEL_FORMAT,
+                &mut format,
+                &mut count,
+            )
+        };
+        (chosen != 0 && count > 0).then_some(format)
+    });
+    unsafe {
+        let _ = wglMakeCurrent(device_context, HGLRC::default());
+        let _ = wglDeleteContext(gl_context);
+    }
+    deep_format
+}
+
+// the current context presents once per vsync, a driver without WGL_EXT_swap_control keeps its default
+fn set_swap_interval() {
+    let Some(entry_point) = (unsafe { wglGetProcAddress(s!("wglSwapIntervalEXT")) }) else {
+        eprintln!("[preview] no wglSwapIntervalEXT, presentation is not tied to vsync");
+        return;
+    };
+    let swap_interval = unsafe {
+        std::mem::transmute::<unsafe extern "system" fn() -> isize, WglSwapIntervalExt>(entry_point)
+    };
+    if unsafe { swap_interval(SWAP_ON_EVERY_VSYNC) } == 0 {
+        eprintln!(
+            "[preview] wglSwapIntervalEXT failed: {}",
+            Error::from_win32()
+        );
+    }
 }
 
 /// `RegisterClassExW` rejects a duplicate class name, and `attach` can be
@@ -411,7 +567,13 @@ fn make_current_and_draw(surface: &GlSurface, player: &Player) {
 
 fn draw(surface: &GlSurface, player: &Player) {
     let (width, height) = client_size(surface.window);
-    if let Err(error) = player.render_opengl(DEFAULT_FRAMEBUFFER, width, height, FLIP_Y) {
+    if let Err(error) = player.render_opengl(
+        DEFAULT_FRAMEBUFFER,
+        width,
+        height,
+        FLIP_Y,
+        surface.deep_colour,
+    ) {
         eprintln!("[preview] render failed: {error}");
         return;
     }
