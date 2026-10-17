@@ -660,8 +660,10 @@ function startScrubberPolling() {
         updatePlayhead(pct);
         updateTimecode(meta.position, meta.duration, meta.container_fps);
       }
-      updatePlayBtn(meta.paused);
-      previewPaused = !!meta.paused;
+      // nothing loaded reports no paused state, and shows as ready to play
+      const paused = meta.paused ?? true;
+      updatePlayBtn(paused);
+      previewPaused = paused;
     } catch (error) {
       const text = String(error);
       if (text !== lastPollError) {
