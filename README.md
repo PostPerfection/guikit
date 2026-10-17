@@ -423,6 +423,10 @@ with `type` `'video'`, `'audio'` or `'subtitle'`.
   `"<composition name> clip 2 sound"` and the like onto `notRestored`.
 - `firstSoundAsset` and `firstSubtitleAsset`, the timeline's own or the first
   clip's.
+- `clipIndexShowing(timeline, picturePath, likelyIndex, assetById)`, the clip a
+  preview of that file shows, `likelyIndex` winning when the file is on the
+  timeline twice, and `clipPreviewSubtitle(timeline, clipIndex)`, the subtitle
+  asset to show over it.
 - `reelSpans(timeline, assetById)`, one `{ frames, picture, sound, subtitle }`
   per reel with the assets of the clip it starts in.
 - `timelineWire(timeline, assetById)`, postkit's `Timeline` JSON with paths for

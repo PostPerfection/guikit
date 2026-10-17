@@ -186,6 +186,21 @@ export function withSplitAtFrames(timeline, typedFrames) {
   return withReelStartsInsideTimeline(split);
 }
 
+// a clip can come twice from one file, so the clip already shown wins
+export function clipIndexShowing(timeline, picturePath, likelyIndex, assetById) {
+  const shows = (clip) => clip !== undefined && assetPath(assetById, clip.picture) === picturePath;
+  if (shows(timeline.clips[likelyIndex])) return likelyIndex;
+  const index = timeline.clips.findIndex(shows);
+  return index === -1 ? null : index;
+}
+
+// the timeline's own subtitle lines up with the source only where the timeline starts at the source's first frame
+export function clipPreviewSubtitle(timeline, clipIndex) {
+  const clip = timeline.clips[clipIndex];
+  const startsTimeline = clipIndex === 0 && clip.inFrame === 0;
+  return clip.subtitle ?? (startsTimeline ? timeline.subtitle : null);
+}
+
 // what the first clip and the timeline give the sound panel and the package name
 export function firstSoundAsset(timeline, assetById) {
   if (timeline.sound !== null) return assetById(timeline.sound);

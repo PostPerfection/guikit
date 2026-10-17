@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  clipIndexShowing,
+  clipPreviewSubtitle,
   emptyTimeline,
   ffprobeVideoInfo,
   reelSpans,
@@ -223,4 +225,25 @@ test('an asset the project file no longer lists is taken off the timeline and na
   assert.equal(kept.sound, null);
   assert.equal(kept.subtitle, 8);
   assert.deepEqual(notRestored, ['Main clip 2 picture', 'Main clip 2 sound', 'Main clip 2 subtitle', 'Main timeline sound']);
+});
+
+test('the clip a preview shows is the one already shown when its file is on the timeline twice', () => {
+  const timeline = { ...emptyTimeline([24, 1]), clips: [clip(1, 240, 0, 96), clip(2, 96, 0, 96), clip(1, 240, 96, 240)] };
+
+  assert.equal(clipIndexShowing(timeline, '/media/a.mov', 2, assetById), 2);
+  assert.equal(clipIndexShowing(timeline, '/media/a.mov', 1, assetById), 0);
+  assert.equal(clipIndexShowing(timeline, '/media/a.mov', null, assetById), 0);
+  assert.equal(clipIndexShowing(timeline, '/media/elsewhere.mov', 0, assetById), null);
+});
+
+test("a previewed clip shows its own subtitle, or the timeline's where the clip starts the timeline untrimmed", () => {
+  const timeline = {
+    ...emptyTimeline([24, 1]),
+    clips: [clip(1, 240, 0, 96), clip(2, 96, 0, 96, { kind: 'embedded', asset: null }, 5)],
+    subtitle: 8,
+  };
+
+  assert.equal(clipPreviewSubtitle(timeline, 0), 8);
+  assert.equal(clipPreviewSubtitle(timeline, 1), 5);
+  assert.equal(clipPreviewSubtitle({ ...timeline, clips: [clip(1, 240, 24, 96)] }, 0), null);
 });
