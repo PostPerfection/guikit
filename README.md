@@ -66,6 +66,14 @@ directory, or a directory of codestreams. Everything else goes to libmpv.
 `[preview] backend: grok|mpv for <path>`. Every other command follows the
 backend the load picked, so the page drives one player either way.
 
+`preview_load_timeline(timeline)` plays a postkit `Timeline` whole and returns
+`{ picture_only }`. JPEG 2000 clips play on grok one after another, each with
+its range, without the timeline's sound and subtitles, so `picture_only` is
+true. Any other clips play on mpv as one `edl://` source with the sound and
+subtitle, and a mix of the two is refused. While a timeline is loaded the
+position, duration and both seeks are in timeline seconds, and
+`preview_get_metadata` adds `timeline_position` and `timeline_clip_index`.
+
 An encrypted package plays on grok when its load is given the content keys.
 `previewDcp(dirPath, contentKeys)` and `previewFile(filePath, contentKeys)` take
 `{ kdm, recipient_key, keys }`, the paths to a KDM and the recipient's private
