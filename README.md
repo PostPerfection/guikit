@@ -297,6 +297,92 @@ anything else means the app loaded something of its own: the rows stay rendered,
 the marker goes, and no end of file advances anything until a row is clicked
 again.
 
+## Timeline editor
+
+`timeline-editor.js` is an editable timeline of clips for a wizard's project
+view. The app owns the model and saves it. The editor draws it, and hands the
+whole model back after every edit:
+
+```js
+{
+  fps: [numerator, denominator],
+  clips: [{ picture, frames, inFrame, outFrame, sound: { kind, asset }, subtitle }],
+  sound,       // asset id of a WAV spanning the timeline, or null
+  subtitle,    // asset id of a subtitle file timed against the timeline, or null
+  reelStarts,  // timeline frames, sorted, never 0
+}
+```
+
+`picture`, `sound.asset`, `subtitle` and the timeline's `sound` and `subtitle`
+are the app's asset ids, and the app maps them to paths. `frames` is the
+source's frame count, and `outFrame` is exclusive. A clip's `sound.kind` is
+`'embedded'` (the audio inside the picture file), `'file'` (the WAV in
+`sound.asset`) or `'none'`. The timeline's `sound` replaces every clip's sound
+when it is set. This is the GUI side of postkit's `Timeline`.
+
+`initTimelineEditor(container, options)` renders into an element the app
+supplies. The options are all required:
+
+- `fps`, the rate of the empty timeline the editor starts with.
+- `assetName(assetId)`, the label for a span.
+- `assetKind(assetId)`, `'picture'`, `'sound'` or `'subtitle'`.
+- `sourceFrames(assetId)`, a Promise of the source's frame count, which the app
+  probes.
+- `onChange(model)`, called with a copy of the whole model after every edit.
+- `onSeek(timelineFrame)`, called on a ruler or clip click.
+
+`setTimeline(model)` replaces the model and re-renders, for project open and
+restore, and reports nothing. `getTimeline()` returns a copy.
+`setPlayhead(timelineFrame)` moves the playhead line and leaves the rest of the
+markup alone, so the app can call it from the metadata poll.
+`setReelStarts(frames)` takes the reel starts the app's split fields produce,
+drops 0 and duplicates, sorts them and reports the result through `onChange`.
+
+The edits are exported as functions that return a new model and leave the one
+they are given alone: `addClip(model, clip, index)` (appends without an index),
+`removeClip(model, index)`, `moveClip(model, from, to)`,
+`setClipRange(model, index, inFrame, outFrame)`, `splitReelAt(model, frame)` and
+`removeReelStart(model, frame)`. `totalFrames(model)` is the sum of the kept
+lengths, `clipStarts(model)` the timeline frame each clip starts at, and
+`clipAtFrame(model, frame)` returns `{ index, frameInClip }` or null past either
+end, `frameInClip` counting from the clip's start on the timeline, so the source
+frame is `inFrame + frameInClip`. A clip index that is not there throws a
+`RangeError`, and so does `setClipRange` for an in point below 0, at or past the
+out point, or an out point past `frames`, naming the clip and both numbers.
+`splitReelAt` ignores 0 and a frame already listed and keeps the list sorted.
+
+The editor draws a ruler in `framesToTimecode` at the timeline's rate, with
+reel start markers and a playhead line, over three tracks. Picture holds the
+clips, each span as wide as its kept length and labelled with the source's
+name. Sound has a span under each clip reading the WAV's name, "embedded" or "no
+sound", or one span across everything when the timeline's `sound` is set.
+Subtitle is the same for subtitles, with an empty span under a clip that has
+none. A dropped sound or subtitle span has a ✕ that takes it off again, which
+puts a clip's sound back to embedded.
+
+Assets come in by drag and drop. The drop's `text/plain` data is the asset id,
+parsed as an integer as the wizards' assets lists set it, and an asset only
+lands on its own kind of track. A picture becomes a new clip after the clip it
+is dropped on, or last, from frame 0 to the frame count `sourceFrames` resolves,
+with embedded sound. A sound dropped over a clip becomes that clip's sound file,
+and one dropped on the track's label, or anywhere on the track when the
+timeline's `sound` is set or there are no clips, becomes the timeline's `sound`.
+A subtitle works the same on its track.
+
+Clicking a clip selects it and seeks to the frame under the pointer. The
+selected clip gets In and Out fields in `HH:MM:SS:FF` source timecode,
+non-drop at the rate rounded to whole frames, plus Set in from playhead, Set out
+from playhead, ← and → to move it one place, and Remove. An In or Out typed in
+that does not parse or that `setClipRange` refuses changes nothing, and the
+field shows the clip's own value again. Clicking the ruler seeks. Split reel
+here adds a reel start at the playhead, and clicking a marker removes it. The −
+and + buttons zoom the tracks and ruler between 1 and 20 times the view's width,
+and the track labels stay in view while it scrolls. There is no keyboard
+control and no dragging of clips between places.
+
+`test/timeline-editor.test.mjs` drives the editor headless with a fake container
+and made-up click, change and drop events.
+
 ## Jobs
 
 `jobs.js` renders the Jobs table both wizards show. The app keeps the markup and

@@ -1163,6 +1163,203 @@ body.preview-fullscreen-hud-hidden * {
   pointer-events: none;
 }
 
+/* Timeline editor */
+.timeline-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.timeline-editor-toolbar,
+.timeline-editor-clip-panel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.timeline-editor-scroll {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.timeline-editor-body {
+  position: relative;
+  min-width: 100%;
+}
+
+/* starts where the track contents start, so a frame sits at the same x in both */
+.timeline-editor-ruler {
+  margin-left: var(--timeline-track-label-width);
+  height: 28px;
+  background: var(--surface-alt);
+  border-bottom: 1px solid var(--border);
+  position: relative;
+  cursor: pointer;
+  overflow: hidden;
+  user-select: none;
+}
+
+.timeline-editor-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border);
+}
+
+.timeline-editor-tick-label {
+  position: absolute;
+  top: 2px;
+  left: 4px;
+  font-size: 9px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-family: 'JetBrains Mono', 'SF Mono', 'Cascadia Code', monospace;
+}
+
+.timeline-editor-reel-marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  transform: translateX(-50%);
+  background: var(--accent);
+  z-index: 5;
+}
+
+.timeline-editor-reel-marker:hover {
+  background: #ef4444;
+}
+
+.timeline-editor-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #ef4444;
+  transform: translateX(-50%);
+  z-index: 10;
+  pointer-events: none;
+}
+
+.timeline-editor-track {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--border);
+  min-height: 40px;
+}
+
+.timeline-editor-track[data-track="subtitle"] {
+  border-bottom: none;
+}
+
+/* stays in view while a zoomed timeline scrolls */
+.timeline-editor-track-label {
+  position: sticky;
+  left: 0;
+  z-index: 11;
+  flex: none;
+  width: var(--timeline-track-label-width);
+  padding: 8px 12px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+}
+
+.timeline-editor-track-content {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+.timeline-editor-empty {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.timeline-editor-clip,
+.timeline-editor-span {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  box-sizing: border-box;
+  border: 1px solid var(--bg);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 0 8px;
+  font-size: 11px;
+  color: #fff;
+  overflow: hidden;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.timeline-editor-clip {
+  background: #7c3aed;
+}
+
+.timeline-editor-clip.selected {
+  box-shadow: 0 0 0 2px var(--accent), 0 2px 8px rgba(0,0,0,0.3);
+  z-index: 1;
+}
+
+.timeline-editor-track[data-track="sound"] .timeline-editor-span {
+  background: #2563eb;
+}
+
+.timeline-editor-track[data-track="subtitle"] .timeline-editor-span {
+  background: #b45309;
+}
+
+.timeline-editor-track .timeline-editor-span.timeline-editor-span-empty {
+  background: transparent;
+  border: 1px dashed var(--border);
+}
+
+.timeline-editor-span-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.timeline-editor-span-clear {
+  flex: none;
+  padding: 0 2px;
+  border: none;
+  background: none;
+  color: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.timeline-editor-span-clear:hover {
+  opacity: 1;
+}
+
+.timeline-editor-clip-name {
+  font-weight: 600;
+}
+
+.timeline-editor-timecode {
+  width: 12ch;
+  font-size: 12px;
+  font-family: 'JetBrains Mono', 'SF Mono', 'Cascadia Code', monospace;
+}
+
 /* Jobs table */
 .jobs-table {
   width: 100%;
