@@ -167,7 +167,7 @@ function applyEdit(nextTimeline) {
 }
 
 // non-drop timecode at the rate rounded to whole frames
-function frameTimecode(frames, fps) {
+export function frameTimecode(frames, fps) {
   const framesPerSecond = nominalFramesPerSecond(fps);
   const frameInSecond = String(frames % framesPerSecond).padStart(TIMECODE_FIELD_DIGITS, '0');
   return `${framesToTimecode(frames, [framesPerSecond, 1])}:${frameInSecond}`;
@@ -194,7 +194,7 @@ function render() {
     <div class="timeline-editor-toolbar">
       <button class="btn-sm" type="button" data-action="zoom-out" title="Zoom out"${zoom <= MINIMUM_ZOOM ? ' disabled' : ''}>−</button>
       <button class="btn-sm" type="button" data-action="zoom-in" title="Zoom in"${zoom >= MAXIMUM_ZOOM ? ' disabled' : ''}>+</button>
-      <button class="btn-sm" type="button" data-action="split-reel">Split reel here</button>
+      <button class="btn-sm" type="button" data-action="split-reel">Split ${editorOptions.reelWord} here</button>
     </div>
     <div class="timeline-editor-scroll">
       <div class="timeline-editor-body" style="width: ${zoom * PERCENT}%">
@@ -227,9 +227,13 @@ function renderRuler(total) {
     .map(
       (frame) => `
       <div class="timeline-editor-reel-marker" data-action="remove-reel-start" data-frame="${frame}"
-        style="left: ${(frame / total) * PERCENT}%" title="Reel starts at ${frameTimecode(frame, timeline.fps)}, click to remove"></div>`,
+        style="left: ${(frame / total) * PERCENT}%" title="${capitalized(editorOptions.reelWord)} starts at ${frameTimecode(frame, timeline.fps)}, click to remove"></div>`,
     );
   return `<div class="timeline-editor-ruler">${ticks.join('')}${markers.join('')}</div>`;
+}
+
+function capitalized(word) {
+  return word.charAt(0).toUpperCase() + word.slice(1);
 }
 
 function renderTrack(kind, label, labelTitle, content) {

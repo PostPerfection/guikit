@@ -73,13 +73,14 @@ function fakeTarget({ action, frame, targetClip, clipIndex, track, ruler } = {})
 
 let instances = 0;
 
-async function freshEditor(model) {
+async function freshEditor(model, reelWord = 'reel') {
   const editor = await import(`../src/timeline-editor.js?instance=${++instances}`);
   const container = fakeContainer();
   const changes = [];
   const seeks = [];
   editor.initTimelineEditor(container, {
     fps: FPS,
+    reelWord,
     assetName: (assetId) => ASSETS[assetId].name,
     assetKind: (assetId) => ASSETS[assetId].kind,
     sourceFrames: async (assetId) => ASSETS[assetId].frames,
@@ -325,6 +326,13 @@ test('Split reel here adds a reel start at the playhead and clicking its marker 
   clickAction(container, 'remove-reel-start', { frame: 100 });
   assert.deepEqual(changes.at(-1).reelStarts, []);
   assert.doesNotMatch(container.innerHTML, /timeline-editor-reel-marker/);
+});
+
+test('an app that splits into segments says segment on the button and the markers', async () => {
+  const { container } = await freshEditor({ ...twoClipTimeline(), reelStarts: [100] }, 'segment');
+  assert.match(container.innerHTML, />Split segment here</);
+  assert.match(container.innerHTML, /title="Segment starts at 00:00:04:04, click to remove"/);
+  assert.doesNotMatch(container.innerHTML, /[Rr]eel starts|Split reel/);
 });
 
 test('reel starts from the app are sorted and reported like any edit', async () => {

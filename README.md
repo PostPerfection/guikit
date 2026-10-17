@@ -332,6 +332,8 @@ when it is set. This is the GUI side of postkit's `Timeline`.
 supplies. The options are all required:
 
 - `fps`, the rate of the empty timeline the editor starts with.
+- `reelWord`, what the app calls a reel, `'reel'` or `'segment'`, used on the
+  Split button and the marker titles.
 - `assetName(assetId)`, the label for a span.
 - `assetKind(assetId)`, `'picture'`, `'sound'` or `'subtitle'`.
 - `sourceFrames(assetId)`, a Promise of the source's frame count, which the app
@@ -387,13 +389,51 @@ non-drop at the rate rounded to whole frames, plus Set in from playhead, Set out
 from playhead, ← and → to move it one place, and Remove. An In or Out typed in
 that does not parse or that `setClipRange` refuses changes nothing, and the
 field shows the clip's own value again. Clicking the ruler seeks. Split reel
-here adds a reel start at the playhead, and clicking a marker removes it. The −
+here (Split segment here with `reelWord: 'segment'`) adds a reel start at the
+playhead, and clicking a marker removes it. The −
 and + buttons zoom the tracks and ruler between 1 and 20 times the view's width,
 and the track labels stay in view while it scrolls. There is no keyboard
 control and no dragging of clips between places.
 
 `test/timeline-editor.test.mjs` drives the editor headless with a fake container
 and made-up click, change and drop events.
+
+### The timeline in a project
+
+`composition-timeline.js` holds what both wizards do with the model around the
+editor. Its functions take the model and return a new one, and the ones that
+need an asset take `assetById(assetId)` returning `{ id, type, path, fps, frames }`
+with `type` `'video'`, `'audio'` or `'subtitle'`.
+
+- `emptyTimeline(fps)`, and `DEFAULT_TIMELINE_FPS`, 24.
+- `withImportedAsset(timeline, asset)` puts a video last as a clip of its whole
+  source, and an audio or subtitle on the timeline's `sound` or `subtitle` while
+  that is empty and no clip has its own. `withUnplacedAssetsFilled(timeline,
+  assets)` gives every asset not on the timeline the same rule, taking only the
+  first video and only onto an empty timeline.
+- `withProbedFrames(timeline, assetId, frames)` fills the frame count of the
+  clips placed before their source was probed, and `withFirstClipRate` sets the
+  timeline's `fps` to the first clip's probed rate.
+- `withReelStartingClipsPlaced(composition)` turns a composition's
+  `reelStartingClipIndices`, which a project file upgrade leaves, into reel
+  starts at those clips once every clip has its frame count, and drops the list.
+- `withoutAsset(timeline, assetId)` takes an asset off every track.
+- `firstSoundAsset` and `firstSubtitleAsset`, the timeline's own or the first
+  clip's.
+- `reelSpans(timeline, assetById)`, one `{ frames, picture, sound, subtitle }`
+  per reel with the assets of the clip it starts in.
+- `timelineWire(timeline, assetById)`, postkit's `Timeline` JSON with paths for
+  asset ids, the form both wizards' `submit_job` takes.
+- `splitTimecodeFrames(spec, editRate)` reads a comma separated list of
+  `HH:MM:SS` or `HH:MM:SS:FF` into frames, null while one does not parse, and
+  `splitTimecodeSpec` writes it back. `withSplitAtFrames` makes those the reel
+  starts of a one-clip timeline.
+- `parseFrameRate('24000/1001')`, `sourceFrameCount(seconds, rate)` and
+  `ffprobeVideoInfo(json)`, which reads ffprobe's `-show_streams -show_format`
+  output into `{ width, height, fps, duration, frames, ... }`.
+- `TIMELINE_KIND_BY_ASSET_TYPE` maps an asset type to the editor's track.
+
+`test/composition-timeline.test.mjs` covers it.
 
 ## Jobs
 
