@@ -11,6 +11,7 @@ import {
   setClipRange,
   splitReelAt,
   totalFrames,
+  withReelStartsInsideTimeline,
 } from '../src/timeline-editor.js';
 
 const FPS = [24, 1];
@@ -178,6 +179,31 @@ test('setClipRange refuses an out point past the source and an in point before i
   assert.throws(() => setClipRange(model, 1, 0, 121), /clip 1: out point 121 is past the source's 120 frames/);
   assert.throws(() => setClipRange(model, 1, -1, 50), /clip 1: in point -1 is before the first frame/);
   assert.equal(setClipRange(model, 1, 0, 120).clips[1].outFrame, 120);
+});
+
+test('trimming the last clip drops the reel starts now past the end and keeps the ones inside', () => {
+  const model = { ...twoClipTimeline(), reelStarts: [100, 290, 310] };
+  const trimmed = setClipRange(model, 1, 20, 60);
+  assert.equal(totalFrames(trimmed), 280);
+  assert.deepEqual(trimmed.reelStarts, [100]);
+  assert.deepEqual(model.reelStarts, [100, 290, 310]);
+});
+
+test('removing a clip drops the reel starts now past the end and keeps the ones inside', () => {
+  const model = { ...twoClipTimeline(), reelStarts: [100, 250] };
+  assert.deepEqual(removeClip(model, 1).reelStarts, [100]);
+  assert.deepEqual(removeClip(model, 0).reelStarts, []);
+});
+
+test('a reel start exactly at the total is dropped, one a frame before it stays', () => {
+  const model = { ...twoClipTimeline(), reelStarts: [319, 320] };
+  assert.deepEqual(withReelStartsInsideTimeline(model).reelStarts, [319]);
+});
+
+test('a loaded timeline keeps reel starts past its end for clips not probed yet', async () => {
+  const unprobed = { ...twoClipTimeline(), clips: [{ ...clip(1, 0, 0), frames: 0 }], reelStarts: [100] };
+  const { editor } = await freshEditor(unprobed);
+  assert.deepEqual(editor.getTimeline().reelStarts, [100]);
 });
 
 test('splitReelAt keeps the reel starts sorted and ignores 0 and duplicates', () => {

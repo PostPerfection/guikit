@@ -1173,6 +1173,7 @@ body.preview-fullscreen-hud-hidden * {
 .timeline-editor-toolbar,
 .timeline-editor-clip-panel {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   font-size: 12px;
@@ -1777,20 +1778,21 @@ body.preview-fullscreen-hud-hidden * {
 #view-project .workspace {
   gap: 0;
 }
+/* the timeline in the reels panel needs the width of both columns */
 #view-project .workspace-main {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  grid-template-rows: minmax(0, auto) minmax(100px, 1fr);
+  grid-template-rows: minmax(100px, 1fr) minmax(200px, 1fr);
   grid-template-areas:
     "assets compositions"
-    "assets reels";
+    "reels reels";
 }
 #view-project .workspace-main:has(> .preview-panel) {
-  grid-template-rows: auto minmax(100px, auto) minmax(100px, 1fr);
+  grid-template-rows: auto minmax(100px, 1fr) minmax(200px, 1fr);
   grid-template-areas:
     "preview preview"
     "assets compositions"
-    "assets reels";
+    "reels reels";
 }
 #view-project .workspace-main > .preview-panel { grid-area: preview; }
 #view-project .assets-panel { grid-area: assets; }

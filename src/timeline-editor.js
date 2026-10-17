@@ -91,9 +91,10 @@ export function addClip(model, clip, index = model.clips.length) {
 
 export function removeClip(model, index) {
   checkClipIndex(model, index);
-  return editedCopy(model, (copy) => {
+  const edited = editedCopy(model, (copy) => {
     copy.clips.splice(index, 1);
   });
+  return withReelStartsInsideTimeline(edited);
 }
 
 export function moveClip(model, from, to) {
@@ -115,10 +116,11 @@ export function setClipRange(model, index, inFrame, outFrame) {
   if (outFrame > frames) {
     throw new RangeError(`clip ${index}: out point ${outFrame} is past the source's ${frames} frames`);
   }
-  return editedCopy(model, (copy) => {
+  const edited = editedCopy(model, (copy) => {
     copy.clips[index].inFrame = inFrame;
     copy.clips[index].outFrame = outFrame;
   });
+  return withReelStartsInsideTimeline(edited);
 }
 
 export function splitReelAt(model, frame) {
@@ -126,6 +128,14 @@ export function splitReelAt(model, frame) {
     if (frame <= 0 || copy.reelStarts.includes(frame)) return;
     copy.reelStarts.push(frame);
     copy.reelStarts.sort((first, second) => first - second);
+  });
+}
+
+// a reel start at the total would begin an empty reel
+export function withReelStartsInsideTimeline(model) {
+  const total = totalFrames(model);
+  return editedCopy(model, (copy) => {
+    copy.reelStarts = copy.reelStarts.filter((reelStart) => reelStart < total);
   });
 }
 

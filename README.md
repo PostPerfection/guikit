@@ -350,6 +350,10 @@ frame is `inFrame + frameInClip`. A clip index that is not there throws a
 `RangeError`, and so does `setClipRange` for an in point below 0, at or past the
 out point, or an out point past `frames`, naming the clip and both numbers.
 `splitReelAt` ignores 0 and a frame already listed and keeps the list sorted.
+`withReelStartsInsideTimeline(model)` drops every reel start at or past
+`totalFrames(model)`, the bound postkit's `Timeline` checks, and `removeClip`
+and `setClipRange` apply it to what they return. `setTimeline` does not, since a
+clip not probed yet has 0 frames.
 
 The editor draws a ruler in `framesToTimecode` at the timeline's rate, with
 reel start markers and a playhead line, over three tracks. Picture holds the
