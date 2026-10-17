@@ -136,7 +136,7 @@ test('a project file carries the wizard, the version and the form, and reads bac
   assert.equal(saved.wizard, WIZARD);
   assert.equal(saved.version, PROJECT_FILE_VERSION);
   assert.ok(!Number.isNaN(Date.parse(saved.saved)));
-  assert.deepEqual(readProject(projectText(form)), { form, version: PROJECT_FILE_VERSION });
+  assert.deepEqual(readProject(projectText(form)), { form, version: PROJECT_FILE_VERSION, upgradeNotes: [] });
 });
 
 test('a file from another wizard is refused naming that wizard', () => {
@@ -165,7 +165,7 @@ test('an older file runs every step up to the app version in order, each fed the
   const opened = readProject(projectText({ title: 'Film' }, WIZARD, 1), 3, migrations);
 
   assert.deepEqual(stepThreeInput, { name: 'Film' });
-  assert.deepEqual(opened, { form: { project: { name: 'Film' } }, version: 1 });
+  assert.deepEqual(opened, { form: { project: { name: 'Film' } }, version: 1, upgradeNotes: [] });
 });
 
 test('a missing step between the file and the app version is refused naming that version', () => {
@@ -188,7 +188,7 @@ test('a file at the app version runs no step', () => {
   const opened = readProject(projectText({ title: 'Film' }, WIZARD, 3), 3, migrations);
 
   assert.deepEqual(ranSteps, []);
-  assert.deepEqual(opened, { form: { title: 'Film' }, version: 3 });
+  assert.deepEqual(opened, { form: { title: 'Film' }, version: 3, upgradeNotes: [] });
 });
 
 test('a file with no form reads as an empty form, so every field takes its default', () => {
@@ -402,6 +402,45 @@ test('an older file names its missing paths after the upgrade', async () => {
   await project.openProjectFile('/p/Film.dcpwizard');
 
   assert.equal(statuses.at(-1), 'Opened Film.dcpwizard, upgraded from version 1, not found: /gone/clip.mov');
+});
+
+const NOTING_VERSIONING = {
+  projectFileVersion: 3,
+  projectFileMigrations: {
+    2: (form, upgradeNotes) => {
+      upgradeNotes.push('Reel 2 is clip 2 of the timeline');
+      return form;
+    },
+    3: (form, upgradeNotes) => {
+      upgradeNotes.push('Reel 3 is clip 3 of the timeline');
+      return form;
+    },
+  },
+};
+
+test('the notes the steps push come back in step order', () => {
+  const opened = readProject(projectText({ title: 'Film' }, WIZARD, 1), 3, NOTING_VERSIONING.projectFileMigrations);
+
+  assert.deepEqual(opened.upgradeNotes, ['Reel 2 is clip 2 of the timeline', 'Reel 3 is clip 3 of the timeline']);
+});
+
+test('an upgrade note follows the status as its own sentence, apart from the missing paths', async () => {
+  await launch({ title: '' }, { '/p/Film.dcpwizard': projectText({ title: 'Film', source: '/gone/clip.mov' }, WIZARD, 1) }, [], NOTING_VERSIONING);
+
+  await project.openProjectFile('/p/Film.dcpwizard');
+
+  assert.equal(
+    statuses.at(-1),
+    'Opened Film.dcpwizard, upgraded from version 1, not found: /gone/clip.mov. Reel 2 is clip 2 of the timeline. Reel 3 is clip 3 of the timeline',
+  );
+});
+
+test('a draft from an older version restores through the steps and says what they noted', async () => {
+  const draft = project.projectFileText(WIZARD, 2, { title: 'Unsaved' }, new Date(), '/p/Film.dcpwizard');
+
+  await launch({ title: '' }, { [DRAFT_PATH]: draft }, [], NOTING_VERSIONING);
+
+  assert.equal(statuses.at(-1), 'Restored the unsaved project. Reel 3 is clip 3 of the timeline');
 });
 
 test('a draft from an older version restores through the steps', async () => {

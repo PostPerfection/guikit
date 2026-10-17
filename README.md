@@ -499,6 +499,12 @@ draft makes that path the open project again, so the window title reads
 `<app> - Film.<ext> (draft)` and Save writes there. Saved project files never
 carry `draftOf`, and reading one ignores it.
 
+A file or draft saved at an older version runs each step of
+`options.projectFileMigrations` from its version up to
+`options.projectFileVersion`. A step is `(form, upgradeNotes) => form`. Each
+sentence it pushes onto `upgradeNotes` follows the opened or restored status as
+a sentence of its own, after the paths not found.
+
 `initProjects` also opens a project file the app was launched with. It invokes
 the `take_launch_project_path` command, which returns the path or null and tells
 the backend the page is ready, and opens that path. It listens for the

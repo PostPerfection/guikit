@@ -132,15 +132,16 @@ export function readProjectFile(text, wizard, version, migrations) {
     throw new Error(`saved as project version ${project.version}, this app reads up to version ${version}`);
   }
   const form = project.form && typeof project.form === 'object' && !Array.isArray(project.form) ? project.form : {};
-  return { form: migratedForm(form, project.version, version, migrations), version: project.version };
+  const upgradeNotes = [];
+  return { form: migratedForm(form, project.version, version, migrations, upgradeNotes), version: project.version, upgradeNotes };
 }
 
-function migratedForm(form, fileVersion, version, migrations) {
+function migratedForm(form, fileVersion, version, migrations, upgradeNotes) {
   let migrated = form;
   for (let nextVersion = fileVersion + 1; nextVersion <= version; nextVersion++) {
     const migrate = migrations[nextVersion];
     if (!migrate) throw new Error(`saved as project version ${fileVersion}, this app has no upgrade to version ${nextVersion}`);
-    migrated = migrate(migrated);
+    migrated = migrate(migrated, upgradeNotes);
   }
   return migrated;
 }
@@ -289,11 +290,15 @@ export async function openProjectFile(path) {
   addRecentProject(path, recentTitle(relocation.form, path));
   updateWindowTitle();
   const opened = upgraded ? `Opened ${fileNameOf(path)}, upgraded from version ${projectFile.version}` : `Opened ${fileNameOf(path)}`;
-  configuration.setStatus(withMissing(opened, [...relocation.missing, ...notRestored]));
+  configuration.setStatus(withUpgradeNotes(withMissing(opened, [...relocation.missing, ...notRestored]), projectFile.upgradeNotes));
 }
 
 function withMissing(status, missing) {
   return missing.length ? `${status}, not found: ${missing.join(', ')}` : status;
+}
+
+function withUpgradeNotes(status, upgradeNotes) {
+  return [status, ...upgradeNotes].join('. ');
 }
 
 function recentTitle(form, path) {
@@ -400,11 +405,11 @@ async function restoreDraft() {
     formOnDisk = JSON.stringify(configuration.serialize());
     return;
   }
-  let form;
+  let draft;
   let text;
   try {
     text = await readTextFile(draftPath);
-    form = readConfiguredProjectFile(text).form;
+    draft = readConfiguredProjectFile(text);
   } catch (error) {
     configuration.setStatus(`Could not restore the unsaved project in ${draftPath}: ${error.message || error}`);
     formOnDisk = null;
@@ -413,14 +418,15 @@ async function restoreDraft() {
   const { draftOf } = JSON.parse(text);
   const projectPath = typeof draftOf === 'string' ? draftOf : null;
   const projectFolder = projectPath ? folderOf(projectPath) : null;
-  const relocation = await relocateMissingPaths(form, projectFolder, configuration.outputFields, configuration.textFields);
+  const relocation = await relocateMissingPaths(draft.form, projectFolder, configuration.outputFields, configuration.textFields);
   const notRestored = (await configuration.restore(relocation.form, projectPath)) || [];
   currentProjectPath = projectPath;
   restoredFromDraft = true;
   projectFileForm = null;
   formOnDisk = JSON.stringify(configuration.serialize());
   updateWindowTitle();
-  configuration.setStatus(withMissing('Restored the unsaved project', [...relocation.missing, ...notRestored]));
+  const restored = withMissing('Restored the unsaved project', [...relocation.missing, ...notRestored]);
+  configuration.setStatus(withUpgradeNotes(restored, draft.upgradeNotes));
 }
 
 function queueDraftOperation(operation) {
