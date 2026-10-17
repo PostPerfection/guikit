@@ -8,6 +8,8 @@ use postkit::mpv_render::{MpvRenderPlayer, NativeDisplay};
 
 use super::{FRAME_BACK_STEP, FRAME_STEP};
 
+const FORCED_TITLE_PROPERTY: &str = "force-media-title";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Backend {
     Mpv,
@@ -169,6 +171,15 @@ impl Player {
         refuse_options_for_mpv(path, &options)?;
         self.start_mpv(path);
         self.mpv.load_package_dir(path)
+    }
+
+    // an edl:// timeline, which load_source would look for on disk as a file
+    pub fn load_mpv_uri(&self, uri: &str, file_options: &str) -> Result<(), String> {
+        self.start_mpv(uri);
+        // clears a composition title an earlier package load forced
+        self.mpv.set_property(FORCED_TITLE_PROPERTY, "")?;
+        self.mpv
+            .command(&["loadfile", uri, "replace", "0", file_options])
     }
 
     // the page sends no play after a load, mpv's loadfile starts playing itself

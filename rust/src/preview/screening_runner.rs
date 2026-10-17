@@ -30,6 +30,13 @@ pub struct PlayerStatus {
     pub eof: bool,
     pub position: Option<f64>,
     pub duration: Option<f64>,
+    pub container_fps: Option<f64>,
+    pub paused: bool,
+}
+
+// the queue empties at the hand-off, which tells the same source twice in a row apart
+pub(super) fn handed_off(status: &PlayerStatus, queued_source: &str) -> bool {
+    status.queued_source.is_none() && status.source.as_deref() == Some(queued_source)
 }
 
 // what a composition row plays, looked up by the app when the row loads so a KDM is picked then
@@ -293,10 +300,7 @@ impl ScreeningRun {
                     }
                 };
                 if let Some((queued_row, queued_source)) = queued {
-                    // the queue empties at the hand-off, which tells the same composition twice in a row apart
-                    let handed_off = status.queued_source.is_none()
-                        && status.source.as_deref() == Some(queued_source.as_str());
-                    if handed_off {
+                    if handed_off(&status, &queued_source) {
                         eprintln!(
                             "[playlist] row {} took over from row {} without a gap",
                             queued_row + 1,
@@ -454,7 +458,7 @@ impl ScreeningRun {
     }
 }
 
-struct PreviewRunnerPlayer<'a>(&'a PreviewPlayer);
+pub(super) struct PreviewRunnerPlayer<'a>(pub(super) &'a PreviewPlayer);
 
 impl RunnerPlayer for PreviewRunnerPlayer<'_> {
     fn load(&self, source: &Path, options: SourceOptions) -> Result<(), String> {
@@ -597,6 +601,7 @@ mod tests {
                 eof: false,
                 position: Some(0.0),
                 duration: Some(played_seconds(options.range)),
+                ..PlayerStatus::default()
             };
             Ok(())
         }

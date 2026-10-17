@@ -10,6 +10,7 @@
 //! thread while the render thread waits for the core.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicU64;
 use std::sync::Mutex;
 
 use postkit::audio_levels::ChannelLevel;
@@ -18,7 +19,8 @@ use postkit::grok_player::{
     DecodeScale as GrokDecodeScale, GrokPlayer, SubtitleSlot as GrokSubtitleSlot,
 };
 use postkit::mpv_render::{MpvRenderPlayer, OsdAssOverlay};
-use serde::Deserialize;
+use postkit::timeline::{join_subtitles, mpv_edl_uri, render_sound, Timeline};
+use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
 mod overlays;
@@ -32,6 +34,13 @@ pub use player::{Backend, Player};
 
 pub mod player_controls;
 pub mod screening_runner;
+use screening_runner::PreviewRunnerPlayer;
+
+mod timeline_preview;
+use timeline_preview::{
+    follow_grok_timeline, timeline_backend, GrokTimelineRun, LoadedTimeline, TimelineFrames,
+    TimelinePlayback,
+};
 
 /// The OSD overlay the QC drawings occupy. Ids belong to the libmpv client, so
 /// this one is the app's alone.
@@ -97,6 +106,10 @@ const SHOWN_FRAME_SIZE_PROPERTIES: [(&str, &str); 2] = [
 ];
 // the source channel levels the page's meter draws, null while the meter is off
 const AUDIO_LEVELS_FIELD: &str = "audio_levels";
+// under the app's cache folder, the timeline's sound and joined subtitles for mpv
+const TIMELINE_WORK_DIRECTORY: &str = "preview-timeline";
+const TIMELINE_SOUND_FILE: &str = "timeline-sound.wav";
+const TIMELINE_SUBTITLE_FILE: &str = "timeline-subtitles.srt";
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -134,6 +147,8 @@ pub struct PreviewPlayer {
     sent_rectangles: Mutex<Option<Vec<OverlayRectangle>>>,
     stereo_output: Mutex<player_controls::StereoMode>,
     picture_filters: Mutex<Option<Vec<String>>>,
+    timeline: Mutex<Option<LoadedTimeline>>,
+    timeline_generation: AtomicU64,
 }
 
 impl PreviewPlayer {
@@ -148,6 +163,8 @@ impl PreviewPlayer {
             sent_rectangles: Mutex::new(None),
             stereo_output: Mutex::new(player_controls::StereoMode::default()),
             picture_filters: Mutex::new(None),
+            timeline: Mutex::new(None),
+            timeline_generation: AtomicU64::new(0),
         }
     }
 
@@ -287,9 +304,67 @@ pub fn preview_load(
 ) -> Result<(), String> {
     let keys = resolve_content_keys(content_keys)?;
     let player = state.player()?;
+    state.clear_timeline();
     state.forget_loaded_file(player.mpv())?;
     send_decode_scale_to_grok(player, &state);
     player.load_source_with_packages(&file_path, keys, &other_packages)
+}
+
+#[derive(Serialize)]
+pub struct TimelinePreview {
+    // the grok player plays the JPEG 2000 clips without the timeline's sound and subtitles
+    picture_only: bool,
+}
+
+#[tauri::command(async)]
+pub fn preview_load_timeline(
+    timeline: Timeline,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, PreviewPlayer>,
+) -> Result<TimelinePreview, String> {
+    let player = state.player()?;
+    state.clear_timeline();
+    timeline.check()?;
+    if timeline_backend(&timeline)? == Backend::Grok {
+        let run = GrokTimelineRun::start(timeline, &PreviewRunnerPlayer(&state))?;
+        let generation = state.install_timeline(TimelinePlayback::Grok(run));
+        follow_grok_timeline(app, generation);
+        return Ok(TimelinePreview { picture_only: true });
+    }
+    let work_dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| format!("no cache folder to write the timeline's sound into: {e}"))?
+        .join(TIMELINE_WORK_DIRECTORY);
+    load_mpv_timeline(player, &state, &timeline, &work_dir)?;
+    Ok(TimelinePreview {
+        picture_only: false,
+    })
+}
+
+fn load_mpv_timeline(
+    player: &Player,
+    state: &PreviewPlayer,
+    timeline: &Timeline,
+    work_dir: &Path,
+) -> Result<(), String> {
+    postkit::timeline::refuse_two_subtitle_sources(timeline)?;
+    std::fs::create_dir_all(work_dir)
+        .map_err(|e| format!("cannot create {}: {e}", work_dir.display()))?;
+    let sound = render_sound(timeline, &work_dir.join(TIMELINE_SOUND_FILE))?;
+    let subtitle = match &timeline.subtitle {
+        Some(subtitle) => Some(subtitle.clone()),
+        None => join_subtitles(timeline, &work_dir.join(TIMELINE_SUBTITLE_FILE))?,
+    };
+    state.forget_loaded_file(player.mpv())?;
+    let file_options = {
+        let mut tracks = state.subtitle_tracks.lock().unwrap();
+        tracks.subtitle.file_path = subtitle.map(|path| path.display().to_string());
+        reload_file_options(false, None, &tracks)
+    };
+    player.load_mpv_uri(&mpv_edl_uri(timeline, sound.as_deref()), &file_options)?;
+    state.install_timeline(TimelinePlayback::Mpv(TimelineFrames::of(timeline)));
+    Ok(())
 }
 
 // a source the grok player does not take plays on mpv, where content keys do not apply
@@ -320,6 +395,9 @@ pub fn preview_play_pause(state: tauri::State<'_, PreviewPlayer>) -> Result<(), 
 
 #[tauri::command(async)]
 pub fn preview_seek(seconds: f64, state: tauri::State<'_, PreviewPlayer>) -> Result<(), String> {
+    if let Some(sought) = state.with_grok_timeline(|run, player| run.seek_by(seconds, player)) {
+        return sought;
+    }
     state.player()?.seek(seconds)
 }
 
@@ -328,6 +406,9 @@ pub fn preview_seek_absolute(
     seconds: f64,
     state: tauri::State<'_, PreviewPlayer>,
 ) -> Result<(), String> {
+    if let Some(sought) = state.with_grok_timeline(|run, player| run.seek(seconds, player)) {
+        return sought;
+    }
     state.player()?.seek_absolute(seconds)
 }
 
@@ -348,17 +429,27 @@ pub fn preview_frame_back_step(state: tauri::State<'_, PreviewPlayer>) -> Result
 #[tauri::command(async)]
 pub fn preview_stop(state: tauri::State<'_, PreviewPlayer>) -> Result<(), String> {
     let player = state.player()?;
+    state.clear_timeline();
     state.forget_loaded_file(player.mpv())?;
     player.stop()
 }
 
 #[tauri::command(async)]
 pub fn preview_get_position(state: tauri::State<'_, PreviewPlayer>) -> Result<f64, String> {
-    state.player()?.position()
+    let player = state.player()?;
+    match state.timeline_position(player)? {
+        Some(position) => position
+            .seconds
+            .ok_or_else(|| "nothing is loaded".to_string()),
+        None => player.position(),
+    }
 }
 
 #[tauri::command(async)]
 pub fn preview_get_duration(state: tauri::State<'_, PreviewPlayer>) -> Result<f64, String> {
+    if let Some(duration) = state.timeline_duration() {
+        return Ok(duration);
+    }
     state.player()?.duration()
 }
 
@@ -373,6 +464,11 @@ pub fn preview_get_metadata(state: tauri::State<'_, PreviewPlayer>) -> Result<St
 }
 
 fn poll_metadata(player: &Player, state: &PreviewPlayer) -> Result<String, String> {
+    let metadata = backend_metadata(player, state)?;
+    with_extra_fields(&metadata, &state.timeline_fields(player)?)
+}
+
+fn backend_metadata(player: &Player, state: &PreviewPlayer) -> Result<String, String> {
     if player.active() == Backend::Grok {
         apply_grok_overlays(player.grok(), state);
         let levels = audio_levels_json(player.grok().audio_levels())?;
@@ -418,6 +514,7 @@ pub fn preview_load_dcp(
 ) -> Result<(), String> {
     let keys = resolve_content_keys(content_keys)?;
     let player = state.player()?;
+    state.clear_timeline();
     state.forget_loaded_file(player.mpv())?;
     send_decode_scale_to_grok(player, &state);
     player.load_package_dir(&dir_path, keys)
@@ -908,6 +1005,9 @@ mod backend_selection_tests;
 mod end_of_file_tests;
 
 #[cfg(test)]
+mod mpv_timeline_tests;
+
+#[cfg(test)]
 mod content_keys_tests;
 
 #[cfg(test)]
@@ -1135,6 +1235,7 @@ mod tests {
                 preview_set_surface,
                 preview_is_embedded,
                 preview_load,
+                preview_load_timeline,
                 preview_play_pause,
                 preview_seek,
                 preview_seek_absolute,

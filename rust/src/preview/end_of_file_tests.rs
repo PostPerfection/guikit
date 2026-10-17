@@ -119,7 +119,7 @@ fn loaded_player(dir: &Path) -> MpvRenderPlayer {
 /// Take the frames mpv offers, which is the only thing that makes playback
 /// advance under the software renderer, until `ready` holds for the metadata the
 /// page polls.
-fn pump_until(
+pub(super) fn pump_until(
     player: &MpvRenderPlayer,
     mut ready: impl FnMut(&str) -> bool,
 ) -> Result<String, String> {
