@@ -10,6 +10,7 @@ import {
   splitTimecodeSpec,
   timelineFrameAtSourceFrame,
   timelineWire,
+  timelineWithKnownAssets,
   withFirstClipRate,
   withImportedAsset,
   withProbedFrames,
@@ -202,4 +203,24 @@ test('removing an asset drops its clips and the reel starts now past the end', (
   const withoutSound = withoutAsset(withoutAsset(timeline, 4), 6);
   assert.deepEqual(withoutSound.clips[1].sound, { kind: 'embedded', asset: null });
   assert.equal(withoutSound.sound, null);
+});
+
+test('an asset the project file no longer lists is taken off the timeline and named', () => {
+  const composition = {
+    name: 'Main',
+    timeline: {
+      ...emptyTimeline([24, 1]),
+      clips: [clip(1, 240, 0, 96), clip(9, 96, 0, 96), clip(2, 96, 0, 96, { kind: 'file', asset: 9 }, 9)],
+      sound: 9,
+      subtitle: 8,
+    },
+  };
+  const notRestored = [];
+
+  const kept = timelineWithKnownAssets(composition, new Map(ASSETS.map((asset) => [asset.id, asset])), notRestored);
+
+  assert.deepEqual(kept.clips, [clip(1, 240, 0, 96), clip(2, 96, 0, 96)]);
+  assert.equal(kept.sound, null);
+  assert.equal(kept.subtitle, 8);
+  assert.deepEqual(notRestored, ['Main clip 2 picture', 'Main clip 2 sound', 'Main clip 2 subtitle', 'Main timeline sound']);
 });

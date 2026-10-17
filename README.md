@@ -417,7 +417,10 @@ with `type` `'video'`, `'audio'` or `'subtitle'`.
 - `withReelStartingClipsPlaced(composition)` turns a composition's
   `reelStartingClipIndices`, which a project file upgrade leaves, into reel
   starts at those clips once every clip has its frame count, and drops the list.
-- `withoutAsset(timeline, assetId)` takes an asset off every track.
+- `withoutAsset(timeline, assetId)` takes an asset off every track, and
+  `timelineWithKnownAssets(composition, assetsById, notRestored)` takes off
+  every asset id a reopened project file does not list, pushing
+  `"<composition name> clip 2 sound"` and the like onto `notRestored`.
 - `firstSoundAsset` and `firstSubtitleAsset`, the timeline's own or the first
   clip's.
 - `reelSpans(timeline, assetById)`, one `{ frames, picture, sound, subtitle }`

@@ -94,6 +94,24 @@ export function withoutAsset(timeline, assetId) {
   return withReelStartsInsideTimeline(kept);
 }
 
+// an asset id the project file does not list is taken off the timeline and named
+export function timelineWithKnownAssets(composition, assetsById, notRestored) {
+  const timeline = structuredClone(composition.timeline);
+  const known = (assetId, place) => {
+    if (assetId === null || assetsById.has(assetId)) return true;
+    notRestored.push(`${composition.name} ${place}`);
+    return false;
+  };
+  timeline.clips = timeline.clips.filter((clip, index) => known(clip.picture, `clip ${index + 1} picture`));
+  timeline.clips.forEach((clip, index) => {
+    if (!known(clip.sound.asset, `clip ${index + 1} sound`)) clip.sound = embeddedSound();
+    if (!known(clip.subtitle, `clip ${index + 1} subtitle`)) clip.subtitle = null;
+  });
+  if (!known(timeline.sound, 'timeline sound')) timeline.sound = null;
+  if (!known(timeline.subtitle, 'timeline subtitle')) timeline.subtitle = null;
+  return timeline;
+}
+
 export function parseFrameRate(rateText) {
   const [numerator, denominator = 1] = String(rateText ?? '').split('/').map(Number);
   if (!(numerator > 0) || !(denominator > 0)) return null;
