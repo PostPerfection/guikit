@@ -39,7 +39,7 @@ use screening_runner::PreviewRunnerPlayer;
 mod timeline_preview;
 use timeline_preview::{
     follow_grok_timeline, timeline_backend, GrokTimelineRun, LoadedTimeline, TimelineFrames,
-    TimelinePlayback,
+    TimelinePlayback, TimelinePlayer,
 };
 
 /// The OSD overlay the QC drawings occupy. Ids belong to the libmpv client, so
@@ -106,7 +106,7 @@ const SHOWN_FRAME_SIZE_PROPERTIES: [(&str, &str); 2] = [
 ];
 // the source channel levels the page's meter draws, null while the meter is off
 const AUDIO_LEVELS_FIELD: &str = "audio_levels";
-// under the app's cache folder, the timeline's sound and joined subtitles for mpv
+// under the app's cache folder, the timeline's sound, and its joined subtitles for mpv
 const TIMELINE_WORK_DIRECTORY: &str = "preview-timeline";
 const TIMELINE_SOUND_FILE: &str = "timeline-sound.wav";
 const TIMELINE_SUBTITLE_FILE: &str = "timeline-subtitles.srt";
@@ -312,7 +312,7 @@ pub fn preview_load(
 
 #[derive(Serialize)]
 pub struct TimelinePreview {
-    // the grok player plays the JPEG 2000 clips without the timeline's sound and subtitles
+    // the page shows a picture-only hint while this is true
     picture_only: bool,
 }
 
@@ -325,21 +325,37 @@ pub fn preview_load_timeline(
     let player = state.player()?;
     state.clear_timeline();
     timeline.check()?;
-    if timeline_backend(&timeline)? == Backend::Grok {
-        let run = GrokTimelineRun::start(timeline, &PreviewRunnerPlayer(&state))?;
-        let generation = state.install_timeline(TimelinePlayback::Grok(run), Vec::new());
-        follow_grok_timeline(app, generation);
-        return Ok(TimelinePreview { picture_only: true });
-    }
+    let backend = timeline_backend(&timeline)?;
     let work_dir = app
         .path()
         .app_cache_dir()
         .map_err(|e| format!("no cache folder to write the timeline's sound into: {e}"))?
         .join(TIMELINE_WORK_DIRECTORY);
-    load_mpv_timeline(player, &state, &timeline, &work_dir)?;
+    if backend == Backend::Grok {
+        let generation =
+            load_grok_timeline(&state, timeline, &work_dir, &PreviewRunnerPlayer(&state))?;
+        follow_grok_timeline(app, generation);
+    } else {
+        load_mpv_timeline(player, &state, &timeline, &work_dir)?;
+    }
     Ok(TimelinePreview {
         picture_only: false,
     })
+}
+
+fn load_grok_timeline(
+    state: &PreviewPlayer,
+    timeline: Timeline,
+    work_dir: &Path,
+    player: &impl TimelinePlayer,
+) -> Result<u64, String> {
+    postkit::timeline::refuse_two_subtitle_sources(&timeline)?;
+    std::fs::create_dir_all(work_dir)
+        .map_err(|e| format!("cannot create {}: {e}", work_dir.display()))?;
+    let sound_file = work_dir.join(TIMELINE_SOUND_FILE);
+    let sound = render_sound(&timeline, &sound_file)?;
+    let run = GrokTimelineRun::start(timeline, sound, player)?;
+    Ok(state.install_timeline(TimelinePlayback::Grok(run), vec![sound_file]))
 }
 
 fn load_mpv_timeline(

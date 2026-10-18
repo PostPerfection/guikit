@@ -4,7 +4,9 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use postkit::encode::{FrameRate, InputType};
-use postkit::grok_player::{FrameRange, GrokPlayer, SourceOptions};
+use postkit::grok_player::{
+    FrameRange, GrokPlayer, SoundFile, SourceOptions, SourceSubtitles, SubtitleFile,
+};
 use postkit::timeline::{clip_name, Clip, Timeline};
 use tauri::Manager;
 
@@ -73,15 +75,24 @@ impl TimelineFrames {
 pub struct GrokTimelineRun {
     frames: TimelineFrames,
     clips: Vec<Clip>,
+    // the timeline's rendered sound, which every clip plays from its place on the timeline
+    sound: Option<PathBuf>,
+    timeline_subtitle: Option<PathBuf>,
     current_clip: usize,
     queued_clip: Option<usize>,
 }
 
 impl GrokTimelineRun {
-    pub fn start(timeline: Timeline, player: &impl TimelinePlayer) -> Result<Self, String> {
+    pub fn start(
+        timeline: Timeline,
+        sound: Option<PathBuf>,
+        player: &impl TimelinePlayer,
+    ) -> Result<Self, String> {
         let mut run = GrokTimelineRun {
             frames: TimelineFrames::of(&timeline),
             clips: timeline.clips,
+            sound,
+            timeline_subtitle: timeline.subtitle,
             current_clip: 0,
             queued_clip: None,
         };
@@ -95,13 +106,38 @@ impl GrokTimelineRun {
 
     fn clip_options(&self, index: usize) -> SourceOptions {
         let clip = &self.clips[index];
+        let start = self.frames.clip_starts[index];
         SourceOptions {
             range: Some(FrameRange {
                 in_frame: clip.in_frame,
                 out_frame: Some(clip.out_frame),
             }),
+            sound: self.sound.clone().map(|path| SoundFile {
+                path,
+                fps: self.frames.fps,
+                first_frame: start,
+            }),
+            subtitles: self.clip_subtitles(index),
+            codestream_fps: Some(self.frames.fps),
             ..SourceOptions::default()
         }
+    }
+
+    // a clip's own file is timed against its source, the timeline's file against the timeline
+    fn clip_subtitles(&self, index: usize) -> SourceSubtitles {
+        let clip = &self.clips[index];
+        let (path, source_frame_at_time_zero) = match (&clip.subtitle, &self.timeline_subtitle) {
+            (Some(own), _) => (own, 0),
+            (None, Some(timeline)) => (
+                timeline,
+                clip.in_frame as i64 - self.frames.clip_starts[index] as i64,
+            ),
+            (None, None) => return SourceSubtitles::Empty,
+        };
+        SourceSubtitles::File(SubtitleFile {
+            path: path.clone(),
+            source_frame_at_time_zero,
+        })
     }
 
     fn load_clip(&mut self, index: usize, player: &impl TimelinePlayer) -> Result<(), String> {
@@ -157,7 +193,6 @@ impl GrokTimelineRun {
     }
 
     pub fn position(&self, status: &PlayerStatus) -> Option<f64> {
-        // the player counts in its own frame rate, which for a codestream directory is not the timeline's
         let frames_into_clip = (status.position? * status.container_fps?).round() as u64;
         let start = self.frames.clip_starts[self.playing_clip(status)];
         Some(self.frames.seconds_at(start + frames_into_clip))
@@ -376,8 +411,11 @@ pub(super) fn follow_grok_timeline(app: tauri::AppHandle, generation: u64) {
 
 #[cfg(test)]
 mod tests {
+    use super::super::end_of_file_tests::overlay_state;
+    use super::super::{load_grok_timeline, PreviewOverlays};
     use super::*;
     use postkit::timeline::{ClipSound, SoundTrack, TIMELINE_FORMAT_VERSION};
+    use postkit::wav_io::{SampleFormat, WavSpec, WavWriter};
     use std::cell::RefCell;
     use std::path::{Path, PathBuf};
 
@@ -392,11 +430,42 @@ mod tests {
     struct FakePlayer {
         status: RefCell<PlayerStatus>,
         calls: RefCell<Vec<String>>,
+        // the sound and subtitles of each load and queue
+        clip_media: RefCell<Vec<String>>,
     }
 
     impl FakePlayer {
         fn calls(&self) -> Vec<String> {
             self.calls.take()
+        }
+
+        fn clip_media(&self) -> Vec<String> {
+            self.clip_media.take()
+        }
+
+        fn record_media(&self, source: &Path, options: &SourceOptions) {
+            let sound = match &options.sound {
+                Some(sound) => format!(
+                    "{} from {} at {}/{}",
+                    sound.path.display(),
+                    sound.first_frame,
+                    sound.fps.numerator,
+                    sound.fps.denominator
+                ),
+                None => "no sound".to_string(),
+            };
+            let subtitles = match &options.subtitles {
+                SourceSubtitles::Composition => "its own subtitles".to_string(),
+                SourceSubtitles::Empty => "no subtitles".to_string(),
+                SourceSubtitles::File(file) => format!(
+                    "{} from source frame {}",
+                    file.path.display(),
+                    file.source_frame_at_time_zero
+                ),
+            };
+            self.clip_media
+                .borrow_mut()
+                .push(format!("{}: {sound}, {subtitles}", source.display()));
         }
 
         fn play_to(&self, seconds: f64) {
@@ -433,6 +502,7 @@ mod tests {
             self.calls
                 .borrow_mut()
                 .push(format!("load {}", described(source, &options)));
+            self.record_media(source, &options);
             *self.status.borrow_mut() = PlayerStatus {
                 source: Some(source.display().to_string()),
                 position: Some(0.0),
@@ -446,6 +516,7 @@ mod tests {
             self.calls
                 .borrow_mut()
                 .push(format!("queue {}", described(source, &options)));
+            self.record_media(source, &options);
             self.status.borrow_mut().queued_source = Some(source.display().to_string());
             Ok(())
         }
@@ -506,7 +577,7 @@ mod tests {
     #[test]
     fn the_first_clip_loads_with_its_range_and_the_second_queues_behind_it() {
         let player = FakePlayer::default();
-        GrokTimelineRun::start(three_clips(), &player).unwrap();
+        GrokTimelineRun::start(three_clips(), None, &player).unwrap();
         assert_eq!(
             player.calls(),
             vec![
@@ -519,7 +590,7 @@ mod tests {
     #[test]
     fn the_position_adds_the_clip_start_and_follows_the_hand_off() {
         let player = FakePlayer::default();
-        let mut run = GrokTimelineRun::start(three_clips(), &player).unwrap();
+        let mut run = GrokTimelineRun::start(three_clips(), None, &player).unwrap();
         player.play_to(1.0);
         let status = player.status().unwrap();
         assert_eq!(run.position(&status), Some(1.0));
@@ -538,10 +609,108 @@ mod tests {
         assert_eq!(run.playing_clip(&player.status().unwrap()), 1);
     }
 
+    const TIMELINE_SOUND: &str = "/cache/timeline-sound.wav";
+
+    #[test]
+    fn every_clip_plays_the_timeline_sound_from_its_place_on_the_timeline() {
+        let player = FakePlayer::default();
+        let mut run =
+            GrokTimelineRun::start(three_clips(), Some(PathBuf::from(TIMELINE_SOUND)), &player)
+                .unwrap();
+        player.reach_the_end();
+        run.tick(&player).unwrap();
+        let sound_from = |start: u64| format!("{TIMELINE_SOUND} from {start} at 24/1");
+        assert_eq!(
+            player.clip_media(),
+            vec![
+                format!("{FIRST}: {}, no subtitles", sound_from(0)),
+                format!("{SECOND}: {}, no subtitles", sound_from(48)),
+                format!("{THIRD}: {}, no subtitles", sound_from(72)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_clip_subtitle_is_timed_against_its_source_and_the_timeline_subtitle_against_the_timeline()
+    {
+        let mut timeline = three_clips();
+        timeline.clips[1].subtitle = Some(PathBuf::from("/media/second.srt"));
+        let player = FakePlayer::default();
+        let mut run = GrokTimelineRun::start(timeline, None, &player).unwrap();
+        player.reach_the_end();
+        run.tick(&player).unwrap();
+        assert_eq!(
+            player.clip_media(),
+            vec![
+                format!("{FIRST}: no sound, no subtitles"),
+                format!("{SECOND}: no sound, /media/second.srt from source frame 0"),
+                format!("{THIRD}: no sound, no subtitles"),
+            ]
+        );
+
+        let mut timeline = three_clips();
+        timeline.subtitle = Some(PathBuf::from("/media/timeline.srt"));
+        let player = FakePlayer::default();
+        let mut run = GrokTimelineRun::start(timeline, None, &player).unwrap();
+        // timeline frame 54 is frame 6 of the second clip
+        run.seek(2.25, &player).unwrap();
+        // the third clip starts at timeline frame 72 on its source frame 100
+        assert_eq!(
+            player.clip_media()[2..],
+            [
+                format!("{SECOND}: no sound, /media/timeline.srt from source frame -48"),
+                format!("{THIRD}: no sound, /media/timeline.srt from source frame 28"),
+            ]
+        );
+    }
+
+    #[test]
+    fn clearing_a_grok_timeline_removes_the_sound_rendered_for_it() {
+        const SAMPLE_RATE: u32 = 48_000;
+        const CHANNELS: u16 = 2;
+        const BYTES_PER_SAMPLE: u16 = 3;
+        const BITS_PER_BYTE: u16 = 8;
+        let directory = tempfile::tempdir().unwrap();
+        let clip_sound = directory.path().join("clip.wav");
+        let spec = WavSpec {
+            channels: CHANNELS,
+            sample_rate: SAMPLE_RATE,
+            bits_per_sample: BYTES_PER_SAMPLE * BITS_PER_BYTE,
+            sample_format: SampleFormat::Int,
+        };
+        let mut writer = WavWriter::create(&clip_sound, spec, u64::from(SAMPLE_RATE)).unwrap();
+        let second_of_silence =
+            SAMPLE_RATE as usize * usize::from(CHANNELS) * usize::from(BYTES_PER_SAMPLE);
+        writer.write_bytes(&vec![0u8; second_of_silence]).unwrap();
+        writer.finalize().unwrap();
+        let mut timeline = three_clips();
+        timeline.clips[0].sound = ClipSound::File(clip_sound.clone());
+        let work_dir = directory.path().join("work");
+        let sound_file = work_dir.join(super::super::TIMELINE_SOUND_FILE);
+        let state = overlay_state(PreviewOverlays::default());
+        let player = FakePlayer::default();
+
+        load_grok_timeline(&state, timeline, &work_dir, &player).unwrap();
+        assert!(sound_file.exists());
+        assert!(
+            player.clip_media()[0].contains(&format!("{} from 0", sound_file.display())),
+            "the first clip does not play the rendered sound"
+        );
+
+        state.clear_timeline();
+        assert!(
+            !sound_file.exists(),
+            "{} is left behind",
+            sound_file.display()
+        );
+        assert!(clip_sound.exists());
+        assert_eq!(state.timeline_duration(), None);
+    }
+
     #[test]
     fn the_last_clip_queues_nothing_after_it() {
         let player = FakePlayer::default();
-        let mut run = GrokTimelineRun::start(three_clips(), &player).unwrap();
+        let mut run = GrokTimelineRun::start(three_clips(), None, &player).unwrap();
         player.reach_the_end();
         run.tick(&player).unwrap();
         player.reach_the_end();
@@ -554,7 +723,7 @@ mod tests {
     #[test]
     fn a_clip_that_ends_between_ticks_loads_the_clip_after_it() {
         let player = FakePlayer::default();
-        let mut run = GrokTimelineRun::start(three_clips(), &player).unwrap();
+        let mut run = GrokTimelineRun::start(three_clips(), None, &player).unwrap();
         player.reach_the_end();
         player.reach_the_end();
         player.calls();
@@ -566,7 +735,7 @@ mod tests {
     #[test]
     fn a_seek_inside_the_playing_clip_seeks_within_its_range() {
         let player = FakePlayer::default();
-        let mut run = GrokTimelineRun::start(three_clips(), &player).unwrap();
+        let mut run = GrokTimelineRun::start(three_clips(), None, &player).unwrap();
         player.calls();
         run.seek(1.5, &player).unwrap();
         assert_eq!(player.calls(), vec!["seek 1.5"]);
@@ -575,7 +744,7 @@ mod tests {
     #[test]
     fn a_seek_into_another_clip_loads_it_and_queues_the_one_after() {
         let player = FakePlayer::default();
-        let mut run = GrokTimelineRun::start(three_clips(), &player).unwrap();
+        let mut run = GrokTimelineRun::start(three_clips(), None, &player).unwrap();
         player.calls();
         // timeline frame 54 is frame 6 of the second clip
         run.seek(2.25, &player).unwrap();
@@ -593,7 +762,7 @@ mod tests {
     #[test]
     fn a_seek_into_another_clip_while_paused_stays_paused() {
         let player = FakePlayer::default();
-        let mut run = GrokTimelineRun::start(three_clips(), &player).unwrap();
+        let mut run = GrokTimelineRun::start(three_clips(), None, &player).unwrap();
         player.set_paused(true).unwrap();
         player.calls();
         run.seek(3.25, &player).unwrap();
@@ -610,7 +779,7 @@ mod tests {
     #[test]
     fn a_relative_seek_moves_from_the_timeline_position() {
         let player = FakePlayer::default();
-        let mut run = GrokTimelineRun::start(three_clips(), &player).unwrap();
+        let mut run = GrokTimelineRun::start(three_clips(), None, &player).unwrap();
         player.play_to(1.5);
         player.calls();
         run.seek_by(1.0, &player).unwrap();
@@ -627,7 +796,7 @@ mod tests {
     #[test]
     fn another_source_on_the_player_ends_the_run() {
         let player = FakePlayer::default();
-        let mut run = GrokTimelineRun::start(three_clips(), &player).unwrap();
+        let mut run = GrokTimelineRun::start(three_clips(), None, &player).unwrap();
         player
             .load(
                 Path::new("/elsewhere.mxf"),

@@ -128,6 +128,7 @@ fn source_options(source: RowSource, range: Option<FrameRange>) -> SourceOptions
         keys: source.keys,
         other_packages: source.other_packages,
         range,
+        ..SourceOptions::default()
     }
 }
 

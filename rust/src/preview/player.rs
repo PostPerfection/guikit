@@ -142,7 +142,7 @@ impl Player {
         let options = SourceOptions {
             keys,
             other_packages: other_packages.to_vec(),
-            range: None,
+            ..SourceOptions::default()
         };
         self.load_source_with_options(path, options)
     }
