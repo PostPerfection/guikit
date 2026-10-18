@@ -11,8 +11,8 @@ use postkit::mpv_render::MpvRenderPlayer;
 use postkit::packaging::{ns, AssetMap, AssetMapAsset, DcpCpl, DcpCplReel};
 
 use super::{
-    apply_overlays, player_metadata, PreviewCrop, PreviewOverlays, PreviewPlayer, PreviewSurface,
-    FRAME_BACK_STEP, FRAME_STEP,
+    apply_overlays, player_metadata, ContentRectangle, PreviewCrop, PreviewOverlays, PreviewPlayer,
+    PreviewSurface, FRAME_BACK_STEP, FRAME_STEP,
 };
 
 /// Picture file name, asset uuid and clip length in seconds, per reel.
@@ -192,6 +192,12 @@ pub(super) fn every_overlay() -> PreviewOverlays {
             bottom: 20,
         }),
         crop_visible: true,
+        content_outline: Some(ContentRectangle {
+            x: 100,
+            y: 0,
+            width: 1720,
+            height: 1080,
+        }),
     }
 }
 

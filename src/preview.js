@@ -51,6 +51,7 @@ const overlays = {
   thirds_grid: false,
   crop: null,
   crop_visible: false,
+  content_outline: null,
 };
 
 // The two subtitle slots mpv renders, keyed by the name the backend takes.
@@ -269,6 +270,13 @@ export function setPreviewCrop(crop) {
   applyOverlays();
 }
 
+// {x, y, width, height} of the content inside the picture in source pixels, outlined
+// in red with the picture's edge in grey, or null for none
+export function setPreviewContentOutline(rectangle) {
+  overlays.content_outline = rectangle;
+  applyOverlays();
+}
+
 // ffmpeg filter strings run on the picture mpv plays, null plays the source as it is
 export function setPreviewPictureFilters(filters) {
   return invoke('preview_set_picture_filters', { filters }).catch((e) => {
@@ -312,6 +320,7 @@ function resetOverlays() {
   overlays.thirds_grid = false;
   overlays.crop = null;
   overlays.crop_visible = false;
+  overlays.content_outline = null;
   qcControls.safeArea.value = '';
   qcControls.aspectMask.value = '';
   qcControls.centreCross.classList.remove('primary');

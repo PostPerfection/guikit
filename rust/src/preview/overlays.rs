@@ -20,6 +20,7 @@ struct OverlayInk {
 const WHITE: &str = "FFFFFF";
 const BLACK: &str = "000000";
 const RED: &str = "0000FF";
+const LIGHT_GREY: &str = "C0C0C0";
 
 const SAFE_AREA_INK: OverlayInk = OverlayInk {
     colour: WHITE,
@@ -44,6 +45,14 @@ const CROP_BAND_INK: OverlayInk = OverlayInk {
 const CROP_OUTLINE_INK: OverlayInk = OverlayInk {
     colour: RED,
     alpha: "1A",
+};
+const CONTENT_OUTLINE_INK: OverlayInk = OverlayInk {
+    colour: RED,
+    alpha: "1A",
+};
+const PICTURE_EDGE_INK: OverlayInk = OverlayInk {
+    colour: LIGHT_GREY,
+    alpha: "33",
 };
 
 // pixels of the source picture at full resolution, not of the rendered surface
@@ -90,6 +99,7 @@ const SAFE_AREA_THICKNESS: i64 = 2;
 const CENTRE_CROSS_THICKNESS: i64 = 2;
 const THIRDS_GRID_THICKNESS: i64 = 1;
 const CROP_OUTLINE_THICKNESS: i64 = 2;
+const CONTENT_OUTLINE_THICKNESS: i64 = 2;
 
 /// A mask band thinner than this is the target aspect meeting the picture's own,
 /// which wants no band at all.
@@ -138,6 +148,7 @@ pub struct PreviewOverlays {
     pub thirds_grid: bool,
     pub crop: Option<PreviewCrop>,
     pub crop_visible: bool,
+    pub content_outline: Option<ContentRectangle>,
 }
 
 impl PreviewOverlays {
@@ -149,6 +160,7 @@ impl PreviewOverlays {
             || self.centre_cross
             || self.thirds_grid
             || (self.crop.is_some() && self.crop_visible)
+            || self.content_outline.is_some()
     }
 }
 
@@ -159,6 +171,15 @@ pub struct PreviewCrop {
     pub right: u32,
     pub top: u32,
     pub bottom: u32,
+}
+
+// where the content sits inside the picture, in source pixels
+#[derive(Clone, Copy, Deserialize)]
+pub struct ContentRectangle {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
 }
 
 /// An ASS overlay ready for mpv: the events to draw and the canvas their
@@ -215,6 +236,9 @@ fn overlay_events(overlays: &PreviewOverlays, source: SourceSize) -> Vec<Overlay
     }
     if let Some(crop) = overlays.crop.filter(|_| overlays.crop_visible) {
         events.extend(crop_events(crop, source));
+    }
+    if let Some(content) = overlays.content_outline {
+        events.extend(content_outline_events(content, source));
     }
     if let Some(percent) = overlays.safe_area_percent {
         events.push(safe_area_event(percent, source));
@@ -400,6 +424,34 @@ fn crop_events(crop: PreviewCrop, source: SourceSize) -> Vec<OverlayEvent> {
     events
 }
 
+// the picture edge goes first so the content's red is on top where the two meet
+fn content_outline_events(content: ContentRectangle, source: SourceSize) -> [OverlayEvent; 2] {
+    [
+        OverlayEvent {
+            ink: PICTURE_EDGE_INK,
+            rectangles: outline_rectangles(
+                PICTURE_EDGE_INK,
+                0,
+                0,
+                rounded(source.width),
+                rounded(source.height),
+                CONTENT_OUTLINE_THICKNESS,
+            ),
+        },
+        OverlayEvent {
+            ink: CONTENT_OUTLINE_INK,
+            rectangles: outline_rectangles(
+                CONTENT_OUTLINE_INK,
+                i64::from(content.x),
+                i64::from(content.y),
+                i64::from(content.width),
+                i64::from(content.height),
+                CONTENT_OUTLINE_THICKNESS,
+            ),
+        },
+    ]
+}
+
 fn centre_cross_event(source: SourceSize) -> OverlayEvent {
     let width = rounded(source.width);
     let height = rounded(source.height);
@@ -477,6 +529,18 @@ mod tests {
         bottom: 0,
     };
 
+    // a 1.85 picture scaled into a Scope container
+    const FLAT_IN_SCOPE: ContentRectangle = ContentRectangle {
+        x: 262,
+        y: 0,
+        width: 1524,
+        height: 858,
+    };
+
+    fn scope_container() -> Option<SourceSize> {
+        SourceSize::new(2048.0, 858.0)
+    }
+
     /// The source most of these measure against.
     fn hd_source() -> Option<SourceSize> {
         SourceSize::new(1920.0, 1080.0)
@@ -506,6 +570,7 @@ mod tests {
             thirds_grid: true,
             crop: Some(LEFT_CROP),
             crop_visible: true,
+            content_outline: Some(FLAT_IN_SCOPE),
         }
     }
 
@@ -733,6 +798,77 @@ mod tests {
     }
 
     #[test]
+    fn content_outline_draws_the_picture_edge_then_the_content_in_red() {
+        let drawing = overlay_drawing(
+            &PreviewOverlays {
+                content_outline: Some(FLAT_IN_SCOPE),
+                ..Default::default()
+            },
+            scope_container(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            drawing.events,
+            "{\\an7\\pos(0,0)\\bord0\\shad0\\1c&HC0C0C0&\\1a&H33&\\p1}\
+             m 0 0 l 2048 0 l 2048 2 l 0 2 \
+             m 0 856 l 2048 856 l 2048 858 l 0 858 \
+             m 0 2 l 2 2 l 2 856 l 0 856 \
+             m 2046 2 l 2048 2 l 2048 856 l 2046 856{\\p0}\n\
+             {\\an7\\pos(0,0)\\bord0\\shad0\\1c&H0000FF&\\1a&H1A&\\p1}\
+             m 262 0 l 1786 0 l 1786 2 l 262 2 \
+             m 262 856 l 1786 856 l 1786 858 l 262 858 \
+             m 262 2 l 264 2 l 264 856 l 262 856 \
+             m 1784 2 l 1786 2 l 1786 856 l 1784 856{\\p0}"
+        );
+    }
+
+    #[test]
+    fn content_outline_rectangles_are_light_grey_then_red() {
+        let filled = overlay_rectangles(
+            &PreviewOverlays {
+                content_outline: Some(FLAT_IN_SCOPE),
+                ..Default::default()
+            },
+            scope_container().unwrap(),
+        );
+        assert_eq!(filled.len(), 8);
+        assert_eq!(
+            filled[0],
+            OverlayRectangle {
+                x: 0,
+                y: 0,
+                width: 2048,
+                height: 2,
+                colour: [192, 192, 192],
+                alpha: 204,
+            }
+        );
+        assert_eq!(
+            filled[4],
+            OverlayRectangle {
+                x: 262,
+                y: 0,
+                width: 1524,
+                height: 2,
+                colour: [255, 0, 0],
+                alpha: 229,
+            }
+        );
+    }
+
+    #[test]
+    fn no_content_outline_draws_nothing() {
+        let overlays = PreviewOverlays {
+            content_outline: None,
+            ..Default::default()
+        };
+        assert!(!overlays.any());
+        assert!(overlay_drawing(&overlays, scope_container(), None).is_none());
+        assert!(overlay_rectangles(&overlays, scope_container().unwrap()).is_empty());
+    }
+
+    #[test]
     fn nothing_is_drawn_while_nothing_reports_a_picture_size() {
         assert!(drawn(
             &PreviewOverlays {
@@ -760,20 +896,22 @@ mod tests {
                 thirds_grid: true,
                 crop: Some(LEFT_CROP),
                 crop_visible: true,
+                content_outline: Some(FLAT_IN_SCOPE),
             },
             hd_source(),
         )
         .unwrap();
         let events: Vec<&str> = drawing.events.lines().collect();
-        // mask, crop bands, crop outline, safe area, cross, thirds
-        assert_eq!(events.len(), 6);
+        // mask, crop bands, crop outline, picture edge, content outline, safe
+        // area, cross, thirds
+        assert_eq!(events.len(), 8);
         assert!(events[0].contains(&format!("&H{BLACK}&")));
         assert_eq!(
             events
                 .iter()
                 .filter(|event| event.contains(&format!("&H{RED}&")))
                 .count(),
-            2
+            3
         );
     }
 
@@ -783,7 +921,7 @@ mod tests {
         assert!(!filled.is_empty());
         assert_eq!(filled[0].colour, [0, 0, 0]);
         let drawing = drawn(&every_overlay(), hd_source()).unwrap();
-        assert_eq!(drawing.events.lines().count(), 6);
+        assert_eq!(drawing.events.lines().count(), 8);
     }
 
     #[test]
@@ -842,6 +980,11 @@ mod tests {
         .any());
         assert!(!PreviewOverlays {
             crop_visible: true,
+            ..Default::default()
+        }
+        .any());
+        assert!(PreviewOverlays {
+            content_outline: Some(FLAT_IN_SCOPE),
             ..Default::default()
         }
         .any());

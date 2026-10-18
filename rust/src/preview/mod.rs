@@ -26,7 +26,8 @@ use tauri::Manager;
 mod overlays;
 use overlays::{overlay_drawing, OsdRectangle, OverlayDrawing};
 pub use overlays::{
-    overlay_rectangles, OverlayRectangle, PreviewCrop, PreviewOverlays, SourceSize,
+    overlay_rectangles, ContentRectangle, OverlayRectangle, PreviewCrop, PreviewOverlays,
+    SourceSize,
 };
 
 mod player;
