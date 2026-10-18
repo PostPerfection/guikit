@@ -1761,6 +1761,26 @@ body.preview-fullscreen-hud-hidden * {
 .properties-resize-handle:focus::before {
   background: var(--primary);
 }
+#view-project .workspace.properties-collapsed .properties-panel {
+  display: none;
+}
+.properties-collapsed .properties-resize-handle {
+  cursor: pointer;
+}
+.properties-collapsed .properties-resize-handle::before {
+  width: 8px;
+  height: 8px;
+  border-radius: 0;
+  background: none;
+  border-left: 2px solid var(--border-light);
+  border-bottom: 2px solid var(--border-light);
+  transform: rotate(45deg);
+}
+.properties-collapsed .properties-resize-handle:hover::before,
+.properties-collapsed .properties-resize-handle:focus::before {
+  background: none;
+  border-color: var(--primary);
+}
 #view-project .properties-panel {
   flex: 0 0 var(--project-properties-width, 360px);
   width: var(--project-properties-width, 360px);
