@@ -75,7 +75,10 @@ function fakeContainer() {
         querySelector: () => rowContent,
       }));
     },
-    setPointerCapture() {},
+    capturedPointers: [],
+    setPointerCapture(pointerId) {
+      this.capturedPointers.push(pointerId);
+    },
   };
 }
 
@@ -506,11 +509,19 @@ test('a drag that would overlap another clip leaves the timeline as it was', asy
   assert.deepEqual(changes, []);
 });
 
-test('a press and release without a move selects the clip and seeks', async () => {
+// a pointer captured on the press sends the browser's click to the panel instead of the clip
+test('a press and release without a move selects the clip and seeks without capturing the pointer', async () => {
   const { container, changes, seeks } = await freshEditor(twoClipTimeline());
   dragClip(container, 1, { x: 0, y: BASE_ROW_Y }, { x: 1, y: BASE_ROW_Y });
   assert.deepEqual(changes, []);
   assert.deepEqual(seeks, [240]);
+  assert.deepEqual(container.capturedPointers, []);
+});
+
+test('a drag captures the pointer once it moves', async () => {
+  const { container } = await freshEditor(twoClipTimeline());
+  dragClip(container, 1, { x: 80, y: BASE_ROW_Y }, { x: 105, y: BASE_ROW_Y });
+  assert.deepEqual(container.capturedPointers, [1]);
 });
 
 test('Split reel here adds a reel start at the playhead and clicking its marker removes it', async () => {

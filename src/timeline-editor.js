@@ -529,9 +529,9 @@ function handlePointerDown(event) {
     framesPerPixel: totalFrames(timeline) / rowWidth,
     start: clip.start,
     layer: clip.layer,
+    pointerId: event.pointerId,
     moved: false,
   };
-  panel.setPointerCapture(event.pointerId);
 }
 
 // a clip preview would reload its file at every step of a drag
@@ -551,6 +551,8 @@ function dragClip(event) {
   const row = clipDrag.rows.find(({ bounds }) => event.clientY >= bounds.top && event.clientY < bounds.bottom);
   const layer = row ? row.layer : clipDrag.layer;
   if (!clipDrag.moved && Math.abs(offsetPixels) < DRAG_START_PIXELS && layer === clip.layer) return;
+  // capturing on the press would send the click to the panel, and a plain click would never select a clip
+  if (!clipDrag.moved) panel.setPointerCapture(clipDrag.pointerId);
   clipDrag.moved = true;
   const proposedStart = Math.max(0, clip.start + Math.round(offsetPixels * clipDrag.framesPerPixel));
   clipDrag.start = snappedStart(clipDrag.index, proposedStart, SNAP_PIXELS * clipDrag.framesPerPixel);
