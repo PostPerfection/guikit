@@ -327,7 +327,7 @@ pub fn preview_load_timeline(
     timeline.check()?;
     if timeline_backend(&timeline)? == Backend::Grok {
         let run = GrokTimelineRun::start(timeline, &PreviewRunnerPlayer(&state))?;
-        let generation = state.install_timeline(TimelinePlayback::Grok(run));
+        let generation = state.install_timeline(TimelinePlayback::Grok(run), Vec::new());
         follow_grok_timeline(app, generation);
         return Ok(TimelinePreview { picture_only: true });
     }
@@ -351,10 +351,12 @@ fn load_mpv_timeline(
     postkit::timeline::refuse_two_subtitle_sources(timeline)?;
     std::fs::create_dir_all(work_dir)
         .map_err(|e| format!("cannot create {}: {e}", work_dir.display()))?;
-    let sound = render_sound(timeline, &work_dir.join(TIMELINE_SOUND_FILE))?;
+    let sound_file = work_dir.join(TIMELINE_SOUND_FILE);
+    let subtitle_file = work_dir.join(TIMELINE_SUBTITLE_FILE);
+    let sound = render_sound(timeline, &sound_file)?;
     let subtitle = match &timeline.subtitle {
         Some(subtitle) => Some(subtitle.clone()),
-        None => join_subtitles(timeline, &work_dir.join(TIMELINE_SUBTITLE_FILE))?,
+        None => join_subtitles(timeline, &subtitle_file)?,
     };
     state.forget_loaded_file(player.mpv())?;
     let file_options = {
@@ -363,7 +365,10 @@ fn load_mpv_timeline(
         reload_file_options(false, None, &tracks)
     };
     player.load_mpv_uri(&mpv_edl_uri(timeline, sound.as_deref()), &file_options)?;
-    state.install_timeline(TimelinePlayback::Mpv(TimelineFrames::of(timeline)));
+    state.install_timeline(
+        TimelinePlayback::Mpv(TimelineFrames::of(timeline)),
+        vec![sound_file, subtitle_file],
+    );
     Ok(())
 }
 

@@ -4,7 +4,10 @@ use postkit::encode::FrameRate;
 use postkit::timeline::{Clip, ClipSound, SoundTrack, Timeline, TIMELINE_FORMAT_VERSION};
 
 use super::end_of_file_tests::{overlay_state, pump_until, write_clip};
-use super::{load_mpv_timeline, poll_metadata, Backend, Player, PreviewOverlays};
+use super::{
+    load_mpv_timeline, poll_metadata, Backend, Player, PreviewOverlays, TIMELINE_SOUND_FILE,
+    TIMELINE_SUBTITLE_FILE,
+};
 
 const CLIP_FPS: u32 = 24;
 // half a second of the first clip, then all of the second
@@ -14,6 +17,7 @@ const TIMELINE_SECONDS: f64 = 1.5;
 const FRAME_SECONDS: f64 = 1.0 / CLIP_FPS as f64;
 const INTO_THE_SECOND_CLIP_SECONDS: f64 = 0.6;
 const PICTURE_AND_SOUND_TRACKS: i64 = 2;
+const CLIP_SUBTITLES: &str = "1\n00:00:00,000 --> 00:00:01,000\nhello\n";
 
 fn clip(picture: PathBuf, (in_frame, out_frame): (u64, u64)) -> Clip {
     Clip {
@@ -94,4 +98,51 @@ fn an_mpv_timeline_lasts_as_long_as_its_clips_and_reports_the_clip_it_plays() {
         metadata["timeline_position"].as_f64().unwrap() > INTO_THE_SECOND_CLIP_SECONDS,
         "{metadata}"
     );
+}
+
+#[test]
+fn clearing_an_mpv_timeline_removes_the_sound_and_subtitles_rendered_for_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let picture = directory.path().join("clip.mov");
+    write_clip(&picture, 1);
+    let clip_sound = tone(directory.path());
+    let clip_subtitles = directory.path().join("clip.srt");
+    std::fs::write(&clip_subtitles, CLIP_SUBTITLES).unwrap();
+    let timeline = Timeline {
+        version: TIMELINE_FORMAT_VERSION,
+        fps: FrameRate::whole(CLIP_FPS),
+        clips: vec![Clip {
+            sound: ClipSound::File(clip_sound.clone()),
+            subtitle: Some(clip_subtitles.clone()),
+            ..clip(picture, SECOND_CLIP_FRAMES)
+        }],
+        sound: SoundTrack::PerClip,
+        subtitle: None,
+        reel_starts: Vec::new(),
+    };
+    let work_dir = directory.path().join("work");
+    let sound_file = work_dir.join(TIMELINE_SOUND_FILE);
+    let subtitle_file = work_dir.join(TIMELINE_SUBTITLE_FILE);
+    let player = Player::new().unwrap();
+    // never the real sound device
+    player.mpv().set_property("ao", "null").unwrap();
+    player.init_software().unwrap();
+    let state = overlay_state(PreviewOverlays::default());
+
+    load_mpv_timeline(&player, &state, &timeline, &work_dir).unwrap();
+    assert!(sound_file.exists() && subtitle_file.exists());
+
+    state.clear_timeline();
+    assert!(
+        !sound_file.exists(),
+        "{} is left behind",
+        sound_file.display()
+    );
+    assert!(
+        !subtitle_file.exists(),
+        "{} is left behind",
+        subtitle_file.display()
+    );
+    assert!(clip_sound.exists() && clip_subtitles.exists());
+    assert_eq!(state.timeline_duration(), None);
 }

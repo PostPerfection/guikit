@@ -1,3 +1,5 @@
+use std::io::ErrorKind;
+use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
@@ -205,6 +207,8 @@ pub(super) struct LoadedTimeline {
     // tells the ticker of an earlier grok timeline that it was replaced
     generation: u64,
     playback: TimelinePlayback,
+    // the sound and subtitles rendered for mpv, removed with the timeline
+    work_files: Vec<PathBuf>,
 }
 
 // every clip on one player: grok takes JPEG 2000, mpv the rest
@@ -242,14 +246,29 @@ fn refuse_stills_on_mpv(timeline: &Timeline) -> Result<(), String> {
 
 impl PreviewPlayer {
     pub(super) fn clear_timeline(&self) {
-        *self.timeline.lock().unwrap() = None;
+        let Some(cleared) = self.timeline.lock().unwrap().take() else {
+            return;
+        };
+        for file in cleared.work_files {
+            match std::fs::remove_file(&file) {
+                Err(error) if error.kind() != ErrorKind::NotFound => {
+                    eprintln!("[timeline] cannot remove {}: {error}", file.display())
+                }
+                _ => {}
+            }
+        }
     }
 
-    pub(super) fn install_timeline(&self, playback: TimelinePlayback) -> u64 {
+    pub(super) fn install_timeline(
+        &self,
+        playback: TimelinePlayback,
+        work_files: Vec<PathBuf>,
+    ) -> u64 {
         let generation = self.timeline_generation.fetch_add(1, Ordering::AcqRel) + 1;
         *self.timeline.lock().unwrap() = Some(LoadedTimeline {
             generation,
             playback,
+            work_files,
         });
         generation
     }
@@ -260,6 +279,7 @@ impl PreviewPlayer {
         let Some(LoadedTimeline {
             generation: current,
             playback: TimelinePlayback::Grok(run),
+            ..
         }) = loaded.as_mut()
         else {
             return false;
