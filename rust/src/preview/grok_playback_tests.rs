@@ -1,8 +1,13 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+
+use postkit::encode::FrameRate;
+use postkit::grok_player::{FrameRange, SourceOptions};
+use postkit::timeline::{Clip, ClipSound, SoundTrack, Timeline, TIMELINE_FORMAT_VERSION};
 
 use super::end_of_file_tests::overlay_state;
 use super::grok_fixture::{self, PICTURE_SIDE};
+use super::timeline_preview::render_black_codestreams;
 use super::{
     install_overlays, poll_metadata, Backend, Player, PreviewCrop, PreviewOverlays, PreviewPlayer,
 };
@@ -194,5 +199,63 @@ fn a_crop_overlay_is_drawn_into_the_picture_the_grok_backend_composes() {
         pixel(&pixels, PICTURE_LEFT / 2, PICTURE_MIDDLE_ROW),
         [0, 0, 0],
         "the bar beside the picture is not black"
+    );
+}
+
+const GAP_FRAMES: u64 = 12;
+
+#[test]
+fn the_black_of_a_timeline_gap_plays_on_the_grok_player_after_a_package() {
+    let directory = tempfile::tempdir().unwrap();
+    let package = grok_fixture::write_package(directory.path(), PACKAGE_FRAMES);
+    let fps = FrameRate::whole(grok_fixture::FRAMES_PER_SECOND);
+    let after_the_gap = Clip {
+        picture: PathBuf::from("/media/after.mxf"),
+        start: GAP_FRAMES,
+        layer: 0,
+        opacity: 1.0,
+        in_frame: 0,
+        out_frame: 1,
+        sound: ClipSound::None,
+        subtitle: None,
+        source_colour: Default::default(),
+        picture_processing: Default::default(),
+    };
+    let timeline = Timeline {
+        version: TIMELINE_FORMAT_VERSION,
+        fps,
+        clips: vec![after_the_gap],
+        sound: SoundTrack::PerClip,
+        subtitle: None,
+        reel_starts: Vec::new(),
+    };
+    let black = render_black_codestreams(&timeline, &directory.path().join("black"))
+        .unwrap()
+        .expect("the timeline starts with a gap");
+    let (player, state, mut pixels) = playing_package(&package);
+    player
+        .grok()
+        .queue_next_with_options(
+            &black,
+            SourceOptions {
+                range: Some(FrameRange {
+                    in_frame: 0,
+                    out_frame: Some(GAP_FRAMES),
+                }),
+                codestream_fps: Some(fps),
+                ..SourceOptions::default()
+            },
+        )
+        .unwrap();
+
+    let metadata = play_to_the_end(&player, &state, &mut pixels);
+    assert!(
+        metadata.contains(&black.display().to_string()),
+        "the player never handed off to the black: {metadata}"
+    );
+    let centre = pixel(&pixels, SURFACE_WIDTH / 2, SURFACE_HEIGHT / 2);
+    assert!(
+        close_to(centre, [0, 0, 0]),
+        "the gap is not black: {centre:?}"
     );
 }

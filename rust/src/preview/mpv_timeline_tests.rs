@@ -5,8 +5,8 @@ use postkit::timeline::{Clip, ClipSound, SoundTrack, Timeline, TIMELINE_FORMAT_V
 
 use super::end_of_file_tests::{overlay_state, pump_until, write_clip};
 use super::{
-    load_mpv_timeline, poll_metadata, Backend, Player, PreviewOverlays, TIMELINE_SOUND_FILE,
-    TIMELINE_SUBTITLE_FILE,
+    load_mpv_timeline, poll_metadata, Backend, Player, PreviewOverlays, TIMELINE_BLACK_FILE,
+    TIMELINE_SOUND_FILE, TIMELINE_SUBTITLE_FILE,
 };
 
 const CLIP_FPS: u32 = 24;
@@ -18,10 +18,18 @@ const FRAME_SECONDS: f64 = 1.0 / CLIP_FPS as f64;
 const INTO_THE_SECOND_CLIP_SECONDS: f64 = 0.6;
 const PICTURE_AND_SOUND_TRACKS: i64 = 2;
 const CLIP_SUBTITLES: &str = "1\n00:00:00,000 --> 00:00:01,000\nhello\n";
+// a quarter second of the first clip, two seconds of black, then all of the second
+const GAPPED_FIRST_CLIP_FRAMES: (u64, u64) = (0, 6);
+const GAPPED_SECOND_CLIP_START: u64 = 54;
+const GAPPED_TIMELINE_SECONDS: f64 = 3.25;
+const INTO_THE_GAP_SECONDS: f64 = 0.5;
 
-fn clip(picture: PathBuf, (in_frame, out_frame): (u64, u64)) -> Clip {
+fn clip(picture: PathBuf, start: u64, (in_frame, out_frame): (u64, u64)) -> Clip {
     Clip {
         picture,
+        start,
+        layer: 0,
+        opacity: 1.0,
         in_frame,
         out_frame,
         sound: ClipSound::None,
@@ -58,8 +66,12 @@ fn an_mpv_timeline_lasts_as_long_as_its_clips_and_reports_the_clip_it_plays() {
         version: TIMELINE_FORMAT_VERSION,
         fps: FrameRate::whole(CLIP_FPS),
         clips: vec![
-            clip(first, FIRST_CLIP_FRAMES),
-            clip(second, SECOND_CLIP_FRAMES),
+            clip(first, 0, FIRST_CLIP_FRAMES),
+            clip(
+                second,
+                FIRST_CLIP_FRAMES.1 - FIRST_CLIP_FRAMES.0,
+                SECOND_CLIP_FRAMES,
+            ),
         ],
         sound: SoundTrack::Override(tone(directory.path())),
         subtitle: None,
@@ -114,7 +126,7 @@ fn clearing_an_mpv_timeline_removes_the_sound_and_subtitles_rendered_for_it() {
         clips: vec![Clip {
             sound: ClipSound::File(clip_sound.clone()),
             subtitle: Some(clip_subtitles.clone()),
-            ..clip(picture, SECOND_CLIP_FRAMES)
+            ..clip(picture, 0, SECOND_CLIP_FRAMES)
         }],
         sound: SoundTrack::PerClip,
         subtitle: None,
@@ -145,4 +157,56 @@ fn clearing_an_mpv_timeline_removes_the_sound_and_subtitles_rendered_for_it() {
     );
     assert!(clip_sound.exists() && clip_subtitles.exists());
     assert_eq!(state.timeline_duration(), None);
+}
+
+#[test]
+fn an_mpv_timeline_plays_black_through_a_gap_and_reports_no_clip_there() {
+    let directory = tempfile::tempdir().unwrap();
+    let first = directory.path().join("first.mov");
+    let second = directory.path().join("second.mov");
+    write_clip(&first, 1);
+    write_clip(&second, 1);
+    let timeline = Timeline {
+        version: TIMELINE_FORMAT_VERSION,
+        fps: FrameRate::whole(CLIP_FPS),
+        clips: vec![
+            clip(first, 0, GAPPED_FIRST_CLIP_FRAMES),
+            clip(second, GAPPED_SECOND_CLIP_START, SECOND_CLIP_FRAMES),
+        ],
+        sound: SoundTrack::PerClip,
+        subtitle: None,
+        reel_starts: Vec::new(),
+    };
+    let work_dir = directory.path().join("work");
+    let black_file = work_dir.join(TIMELINE_BLACK_FILE);
+    let player = Player::new().unwrap();
+    // never the real sound device
+    player.mpv().set_property("ao", "null").unwrap();
+    player.init_software().unwrap();
+    let state = overlay_state(PreviewOverlays::default());
+
+    load_mpv_timeline(&player, &state, &timeline, &work_dir).unwrap();
+    assert!(black_file.exists());
+    pump_until(player.mpv(), |_| player.mpv().get_duration().is_ok())
+        .unwrap_or_else(|last| panic!("mpv never read the timeline, last read {last}"));
+    let duration = player.mpv().get_duration().unwrap();
+    assert!(
+        (duration - GAPPED_TIMELINE_SECONDS).abs() < FRAME_SECONDS,
+        "mpv plays the timeline for {duration}s"
+    );
+
+    pump_until(player.mpv(), |_| {
+        player.mpv().get_position().unwrap_or(0.0) > INTO_THE_GAP_SECONDS
+    })
+    .unwrap_or_else(|last| panic!("the timeline never reached its gap, last read {last}"));
+    let metadata: serde_json::Value =
+        serde_json::from_str(&poll_metadata(&player, &state).unwrap()).unwrap();
+    assert!(metadata["timeline_clip_index"].is_null(), "{metadata}");
+
+    state.clear_timeline();
+    assert!(
+        !black_file.exists(),
+        "{} is left behind",
+        black_file.display()
+    );
 }

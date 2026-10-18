@@ -36,8 +36,9 @@ function assetById(assetId) {
   return ASSETS.find((asset) => asset.id === assetId);
 }
 
-function clip(picture, frames, inFrame, outFrame, sound = { kind: 'embedded', asset: null }, subtitle = null) {
-  return { picture, frames, inFrame, outFrame, sound, subtitle };
+function clip(picture, frames, inFrame, outFrame, fields = {}) {
+  const embedded = { kind: 'embedded', asset: null };
+  return { picture, frames, start: 0, layer: 0, opacity: 1, inFrame, outFrame, sound: embedded, subtitle: null, ...fields };
 }
 
 test("the wire timeline is postkit's JSON with paths for asset ids", () => {
@@ -45,8 +46,8 @@ test("the wire timeline is postkit's JSON with paths for asset ids", () => {
     fps: [24, 1],
     clips: [
       clip(1, 240, 0, 48),
-      clip(2, 96, 10, 58, { kind: 'file', asset: 4 }, 5),
-      clip(3, 24, 0, 24, { kind: 'none', asset: null }),
+      clip(2, 96, 10, 58, { start: 60, sound: { kind: 'file', asset: 4 }, subtitle: 5 }),
+      clip(3, 24, 0, 24, { start: 12, layer: 1, opacity: 0.5, sound: { kind: 'none', asset: null } }),
     ],
     sound: null,
     subtitle: null,
@@ -54,12 +55,21 @@ test("the wire timeline is postkit's JSON with paths for asset ids", () => {
   };
 
   assert.deepEqual(timelineWire(timeline, assetById), {
-    version: 1,
+    version: 2,
     fps: { numerator: 24, denominator: 1 },
     clips: [
-      { picture: '/media/a.mov', in_frame: 0, out_frame: 48, sound: 'Embedded', subtitle: null },
-      { picture: '/media/b.mov', in_frame: 10, out_frame: 58, sound: { File: '/media/b.wav' }, subtitle: '/media/b.srt' },
-      { picture: '/media/c', in_frame: 0, out_frame: 24, sound: 'None', subtitle: null },
+      { picture: '/media/a.mov', start: 0, layer: 0, opacity: 1, in_frame: 0, out_frame: 48, sound: 'Embedded', subtitle: null },
+      {
+        picture: '/media/b.mov',
+        start: 60,
+        layer: 0,
+        opacity: 1,
+        in_frame: 10,
+        out_frame: 58,
+        sound: { File: '/media/b.wav' },
+        subtitle: '/media/b.srt',
+      },
+      { picture: '/media/c', start: 12, layer: 1, opacity: 0.5, in_frame: 0, out_frame: 24, sound: 'None', subtitle: null },
     ],
     sound: 'PerClip',
     subtitle: null,
@@ -70,13 +80,13 @@ test("the wire timeline is postkit's JSON with paths for asset ids", () => {
   assert.equal(covered.subtitle, '/media/feature.srt');
 });
 
-test('an imported video becomes the last clip and the first sound and subtitle cover the timeline', () => {
+test('an imported video starts where the last layer 0 clip ends and the first sound and subtitle cover the timeline', () => {
   let timeline = emptyTimeline([24, 1]);
   for (const assetId of [1, 6, 8, 2, 4, 5]) timeline = withImportedAsset(timeline, assetById(assetId));
 
   assert.deepEqual(timeline, {
     fps: [24, 1],
-    clips: [clip(1, 240, 0, 240), clip(2, 96, 0, 96)],
+    clips: [clip(1, 240, 0, 240), clip(2, 96, 0, 96, { start: 240 })],
     sound: 6,
     subtitle: 8,
     reelStarts: [],
@@ -84,9 +94,33 @@ test('an imported video becomes the last clip and the first sound and subtitle c
 });
 
 test('an imported sound stays off the timeline while a clip has a sound file of its own', () => {
-  const timeline = { ...emptyTimeline([24, 1]), clips: [clip(1, 240, 0, 240, { kind: 'file', asset: 4 }, 5)] };
+  const timeline = { ...emptyTimeline([24, 1]), clips: [clip(1, 240, 0, 240, { sound: { kind: 'file', asset: 4 }, subtitle: 5 })] };
 
   assert.deepEqual(withImportedAsset(withImportedAsset(timeline, assetById(6)), assetById(8)), timeline);
+});
+
+test('a video imported over a layer 1 clip follows the last layer 0 clip', () => {
+  const timeline = { ...emptyTimeline([24, 1]), clips: [clip(1, 240, 0, 48), clip(2, 96, 0, 96, { start: 40, layer: 1 })] };
+
+  assert.equal(withImportedAsset(timeline, assetById(3)).clips[2].start, 48);
+});
+
+test('probing clips imported unprobed moves the layer 0 clips after each one along by its length', () => {
+  let timeline = emptyTimeline([24, 1]);
+  for (const assetId of [1, 2, 3]) timeline = withImportedAsset(timeline, { ...assetById(assetId), frames: undefined });
+  timeline.clips.push(clip(1, 240, 0, 24, { start: 0, layer: 1, sound: { kind: 'none', asset: null } }));
+
+  const probed = withProbedFrames(withProbedFrames(withProbedFrames(timeline, 3, 24), 1, 240), 2, 96);
+
+  assert.deepEqual(
+    probed.clips.map((placed) => [placed.start, placed.outFrame]),
+    [
+      [0, 240],
+      [240, 96],
+      [336, 24],
+      [0, 24],
+    ],
+  );
 });
 
 test('an unprobed clip takes its frame count, and the first clip its rate', () => {
@@ -135,7 +169,7 @@ test('filling the timeline places the first unplaced video only on an empty time
 test('a reel start lands at each listed clip once every clip is probed', () => {
   const unprobed = {
     id: 1,
-    timeline: { ...emptyTimeline([24, 1]), clips: [clip(1, 240, 0, 240), clip(2, 0, 0, 0), clip(3, 0, 0, 0)] },
+    timeline: { ...emptyTimeline([24, 1]), clips: [clip(1, 240, 0, 240), clip(2, 0, 0, 0, { start: 240 }), clip(3, 0, 0, 0, { start: 240 })] },
     reelStartingClipIndices: [1, 2],
   };
 
@@ -175,17 +209,21 @@ test('a typed split past the end of a one-clip timeline is left out of its reel 
 
 test('a typed split stays while the one clip is unprobed, and a multi-clip timeline ignores the field', () => {
   const unprobed = { ...emptyTimeline([24, 1]), clips: [clip(1, 0, 0, 0)] };
-  const twoClips = { ...emptyTimeline([24, 1]), clips: [clip(1, 48, 0, 48), clip(2, 48, 0, 48)], reelStarts: [48] };
+  const twoClips = { ...emptyTimeline([24, 1]), clips: [clip(1, 48, 0, 48), clip(2, 48, 0, 48, { start: 48 })], reelStarts: [48] };
 
   assert.deepEqual(withSplitAtFrames(unprobed, [24, 120]).reelStarts, [24, 120]);
   assert.equal(withSplitAtFrames(twoClips, [24]), twoClips);
   assert.equal(withSplitAtFrames(unprobed, null), unprobed);
 });
 
-test('each reel span carries the assets of the clip it starts in', () => {
+test('each reel span carries the assets of the layer 0 clip it starts in', () => {
   const timeline = {
     fps: [24, 1],
-    clips: [clip(1, 240, 0, 96), clip(2, 96, 12, 84, { kind: 'file', asset: 4 }, 5)],
+    clips: [
+      clip(1, 240, 0, 96),
+      clip(2, 96, 12, 84, { start: 96, sound: { kind: 'file', asset: 4 }, subtitle: 5 }),
+      clip(3, 24, 0, 24, { start: 90, layer: 1, sound: { kind: 'none', asset: null } }),
+    ],
     sound: null,
     subtitle: null,
     reelStarts: [96, 500],
@@ -198,17 +236,28 @@ test('each reel span carries the assets of the clip it starts in', () => {
   assert.deepEqual(reelSpans(emptyTimeline([24, 1]), assetById), []);
 });
 
-test('a source frame of the second clip lands after the first clip on the timeline', () => {
-  const timeline = { ...emptyTimeline([24, 1]), clips: [clip(1, 240, 0, 96), clip(2, 96, 12, 84)] };
+test('a reel span starting in a gap of layer 0 has no picture', () => {
+  const timeline = {
+    ...emptyTimeline([24, 1]),
+    clips: [clip(1, 240, 0, 48), clip(2, 96, 0, 48, { start: 96 })],
+    subtitle: 8,
+    reelStarts: [48, 96],
+  };
 
-  assert.equal(timelineFrameAtSourceFrame(timeline, 1, 12), 96);
-  assert.equal(timelineFrameAtSourceFrame(timeline, 1, 50), 134);
+  assert.deepEqual(reelSpans(timeline, assetById)[1], { frames: 48, picture: null, sound: null, subtitle: assetById(8) });
+});
+
+test('a source frame of a clip lands at its start on the timeline', () => {
+  const timeline = { ...emptyTimeline([24, 1]), clips: [clip(1, 240, 0, 96), clip(2, 96, 12, 84, { start: 120 })] };
+
+  assert.equal(timelineFrameAtSourceFrame(timeline, 1, 12), 120);
+  assert.equal(timelineFrameAtSourceFrame(timeline, 1, 50), 158);
 });
 
 test('removing an asset drops its clips and the reel starts now past the end', () => {
   const timeline = {
     ...emptyTimeline([24, 1]),
-    clips: [clip(1, 240, 0, 96), clip(2, 96, 12, 84, { kind: 'file', asset: 4 }, 5)],
+    clips: [clip(1, 240, 0, 96), clip(2, 96, 12, 84, { start: 96, sound: { kind: 'file', asset: 4 }, subtitle: 5 })],
     sound: 6,
     reelStarts: [48, 96, 120],
   };
@@ -225,7 +274,7 @@ test('an asset the project file no longer lists is taken off the timeline and na
     name: 'Main',
     timeline: {
       ...emptyTimeline([24, 1]),
-      clips: [clip(1, 240, 0, 96), clip(9, 96, 0, 96), clip(2, 96, 0, 96, { kind: 'file', asset: 9 }, 9)],
+      clips: [clip(1, 240, 0, 96), clip(9, 96, 0, 96, { start: 96 }), clip(2, 96, 0, 96, { start: 192, sound: { kind: 'file', asset: 9 }, subtitle: 9 })],
       sound: 9,
       subtitle: 8,
     },
@@ -234,29 +283,34 @@ test('an asset the project file no longer lists is taken off the timeline and na
 
   const kept = timelineWithKnownAssets(composition, new Map(ASSETS.map((asset) => [asset.id, asset])), notRestored);
 
-  assert.deepEqual(kept.clips, [clip(1, 240, 0, 96), clip(2, 96, 0, 96)]);
+  assert.deepEqual(kept.clips, [clip(1, 240, 0, 96), clip(2, 96, 0, 96, { start: 192 })]);
   assert.equal(kept.sound, null);
   assert.equal(kept.subtitle, 8);
   assert.deepEqual(notRestored, ['Main clip 2 picture', 'Main clip 2 sound', 'Main clip 2 subtitle', 'Main timeline sound']);
 });
 
-test('the clip a preview shows is the one already shown when its file is on the timeline twice', () => {
-  const timeline = { ...emptyTimeline([24, 1]), clips: [clip(1, 240, 0, 96), clip(2, 96, 0, 96), clip(1, 240, 96, 240)] };
+test('the clip a preview shows is the one already shown when its file is on the timeline twice, else the earliest', () => {
+  const timeline = {
+    ...emptyTimeline([24, 1]),
+    clips: [clip(1, 240, 96, 240, { start: 192 }), clip(2, 96, 0, 96, { start: 96 }), clip(1, 240, 0, 96)],
+  };
 
-  assert.equal(clipIndexShowing(timeline, '/media/a.mov', 2, assetById), 2);
-  assert.equal(clipIndexShowing(timeline, '/media/a.mov', 1, assetById), 0);
-  assert.equal(clipIndexShowing(timeline, '/media/a.mov', null, assetById), 0);
+  assert.equal(clipIndexShowing(timeline, '/media/a.mov', 0, assetById), 0);
+  assert.equal(clipIndexShowing(timeline, '/media/a.mov', 1, assetById), 2);
+  assert.equal(clipIndexShowing(timeline, '/media/a.mov', null, assetById), 2);
   assert.equal(clipIndexShowing(timeline, '/media/elsewhere.mov', 0, assetById), null);
 });
 
-test("a previewed clip shows its own subtitle, or the timeline's where the clip starts the timeline untrimmed", () => {
+test("a previewed clip shows its own subtitle, or the timeline's where each source frame sits at the same timeline frame", () => {
   const timeline = {
     ...emptyTimeline([24, 1]),
-    clips: [clip(1, 240, 0, 96), clip(2, 96, 0, 96, { kind: 'embedded', asset: null }, 5)],
+    clips: [clip(1, 240, 0, 96), clip(2, 96, 0, 96, { start: 96, subtitle: 5 }), clip(3, 24, 0, 24, { start: 96, layer: 1 })],
     subtitle: 8,
   };
 
   assert.equal(clipPreviewSubtitle(timeline, 0), 8);
   assert.equal(clipPreviewSubtitle(timeline, 1), 5);
+  assert.equal(clipPreviewSubtitle(timeline, 2), null);
   assert.equal(clipPreviewSubtitle({ ...timeline, clips: [clip(1, 240, 24, 96)] }, 0), null);
+  assert.equal(clipPreviewSubtitle({ ...timeline, clips: [clip(1, 240, 24, 96, { start: 24 })] }, 0), 8);
 });

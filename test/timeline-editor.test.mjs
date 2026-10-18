@@ -3,14 +3,17 @@ import test from 'node:test';
 
 import {
   addClip,
+  baseClipsInOrder,
   clipAtFrame,
   clipSourceFrameAt,
   clipStarts,
   frameAtSeconds,
-  moveClip,
+  layersOf,
+  moveClipTo,
   removeClip,
   removeReelStart,
   secondsAtFrame,
+  setClipOpacity,
   setClipRange,
   splitReelAt,
   totalFrames,
@@ -19,6 +22,8 @@ import {
 
 const FPS = [24, 1];
 const POINTER_BOUNDS = { left: 0, width: 100 };
+const ROW_HEIGHT = 40;
+const NO_SOUND = { kind: 'none', asset: null };
 
 const ASSETS = {
   1: { kind: 'picture', name: 'Reel One.mov', frames: 240 },
@@ -27,24 +32,29 @@ const ASSETS = {
   4: { kind: 'subtitle', name: 'English.srt' },
 };
 
-function clip(picture, inFrame, outFrame) {
+function clip(picture, inFrame, outFrame, start, layer = 0) {
   return {
     picture,
     frames: ASSETS[picture].frames,
+    start,
+    layer,
+    opacity: 1,
     inFrame,
     outFrame,
-    sound: { kind: 'embedded', asset: null },
+    sound: layer === 0 ? { kind: 'embedded', asset: null } : NO_SOUND,
     subtitle: null,
   };
 }
 
-// 240 kept frames from the first clip and 80 from the second, 320 in all
+// 240 kept frames from the first clip and 80 from the second right after it, 320 in all
 function twoClipTimeline() {
-  return { fps: FPS, clips: [clip(1, 0, 240), clip(2, 20, 100)], sound: null, subtitle: null, reelStarts: [] };
+  return { fps: FPS, clips: [clip(1, 0, 240, 0), clip(2, 20, 100, 240)], sound: null, subtitle: null, reelStarts: [] };
 }
 
+// the picture rows sit one under another in the order the markup lists them, each 40 pixels high
 function fakeContainer() {
   const playhead = { style: {} };
+  const rowContent = { getBoundingClientRect: () => POINTER_BOUNDS, append() {} };
   return {
     innerHTML: '',
     classList: { add() {} },
@@ -57,22 +67,49 @@ function fakeContainer() {
       assert.equal(selector, '.timeline-editor-playhead');
       return playhead;
     },
+    querySelectorAll(selector) {
+      assert.equal(selector, '.timeline-editor-track[data-layer]');
+      return [...this.innerHTML.matchAll(/data-layer="(\d+)"/g)].map(([, layer], row) => ({
+        dataset: { layer },
+        getBoundingClientRect: () => ({ top: row * ROW_HEIGHT, bottom: (row + 1) * ROW_HEIGHT }),
+        querySelector: () => rowContent,
+      }));
+    },
+    setPointerCapture() {},
   };
 }
 
 // closest answers from what the scenario puts under the pointer
-function fakeTarget({ action, frame, targetClip, clipIndex, track, ruler } = {}) {
+function fakeTarget({ action, frame, targetClip, clipIndex, pictureClip, track, layer, trackContent, ruler } = {}) {
+  const clipElement = clipIndex !== undefined && {
+    dataset: { clipIndex: String(clipIndex) },
+    getBoundingClientRect: () => POINTER_BOUNDS,
+    style: {},
+    classList: { add() {} },
+  };
   const elements = {
     '[data-action]': action && { dataset: { action, frame: String(frame), targetClip: String(targetClip) } },
-    '[data-clip-index]': clipIndex !== undefined && {
-      dataset: { clipIndex: String(clipIndex) },
-      getBoundingClientRect: () => POINTER_BOUNDS,
-    },
-    '[data-track]': track && { dataset: { track } },
+    '[data-clip-index]': clipElement,
+    '.timeline-editor-clip': pictureClip && clipElement,
+    '[data-track]': track && { dataset: { track, layer: String(layer) } },
+    '.timeline-editor-track-content': trackContent && { getBoundingClientRect: () => POINTER_BOUNDS },
     '.timeline-editor-ruler': ruler && { getBoundingClientRect: () => POINTER_BOUNDS },
   };
   return { closest: (selector) => elements[selector] || null };
 }
+
+// a press on a picture clip, one move and a release, then the click the browser sends after them
+function dragClip(container, clipIndex, from, to) {
+  const target = fakeTarget({ clipIndex, pictureClip: true });
+  container.handlers.pointerdown({ target, button: 0, pointerId: 1, clientX: from.x, clientY: from.y });
+  container.handlers.pointermove({ target, buttons: 1, clientX: to.x, clientY: to.y });
+  container.handlers.pointerup({ target, clientX: to.x, clientY: to.y });
+  container.handlers.click({ target, clientX: to.x, clientY: to.y });
+}
+
+// the rows of a timeline with clips on layer 0 only: layer 1 to drop onto, then the base picture
+const LAYER_1_ROW_Y = 10;
+const BASE_ROW_Y = 50;
 
 let instances = 0;
 
@@ -115,9 +152,10 @@ function clickAction(container, action, details = {}) {
   click(container, { action, ...details });
 }
 
-async function drop(container, assetId, target) {
+async function drop(container, assetId, target, clientX = 0) {
   await container.handlers.drop({
     target: fakeTarget(target),
+    clientX,
     dataTransfer: { getData: (format) => (format === 'text/plain' ? String(assetId) : '') },
     preventDefault() {},
   });
@@ -127,13 +165,38 @@ function typeInField(container, field, value) {
   container.handlers.change({ target: { dataset: { field }, value } });
 }
 
-test('total frames and clip starts count the kept frames only', () => {
-  const model = twoClipTimeline();
-  assert.equal(totalFrames(model), 320);
-  assert.deepEqual(clipStarts(model), [0, 240]);
+// the second clip 40 frames after the first, and a layer 1 clip over the gap between them
+function gappedTimeline() {
+  return {
+    fps: FPS,
+    clips: [clip(2, 20, 100, 120), clip(1, 0, 80, 0), clip(2, 0, 60, 60, 1)],
+    sound: null,
+    subtitle: null,
+    reelStarts: [],
+  };
+}
+
+test('total frames is the furthest clip end and clip starts are the starts', () => {
+  assert.equal(totalFrames(twoClipTimeline()), 320);
+  assert.deepEqual(clipStarts(twoClipTimeline()), [0, 240]);
+  assert.equal(totalFrames(gappedTimeline()), 200);
+  assert.deepEqual(clipStarts(gappedTimeline()), [120, 0, 60]);
+  assert.equal(totalFrames({ ...gappedTimeline(), clips: [] }), 0);
 });
 
-test('clipAtFrame finds the clip and the offset into it', () => {
+test('layersOf lists the layers holding a clip and layer 0 always, and the base clips run in start order', () => {
+  assert.deepEqual(layersOf(gappedTimeline()), [0, 1]);
+  assert.deepEqual(layersOf({ ...gappedTimeline(), clips: [clip(1, 0, 10, 0, 3)] }), [0, 3]);
+  assert.deepEqual(
+    baseClipsInOrder(gappedTimeline()).map(({ index, clip: base }) => [index, base.start]),
+    [
+      [1, 0],
+      [0, 120],
+    ],
+  );
+});
+
+test('clipAtFrame finds the layer 0 clip and the offset into it', () => {
   const model = twoClipTimeline();
   assert.deepEqual(clipAtFrame(model, 0), { index: 0, frameInClip: 0 });
   assert.deepEqual(clipAtFrame(model, 239), { index: 0, frameInClip: 239 });
@@ -143,20 +206,56 @@ test('clipAtFrame finds the clip and the offset into it', () => {
   assert.equal(clipAtFrame(model, -1), null);
 });
 
-test('addClip inserts at the index, appends by default and leaves the model it was given alone', () => {
+test('clipAtFrame is null in a gap of layer 0, whatever is above it', () => {
+  const model = gappedTimeline();
+  assert.deepEqual(clipAtFrame(model, 79), { index: 1, frameInClip: 79 });
+  assert.equal(clipAtFrame(model, 80), null);
+  assert.equal(clipAtFrame(model, 119), null);
+  assert.deepEqual(clipSourceFrameAt(model, 120), { index: 0, sourceFrame: 20 });
+});
+
+test('addClip appends, refuses an overlap on its layer and leaves the model it was given alone', () => {
   const model = twoClipTimeline();
-  const inserted = addClip(model, clip(2, 0, 120), 1);
-  assert.deepEqual(
-    inserted.clips.map((each) => [each.picture, each.inFrame]),
-    [
-      [1, 0],
-      [2, 0],
-      [2, 20],
-    ],
-  );
-  assert.equal(addClip(model, clip(2, 0, 120)).clips[2].inFrame, 0);
+  assert.deepEqual(addClip(model, clip(2, 0, 120, 320)).clips[2], clip(2, 0, 120, 320));
+  assert.equal(addClip(model, clip(2, 0, 120, 100, 1)).clips.length, 3);
   assert.equal(model.clips.length, 2);
-  assert.throws(() => addClip(model, clip(2, 0, 120), 3), RangeError);
+  assert.throws(() => addClip(model, clip(2, 0, 120, 300)), {
+    name: 'RangeError',
+    message: /frames 300 to 420 on layer 0 overlap clip 1, which runs from 240 to 320/,
+  });
+});
+
+test('moveClipTo moves a clip along its layer and onto another, and refuses an overlap', () => {
+  const model = gappedTimeline();
+  assert.equal(moveClipTo(model, 0, 90, 0).clips[0].start, 90);
+  assert.equal(totalFrames(moveClipTo(model, 0, 80, 0)), 160);
+  assert.throws(() => moveClipTo(model, 0, 70, 0), /frames 70 to 150 on layer 0 overlap clip 1, which runs from 0 to 80/);
+  assert.throws(() => moveClipTo(model, 1, 100, 1), /overlap clip 2/);
+  assert.throws(() => moveClipTo(model, 1, -1, 0), RangeError);
+  assert.throws(() => moveClipTo(model, 3, 0, 0), /no clip 3/);
+  assert.equal(model.clips[0].start, 120);
+});
+
+test('a clip moved above layer 0 loses its sound, and one moved back down takes its embedded sound at full opacity', () => {
+  const model = { ...gappedTimeline(), clips: [{ ...clip(1, 0, 80, 0), sound: { kind: 'file', asset: 3 } }] };
+  const raised = moveClipTo(model, 0, 0, 2);
+  assert.deepEqual(raised.clips[0].sound, NO_SOUND);
+  const faded = setClipOpacity(raised, 0, 0.25);
+  assert.equal(moveClipTo(faded, 0, 0, 1).clips[0].opacity, 0.25);
+  const lowered = moveClipTo(faded, 0, 0, 0);
+  assert.deepEqual(lowered.clips[0].sound, { kind: 'embedded', asset: null });
+  assert.equal(lowered.clips[0].opacity, 1);
+});
+
+test('setClipOpacity refuses an opacity outside 0 to 1', () => {
+  assert.equal(setClipOpacity(gappedTimeline(), 2, 0).clips[2].opacity, 0);
+  assert.throws(() => setClipOpacity(gappedTimeline(), 2, 1.5), /clip 2: opacity 1.5 is outside 0 to 1/);
+  assert.throws(() => setClipOpacity(gappedTimeline(), 2, Number.NaN), RangeError);
+});
+
+test('setClipRange refuses an out point that runs the clip into the next one on its layer', () => {
+  assert.throws(() => setClipRange(gappedTimeline(), 1, 0, 121), /frames 0 to 121 on layer 0 overlap clip 0/);
+  assert.equal(setClipRange(gappedTimeline(), 1, 0, 120).clips[1].outFrame, 120);
 });
 
 test('removeClip takes the clip out and refuses one that is not there', () => {
@@ -166,16 +265,6 @@ test('removeClip takes the clip out and refuses one that is not there', () => {
     [2],
   );
   assert.throws(() => removeClip(model, 2), /no clip 2/);
-});
-
-test('moveClip reorders and refuses a place off either end', () => {
-  const model = twoClipTimeline();
-  assert.deepEqual(
-    moveClip(model, 0, 1).clips.map((each) => each.picture),
-    [2, 1],
-  );
-  assert.throws(() => moveClip(model, 0, 2), RangeError);
-  assert.throws(() => moveClip(model, -1, 0), RangeError);
 });
 
 test('setClipRange sets the in and out points of that clip only', () => {
@@ -206,10 +295,11 @@ test('trimming the last clip drops the reel starts now past the end and keeps th
   assert.deepEqual(model.reelStarts, [100, 290, 310]);
 });
 
-test('removing a clip drops the reel starts now past the end and keeps the ones inside', () => {
+test('removing a clip drops the reel starts now past the end and leaves a gap where it was', () => {
   const model = { ...twoClipTimeline(), reelStarts: [100, 250] };
   assert.deepEqual(removeClip(model, 1).reelStarts, [100]);
-  assert.deepEqual(removeClip(model, 0).reelStarts, []);
+  assert.deepEqual(removeClip(model, 0).reelStarts, [100, 250]);
+  assert.equal(clipAtFrame(removeClip(model, 0), 100), null);
 });
 
 test('a reel start exactly at the total is dropped, one a frame before it stays', () => {
@@ -218,7 +308,7 @@ test('a reel start exactly at the total is dropped, one a frame before it stays'
 });
 
 test('a loaded timeline keeps reel starts past its end for clips not probed yet', async () => {
-  const unprobed = { ...twoClipTimeline(), clips: [{ ...clip(1, 0, 0), frames: 0 }], reelStarts: [100] };
+  const unprobed = { ...twoClipTimeline(), clips: [{ ...clip(1, 0, 0, 0), frames: 0 }], reelStarts: [100] };
   const { editor } = await freshEditor(unprobed);
   assert.deepEqual(editor.getTimeline().reelStarts, [100]);
 });
@@ -243,25 +333,53 @@ test('the markup labels the clips and their sound and rules the timeline in time
   assert.doesNotMatch(container.innerHTML, />00:00:15</);
 });
 
-test('a picture dropped on a clip becomes a clip after it with the probed frame count', async () => {
+test('the markup draws one picture row per layer, the top one first, under an empty row to drop onto', async () => {
+  const { container } = await freshEditor(gappedTimeline());
+  const rows = [...container.innerHTML.matchAll(/data-layer="(\d+)">\s*<div class="timeline-editor-track-label">([^<]+)</g)];
+  assert.deepEqual(
+    rows.map(([, layer, label]) => [layer, label]),
+    [
+      ['2', 'Layer 2'],
+      ['1', 'Layer 1'],
+      ['0', 'Picture'],
+    ],
+  );
+  // the layer 1 clip starts at frame 60 of 200
+  assert.match(container.innerHTML, /data-clip-index="2" style="left: 30%; width: 30%"/);
+});
+
+test('the sound row has a span per layer 0 clip and the subtitle row one per clip, the upper ones in the lower half', async () => {
+  const { container } = await freshEditor(gappedTimeline());
+  const [, sound] = container.innerHTML.match(/data-track="sound">([\s\S]*?)data-track="subtitle"/);
+  assert.deepEqual([...sound.matchAll(/data-clip-index="(\d)"/g)].map(([, index]) => index), ['0', '1']);
+  assert.match(container.innerHTML, /data-track="subtitle" data-stacked/);
+  assert.match(container.innerHTML, /timeline-editor-span-upper" data-clip-index="2"/);
+});
+
+test('a picture dropped on a clip lands after its end with the probed frame count', async () => {
   const { editor, container, changes } = await freshEditor(twoClipTimeline());
-  await drop(container, 2, { track: 'picture', clipIndex: 0 });
-  const added = changes.at(-1).clips[1];
-  assert.deepEqual(added, clip(2, 0, 120));
-  assert.equal(changes.at(-1).clips[2].inFrame, 20);
+  await drop(container, 2, { track: 'picture', layer: 0, clipIndex: 1 });
+  assert.deepEqual(changes.at(-1).clips[2], clip(2, 0, 120, 320));
   assert.deepEqual(editor.getTimeline(), changes.at(-1));
 });
 
-test('a picture dropped past the clips is appended last', async () => {
+test('a picture dropped on empty track lands at the pointer frame on that row', async () => {
   const { container, changes } = await freshEditor(twoClipTimeline());
-  await drop(container, 2, { track: 'picture' });
-  assert.equal(changes.at(-1).clips.length, 3);
-  assert.deepEqual(changes.at(-1).clips[2], clip(2, 0, 120));
+  // a quarter of the way along 320 frames
+  await drop(container, 2, { track: 'picture', layer: 1, trackContent: true }, 25);
+  assert.deepEqual(changes.at(-1).clips[2], clip(2, 0, 120, 80, 1));
+});
+
+test('a picture dropped where it would overlap a clip on its row changes nothing', async () => {
+  const { container, changes } = await freshEditor(twoClipTimeline());
+  await drop(container, 2, { track: 'picture', layer: 0, clipIndex: 0 });
+  await drop(container, 2, { track: 'picture', layer: 0, trackContent: true }, 50);
+  assert.deepEqual(changes, []);
 });
 
 test('an asset dropped on the wrong track changes nothing', async () => {
   const { container, changes } = await freshEditor(twoClipTimeline());
-  await drop(container, 3, { track: 'picture', clipIndex: 0 });
+  await drop(container, 3, { track: 'picture', layer: 0, clipIndex: 0 });
   await drop(container, 1, { track: 'sound' });
   assert.deepEqual(changes, []);
 });
@@ -299,7 +417,7 @@ test('Set in from playhead trims the selected clip at the playhead', async () =>
   clickAction(container, 'set-in');
   assert.equal(changes.at(-1).clips[1].inFrame, 30);
   assert.equal(changes.at(-1).clips[1].outFrame, 100);
-  assert.deepEqual(changes.at(-1).clips[0], clip(1, 0, 240));
+  assert.deepEqual(changes.at(-1).clips[0], clip(1, 0, 240, 0));
 });
 
 test('a range typed into a field is applied, an invalid one leaves the clip as it was', async () => {
@@ -317,19 +435,82 @@ test('a range typed into a field is applied, an invalid one leaves the clip as i
   assert.match(container.innerHTML, /data-field="in" value="00:00:00:20"/);
 });
 
-test('the arrows move the selected clip and Remove takes it out', async () => {
+test('Remove takes the selected clip out', async () => {
+  const { container, changes } = await freshEditor(twoClipTimeline());
+  click(container, { clipIndex: 0 });
+  clickAction(container, 'remove-clip');
+  assert.deepEqual(changes.at(-1).clips, [clip(2, 20, 100, 240)]);
+});
+
+test('a Start typed into the field moves the clip, one that overlaps leaves it where it was', async () => {
   const { container, changes } = await freshEditor(twoClipTimeline());
   click(container, { clipIndex: 1 });
-  clickAction(container, 'move-left');
-  assert.deepEqual(
-    changes.at(-1).clips.map((each) => each.picture),
-    [2, 1],
-  );
-  clickAction(container, 'remove-clip');
-  assert.deepEqual(
-    changes.at(-1).clips.map((each) => each.picture),
-    [1],
-  );
+  assert.match(container.innerHTML, /data-field="start" value="00:00:10:00"/);
+
+  typeInField(container, 'start', '00:00:12:00');
+  assert.equal(changes.at(-1).clips[1].start, 288);
+
+  typeInField(container, 'start', '00:00:09:00');
+  assert.equal(changes.length, 1);
+  assert.match(container.innerHTML, /data-field="start" value="00:00:12:00"/);
+});
+
+test('the opacity field shows for a clip above layer 0 only and sets its opacity in percent', async () => {
+  const { container, changes } = await freshEditor(gappedTimeline());
+  click(container, { clipIndex: 1 });
+  assert.doesNotMatch(container.innerHTML, /data-field="opacity"/);
+
+  click(container, { clipIndex: 2 });
+  assert.match(container.innerHTML, /data-field="opacity" value="100"/);
+  typeInField(container, 'opacity', '40');
+  assert.equal(changes.at(-1).clips[2].opacity, 0.4);
+  typeInField(container, 'opacity', '140');
+  typeInField(container, 'opacity', '');
+  assert.equal(changes.length, 1);
+  assert.match(container.innerHTML, /data-field="opacity" value="40"/);
+});
+
+test('dragging a clip along its row moves its start and leaves the click after it alone', async () => {
+  const { container, changes, seeks } = await freshEditor(twoClipTimeline());
+  // 320 frames over 100 pixels, so 25 pixels is 80 frames
+  dragClip(container, 1, { x: 80, y: BASE_ROW_Y }, { x: 105, y: BASE_ROW_Y });
+  assert.equal(changes.at(-1).clips[1].start, 320);
+  assert.deepEqual(seeks, []);
+  assert.match(container.innerHTML, /timeline-editor-clip selected" data-clip-index="1"/);
+});
+
+test('a dragged clip snaps its start or its end to a clip edge or the playhead within a few pixels', async () => {
+  const { editor, container, changes } = await freshEditor(gappedTimeline());
+  // rows for layers 2, 1 and 0, and 200 frames over 100 pixels
+  const layer1RowY = 60;
+  editor.setPlayhead(30);
+  // 14 pixels left of its start at 60 is frame 32, 2 frames past the playhead
+  dragClip(container, 2, { x: 30, y: layer1RowY }, { x: 16, y: layer1RowY });
+  assert.equal(changes.at(-1).clips[2].start, 30);
+
+  // 53 pixels right is frame 136, which puts its end 4 frames short of the timeline's end at 200
+  dragClip(container, 2, { x: 15, y: layer1RowY }, { x: 68, y: layer1RowY });
+  assert.equal(changes.at(-1).clips[2].start, 140);
+});
+
+test('dragging a clip onto the row above puts it on that layer without sound', async () => {
+  const { container, changes } = await freshEditor(twoClipTimeline());
+  dragClip(container, 0, { x: 10, y: BASE_ROW_Y }, { x: 10, y: LAYER_1_ROW_Y });
+  assert.deepEqual(changes.at(-1).clips[0], clip(1, 0, 240, 0, 1));
+  assert.match(container.innerHTML, /data-layer="2"/);
+});
+
+test('a drag that would overlap another clip leaves the timeline as it was', async () => {
+  const { container, changes } = await freshEditor(twoClipTimeline());
+  dragClip(container, 0, { x: 10, y: BASE_ROW_Y }, { x: 20, y: BASE_ROW_Y });
+  assert.deepEqual(changes, []);
+});
+
+test('a press and release without a move selects the clip and seeks', async () => {
+  const { container, changes, seeks } = await freshEditor(twoClipTimeline());
+  dragClip(container, 1, { x: 0, y: BASE_ROW_Y }, { x: 1, y: BASE_ROW_Y });
+  assert.deepEqual(changes, []);
+  assert.deepEqual(seeks, [240]);
 });
 
 test('Split reel here adds a reel start at the playhead and clicking its marker removes it', async () => {
@@ -442,20 +623,25 @@ test('with the timeline loaded Set in and Set out trim the clip under the playhe
   editor.followTimelinePosition({ seconds: 250 / 24, clipIndex: 1 });
 
   clickAction(container, 'set-in');
-  assert.deepEqual(changes.at(-1).clips[1], clip(2, 30, 100));
-  assert.deepEqual(changes.at(-1).clips[0], clip(1, 0, 240));
+  assert.deepEqual(changes.at(-1).clips[1], clip(2, 30, 100, 240));
+  assert.deepEqual(changes.at(-1).clips[0], clip(1, 0, 240, 0));
   assert.match(container.innerHTML, /data-field="in" value="00:00:01:06"/);
 
   // the second clip now starts at its source frame 30, so timeline frame 260 shows source frame 50
   editor.followTimelinePosition({ seconds: 260 / 24, clipIndex: 1 });
   clickAction(container, 'set-out');
-  assert.deepEqual(changes.at(-1).clips[1], clip(2, 30, 50));
+  assert.deepEqual(changes.at(-1).clips[1], clip(2, 30, 50, 240));
 });
 
-test('Set in past the last clip changes nothing', async () => {
+test('Set in past the last clip or in a gap changes nothing', async () => {
   const { editor, container, changes } = await freshEditor(twoClipTimeline());
   await playTimeline(container);
   editor.followTimelinePosition({ seconds: 320 / 24, clipIndex: 1 });
+  clickAction(container, 'set-in');
+  assert.deepEqual(changes, []);
+
+  editor.setTimeline(gappedTimeline());
+  editor.followTimelinePosition({ seconds: 100 / 24, clipIndex: null });
   clickAction(container, 'set-in');
   assert.deepEqual(changes, []);
 });

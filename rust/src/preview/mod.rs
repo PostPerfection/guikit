@@ -19,7 +19,7 @@ use postkit::grok_player::{
     DecodeScale as GrokDecodeScale, GrokPlayer, SubtitleSlot as GrokSubtitleSlot,
 };
 use postkit::mpv_render::{MpvRenderPlayer, OsdAssOverlay};
-use postkit::timeline::{join_subtitles, mpv_edl_uri, render_sound, Timeline};
+use postkit::timeline::{join_subtitles, mpv_edl_uri, render_black, render_sound, Timeline};
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
@@ -38,8 +38,8 @@ use screening_runner::PreviewRunnerPlayer;
 
 mod timeline_preview;
 use timeline_preview::{
-    follow_grok_timeline, timeline_backend, GrokTimelineRun, LoadedTimeline, TimelineFrames,
-    TimelinePlayback, TimelinePlayer,
+    follow_grok_timeline, render_black_codestreams, timeline_backend, GrokTimelineRun,
+    LoadedTimeline, TimelineFrames, TimelinePlayback, TimelinePlayer,
 };
 
 /// The OSD overlay the QC drawings occupy. Ids belong to the libmpv client, so
@@ -106,10 +106,12 @@ const SHOWN_FRAME_SIZE_PROPERTIES: [(&str, &str); 2] = [
 ];
 // the source channel levels the page's meter draws, null while the meter is off
 const AUDIO_LEVELS_FIELD: &str = "audio_levels";
-// under the app's cache folder, the timeline's sound, and its joined subtitles for mpv
+// under the app's cache folder: the timeline's sound, its joined subtitles for mpv, the black for its gaps
 const TIMELINE_WORK_DIRECTORY: &str = "preview-timeline";
 const TIMELINE_SOUND_FILE: &str = "timeline-sound.wav";
 const TIMELINE_SUBTITLE_FILE: &str = "timeline-subtitles.srt";
+const TIMELINE_BLACK_FILE: &str = "timeline-black.mkv";
+const TIMELINE_BLACK_DIRECTORY: &str = "timeline-black";
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -364,8 +366,10 @@ fn load_grok_timeline(
         .map_err(|e| format!("cannot create {}: {e}", work_dir.display()))?;
     let sound_file = work_dir.join(TIMELINE_SOUND_FILE);
     let sound = render_sound(&timeline, &sound_file)?;
-    let run = GrokTimelineRun::start(timeline, sound, player)?;
-    Ok(state.install_timeline(TimelinePlayback::Grok(run), vec![sound_file]))
+    let black_dir = work_dir.join(TIMELINE_BLACK_DIRECTORY);
+    let black = render_black_codestreams(&timeline, &black_dir)?;
+    let run = GrokTimelineRun::start(timeline, sound, black.as_deref(), player)?;
+    Ok(state.install_timeline(TimelinePlayback::Grok(run), vec![sound_file, black_dir]))
 }
 
 fn load_mpv_timeline(
@@ -379,7 +383,9 @@ fn load_mpv_timeline(
         .map_err(|e| format!("cannot create {}: {e}", work_dir.display()))?;
     let sound_file = work_dir.join(TIMELINE_SOUND_FILE);
     let subtitle_file = work_dir.join(TIMELINE_SUBTITLE_FILE);
+    let black_file = work_dir.join(TIMELINE_BLACK_FILE);
     let sound = render_sound(timeline, &sound_file)?;
+    let black = render_black(timeline, &black_file)?;
     let subtitle = match &timeline.subtitle {
         Some(subtitle) => Some(subtitle.clone()),
         None => join_subtitles(timeline, &subtitle_file)?,
@@ -390,10 +396,11 @@ fn load_mpv_timeline(
         tracks.subtitle.file_path = subtitle.map(|path| path.display().to_string());
         reload_file_options(false, None, &tracks)
     };
-    player.load_mpv_uri(&mpv_edl_uri(timeline, sound.as_deref()), &file_options)?;
+    let uri = mpv_edl_uri(timeline, sound.as_deref(), black.as_deref())?;
+    player.load_mpv_uri(&uri, &file_options)?;
     state.install_timeline(
         TimelinePlayback::Mpv(TimelineFrames::of(timeline)),
-        vec![sound_file, subtitle_file],
+        vec![sound_file, subtitle_file, black_file],
     );
     Ok(())
 }

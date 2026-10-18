@@ -1,7 +1,18 @@
-import { clipStarts, frameTimecode, splitReelAt, totalFrames, withReelStartsInsideTimeline } from './timeline-editor.js';
+import {
+  clipAtFrame,
+  clipStarts,
+  embeddedSound,
+  frameTimecode,
+  layerEnd,
+  splitReelAt,
+  totalFrames,
+  withReelStartsInsideTimeline,
+} from './timeline-editor.js';
+
+export { embeddedSound };
 
 // postkit's TIMELINE_FORMAT_VERSION, which the wizards' submit_job checks
-const TIMELINE_FORMAT_VERSION = 1;
+const TIMELINE_FORMAT_VERSION = 2;
 const SECONDS_PER_MINUTE = 60;
 const MINUTES_PER_HOUR = 60;
 const SPLIT_TIMECODE_SEPARATOR = ', ';
@@ -14,14 +25,20 @@ export function emptyTimeline(fps) {
   return { fps, clips: [], sound: null, subtitle: null, reelStarts: [] };
 }
 
-export function embeddedSound() {
-  return { kind: 'embedded', asset: null };
-}
-
 // 0 frames until the source is probed
-function newClip(asset) {
+function newClip(asset, start) {
   const frames = asset.frames ?? 0;
-  return { picture: asset.id, frames, inFrame: 0, outFrame: frames, sound: embeddedSound(), subtitle: null };
+  return {
+    picture: asset.id,
+    frames,
+    start,
+    layer: 0,
+    opacity: 1,
+    inFrame: 0,
+    outFrame: frames,
+    sound: embeddedSound(),
+    subtitle: null,
+  };
 }
 
 export function clipHasOwnSound(clip) {
@@ -36,10 +53,10 @@ export function assetPath(assetById, assetId) {
   return assetId === null ? null : assetById(assetId).path;
 }
 
-// a video becomes the last clip, a sound or subtitle covers the whole timeline while nothing else does
+// a video follows the last layer 0 clip, a sound or subtitle covers the whole timeline while nothing else does
 export function withImportedAsset(timeline, asset) {
   const placed = structuredClone(timeline);
-  if (asset.type === 'video') placed.clips.push(newClip(asset));
+  if (asset.type === 'video') placed.clips.push(newClip(asset, layerEnd(placed, 0)));
   if (asset.type === 'audio' && placed.sound === null && !placed.clips.some(clipHasOwnSound)) placed.sound = asset.id;
   if (asset.type === 'subtitle' && placed.subtitle === null && !placed.clips.some(clipHasOwnSubtitle)) {
     placed.subtitle = asset.id;
@@ -64,12 +81,23 @@ export function withUnplacedAssetsFilled(timeline, assets) {
 
 export function withProbedFrames(timeline, assetId, frames) {
   const probed = structuredClone(timeline);
-  for (const clip of probed.clips) {
-    if (clip.picture !== assetId || clip.frames !== 0) continue;
+  probed.clips.forEach((clip, index) => {
+    if (clip.picture !== assetId || clip.frames !== 0) return;
     clip.frames = frames;
-    if (clip.outFrame === 0) clip.outFrame = frames;
-  }
+    if (clip.outFrame !== 0) return;
+    clip.outFrame = frames;
+    if (clip.layer === 0) moveBaseClipsAfter(probed, index, frames);
+  });
   return probed;
+}
+
+// an unprobed clip is 0 frames long, so the layer 0 clips imported after it start at the same frame
+function moveBaseClipsAfter(timeline, index, frames) {
+  const { start } = timeline.clips[index];
+  timeline.clips.forEach((other, otherIndex) => {
+    const after = other.start > start || (other.start === start && otherIndex > index);
+    if (other.layer === 0 && after) other.start += frames;
+  });
 }
 
 // call once every probe has run
@@ -151,7 +179,8 @@ export function withFirstClipRate(timeline, assetById) {
 }
 
 export function timelineFrameAtSourceFrame(timeline, clipIndex, sourceFrame) {
-  return clipStarts(timeline)[clipIndex] + sourceFrame - timeline.clips[clipIndex].inFrame;
+  const clip = timeline.clips[clipIndex];
+  return clip.start + sourceFrame - clip.inFrame;
 }
 
 // the reel starts a split-at field holds, null while it does not parse
@@ -185,19 +214,22 @@ export function withSplitAtFrames(timeline, typedFrames) {
   return withReelStartsInsideTimeline(split);
 }
 
-// a clip can come twice from one file, so the clip already shown wins
+// a clip can come twice from one file, so the clip already shown wins, then the earliest on the timeline
 export function clipIndexShowing(timeline, picturePath, likelyIndex, assetById) {
   const shows = (clip) => clip !== undefined && assetPath(assetById, clip.picture) === picturePath;
   if (shows(timeline.clips[likelyIndex])) return likelyIndex;
-  const index = timeline.clips.findIndex(shows);
-  return index === -1 ? null : index;
+  const showing = timeline.clips
+    .map((clip, index) => ({ clip, index }))
+    .filter(({ clip }) => shows(clip))
+    .sort((first, second) => first.clip.start - second.clip.start);
+  return showing[0]?.index ?? null;
 }
 
-// the timeline's own subtitle lines up with the source only where the timeline starts at the source's first frame
+// the timeline's own subtitle lines up with the source only where each source frame sits at the same timeline frame
 export function clipPreviewSubtitle(timeline, clipIndex) {
   const clip = timeline.clips[clipIndex];
-  const startsTimeline = clipIndex === 0 && clip.inFrame === 0;
-  return clip.subtitle ?? (startsTimeline ? timeline.subtitle : null);
+  const linesUp = clip.start === clip.inFrame;
+  return clip.subtitle ?? (linesUp ? timeline.subtitle : null);
 }
 
 // what the first clip and the timeline give the sound panel and the package name
@@ -212,20 +244,19 @@ export function firstSubtitleAsset(timeline, assetById) {
   return subtitle === null ? null : assetById(subtitle);
 }
 
-// one span per reel, with the assets of the clip it starts in
+// one span per reel, with the assets of the layer 0 clip it starts in, a null picture where it starts in a gap
 export function reelSpans(timeline, assetById) {
   if (timeline.clips.length === 0) return [];
   const total = totalFrames(timeline);
-  const starts = clipStarts(timeline);
   const bounds = [0, ...timeline.reelStarts.filter((frame) => frame < total), total];
   return bounds.slice(0, -1).map((start, index) => {
-    const clipIndex = starts.findLastIndex((clipStart) => clipStart <= start);
-    const clip = timeline.clips[clipIndex];
-    const subtitle = timeline.subtitle ?? clip.subtitle;
+    const place = clipAtFrame(timeline, start);
+    const clips = place === null ? [] : [timeline.clips[place.index]];
+    const subtitle = timeline.subtitle ?? clips[0]?.subtitle ?? null;
     return {
       frames: bounds[index + 1] - start,
-      picture: assetById(clip.picture),
-      sound: firstSoundAsset({ ...timeline, clips: [clip] }, assetById),
+      picture: place === null ? null : assetById(clips[0].picture),
+      sound: firstSoundAsset({ ...timeline, clips }, assetById),
       subtitle: subtitle === null ? null : assetById(subtitle),
     };
   });
@@ -245,6 +276,9 @@ export function timelineWire(timeline, assetById) {
     fps: { numerator, denominator },
     clips: timeline.clips.map((clip) => ({
       picture: assetPath(assetById, clip.picture),
+      start: clip.start,
+      layer: clip.layer,
+      opacity: clip.opacity,
       in_frame: clip.inFrame,
       out_frame: clip.outFrame,
       sound: CLIP_SOUND_WIRE[clip.sound.kind](clip.sound, assetById),

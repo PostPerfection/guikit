@@ -1241,6 +1241,15 @@ body.preview-fullscreen-hud-hidden * {
 
 .timeline-editor-clip {
   background: #7c3aed;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.timeline-editor-clip.dragging {
+  cursor: grabbing;
+  opacity: 0.8;
+  z-index: 2;
 }
 
 .timeline-editor-clip.selected {
@@ -1254,6 +1263,16 @@ body.preview-fullscreen-hud-hidden * {
 
 .timeline-editor-track[data-track="subtitle"] .timeline-editor-span {
   background: #b45309;
+}
+
+/* layer 0 clips take the top half of a stacked row, the clips above them the lower half */
+.timeline-editor-track[data-stacked] .timeline-editor-span {
+  bottom: 50%;
+}
+
+.timeline-editor-track[data-stacked] .timeline-editor-span-upper {
+  top: 50%;
+  bottom: 4px;
 }
 
 .timeline-editor-track .timeline-editor-span.timeline-editor-span-empty {
@@ -1287,6 +1306,11 @@ body.preview-fullscreen-hud-hidden * {
 
 .timeline-editor-hint {
   color: var(--text-muted);
+}
+
+.timeline-editor-opacity {
+  width: 6ch;
+  font-size: 12px;
 }
 
 .timeline-editor-timecode {

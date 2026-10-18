@@ -66,13 +66,18 @@ directory, or a directory of codestreams. Everything else goes to libmpv.
 `[preview] backend: grok|mpv for <path>`. Every other command follows the
 backend the load picked, so the page drives one player either way.
 
-`preview_load_timeline(timeline)` plays a postkit `Timeline` whole and returns
-`{ picture_only }`. JPEG 2000 clips play on grok one after another, each with
-its range, without the timeline's sound and subtitles, so `picture_only` is
-true. Any other clips play on mpv as one `edl://` source with the sound and
-subtitle, and a mix of the two is refused. While a timeline is loaded the
-position, duration and both seeks are in timeline seconds, and
-`preview_get_metadata` adds `timeline_position` and `timeline_clip_index`.
+`preview_load_timeline(timeline)` plays layer 0 of a postkit `Timeline` and
+returns `{ picture_only }`, which is false. Clips above layer 0 are not shown.
+JPEG 2000 clips play on grok one after another in start order, each with its
+range and the timeline's rendered sound and subtitles from its place. A gap
+in layer 0 plays black on grok from a directory of codestreams: one black still
+encoded once per load and hard linked once per frame of the longest gap. Any
+other clips play on mpv as one `edl://` source with the sound, the subtitle and
+postkit's ffv1 black for the gaps, and a mix of the two players is refused. The
+black, like the sound and subtitles, goes in the app's cache folder and is
+removed with the timeline. While a timeline is loaded the position, duration
+and both seeks are in timeline seconds, and `preview_get_metadata` adds
+`timeline_position` and `timeline_clip_index`, which is null in a gap.
 
 An encrypted package plays on grok when its load is given the content keys.
 `previewDcp(dirPath, contentKeys)` and `previewFile(filePath, contentKeys)` take
@@ -314,7 +319,7 @@ whole model back after every edit:
 ```js
 {
   fps: [numerator, denominator],
-  clips: [{ picture, frames, inFrame, outFrame, sound: { kind, asset }, subtitle }],
+  clips: [{ picture, frames, start, layer, opacity, inFrame, outFrame, sound: { kind, asset }, subtitle }],
   sound,       // asset id of a WAV spanning the timeline, or null
   subtitle,    // asset id of a subtitle file timed against the timeline, or null
   reelStarts,  // timeline frames, sorted, never 0
@@ -323,10 +328,15 @@ whole model back after every edit:
 
 `picture`, `sound.asset`, `subtitle` and the timeline's `sound` and `subtitle`
 are the app's asset ids, and the app maps them to paths. `frames` is the
-source's frame count, and `outFrame` is exclusive. A clip's `sound.kind` is
+source's frame count, and `outFrame` is exclusive. `start` is the timeline frame
+the clip starts at. Layer 0 is the picture, with gaps that play black and
+silent, and higher layers composite over it bottom to top at their `opacity`,
+0 to 1. Two clips on one layer never overlap. A clip's `sound.kind` is
 `'embedded'` (the audio inside the picture file), `'file'` (the WAV in
-`sound.asset`) or `'none'`. The timeline's `sound` replaces every clip's sound
-when it is set. This is the GUI side of postkit's `Timeline`.
+`sound.asset`) or `'none'`, and a clip above layer 0 is always `'none'`. The
+timeline's `sound` replaces every clip's sound when it is set. This is the GUI
+side of postkit's version 2 `Timeline`, and `timelineWire` in
+`composition-timeline.js` writes it as postkit's JSON.
 
 `initTimelineEditor(container, options)` renders into an element the app
 supplies. The options are all required:
@@ -349,51 +359,68 @@ markup alone, so the app can call it from the metadata poll.
 drops 0 and duplicates, sorts them and reports the result through `onChange`.
 
 The edits are exported as functions that return a new model and leave the one
-they are given alone: `addClip(model, clip, index)` (appends without an index),
-`removeClip(model, index)`, `moveClip(model, from, to)`,
+they are given alone: `addClip(model, clip)` (appends), `removeClip(model, index)`,
+`moveClipTo(model, index, start, layer)`, `setClipOpacity(model, index, opacity)`,
 `setClipRange(model, index, inFrame, outFrame)`, `splitReelAt(model, frame)` and
-`removeReelStart(model, frame)`. `totalFrames(model)` is the sum of the kept
-lengths, `clipStarts(model)` the timeline frame each clip starts at, and
-`clipAtFrame(model, frame)` returns `{ index, frameInClip }` or null past either
-end, `frameInClip` counting from the clip's start on the timeline, so the source
-frame is `inFrame + frameInClip`. A clip index that is not there throws a
-`RangeError`, and so does `setClipRange` for an in point below 0, at or past the
-out point, or an out point past `frames`, naming the clip and both numbers.
+`removeReelStart(model, frame)`. `moveClipTo` sets the sound to `'none'` when a
+clip leaves layer 0, and back to `'embedded'` at full opacity when it returns.
+`totalFrames(model)` is the furthest clip end, `clipStarts(model)` the starts,
+`layerEnd(model, layer)` the furthest end on one layer,
+`layersOf(model)` the layers holding a clip plus layer 0, bottom first, and
+`baseClipsInOrder(model)` the layer 0 clips as `{ index, clip }` in start order.
+`clipAtFrame(model, frame)` returns the layer 0 clip there as
+`{ index, frameInClip }`, or null in a gap or past either end, `frameInClip`
+counting from the clip's start, so the source frame is `inFrame + frameInClip`.
+A clip index that is not there throws a `RangeError`. So do `setClipRange` for
+an in point below 0, at or past the out point, or an out point past `frames`,
+`setClipOpacity` outside 0 to 1, and `addClip`, `moveClipTo` and `setClipRange`
+for a clip that would overlap another on its layer, naming both.
 `splitReelAt` ignores 0 and a frame already listed and keeps the list sorted.
 `withReelStartsInsideTimeline(model)` drops every reel start at or past
-`totalFrames(model)`, the bound postkit's `Timeline` checks, and `removeClip`
-and `setClipRange` apply it to what they return. `setTimeline` does not, since a
+`totalFrames(model)`, the bound postkit's `Timeline` checks, and `removeClip`,
+`moveClipTo` and `setClipRange` apply it to what they return. `setTimeline` does not, since a
 clip not probed yet has 0 frames.
 
 The editor draws a ruler in `framesToTimecode` at the timeline's rate, with
-reel start markers and a playhead line, over three tracks. Picture holds the
-clips, each span as wide as its kept length and labelled with the source's
-name. Sound has a span under each clip reading the WAV's name, "embedded" or "no
-sound", or one span across everything when the timeline's `sound` is set.
-Subtitle is the same for subtitles, with an empty span under a clip that has
-none. A dropped sound or subtitle span has a ✕ that takes it off again, which
-puts a clip's sound back to embedded.
+reel start markers and a playhead line, over the tracks. There is one picture
+row per layer in use, the top layer first, labelled "Layer N" above layer 0's
+"Picture", and an empty row above the top layer to drag or drop a clip onto.
+Each clip sits at its start, as wide as its kept length and labelled with the
+source's name, and a gap is empty track. Sound has a span under each layer 0
+clip reading the WAV's name, "embedded" or "no sound", or one span across
+everything when the timeline's `sound` is set. Subtitle is the same for
+subtitles, with an empty span under a clip that has none, and a clip above
+layer 0 gets a subtitle span in the row's lower half. A dropped sound or
+subtitle span has a ✕ that takes it off again, which puts a clip's sound back
+to embedded.
 
 Assets come in by drag and drop. The drop's `text/plain` data is the asset id,
 parsed as an integer as the wizards' assets lists set it, and an asset only
-lands on its own kind of track. A picture becomes a new clip after the clip it
-is dropped on, or last, from frame 0 to the frame count `sourceFrames` resolves,
-with embedded sound. A sound dropped over a clip becomes that clip's sound file,
-and one dropped on the track's label, or anywhere on the track when the
-timeline's `sound` is set or there are no clips, becomes the timeline's `sound`.
-A subtitle works the same on its track.
+lands on its own kind of track. A picture becomes a new clip on the row it is
+dropped on, from source frame 0 to the frame count `sourceFrames` resolves:
+dropped on a clip it starts where that clip ends, on empty track at the frame
+under the pointer, and on the row's label after the row's last clip. A drop
+that would overlap a clip changes nothing. A sound dropped over a clip becomes
+that clip's sound file, and one dropped on the track's label, or anywhere on
+the track when the timeline's `sound` is set or there are no clips, becomes the
+timeline's `sound`. A subtitle works the same on its track.
+
+A clip drags with the pointer along its row to a new start and onto another
+row to change its layer. Its start or end snaps to another clip's edge or the
+playhead within 6 pixels. The release applies `moveClipTo`, and a move that
+would overlap leaves the timeline as it was.
 
 Clicking a clip selects it and seeks to the frame under the pointer. The
 selected clip gets In and Out fields in `HH:MM:SS:FF` source timecode,
-non-drop at the rate rounded to whole frames, plus Set in from playhead, Set out
-from playhead, ← and → to move it one place, and Remove. An In or Out typed in
-that does not parse or that `setClipRange` refuses changes nothing, and the
-field shows the clip's own value again. Clicking the ruler seeks. Split reel
-here (Split segment here with `reelWord: 'segment'`) adds a reel start at the
-playhead, and clicking a marker removes it. The −
-and + buttons zoom the tracks and ruler between 1 and 20 times the view's width,
-and the track labels stay in view while it scrolls. There is no keyboard
-control and no dragging of clips between places.
+non-drop at the rate rounded to whole frames, Set in from playhead, Set out
+from playhead, a Start field in timeline timecode, an Opacity field in percent
+for a clip above layer 0, and Remove. A value typed in that does not parse or
+that the edit refuses changes nothing, and the field shows the clip's own value
+again. Clicking the ruler seeks. Split reel here (Split segment here with
+`reelWord: 'segment'`) adds a reel start at the playhead, and clicking a marker
+removes it. The − and + buttons zoom the tracks and ruler between 1 and 20
+times the view's width, and the track labels stay in view while it scrolls.
+There is no keyboard control.
 
 `test/timeline-editor.test.mjs` drives the editor headless with a fake container
 and made-up click, change and drop events.
@@ -406,14 +433,15 @@ need an asset take `assetById(assetId)` returning `{ id, type, path, fps, frames
 with `type` `'video'`, `'audio'` or `'subtitle'`.
 
 - `emptyTimeline(fps)`, and `DEFAULT_TIMELINE_FPS`, 24.
-- `withImportedAsset(timeline, asset)` puts a video last as a clip of its whole
-  source, and an audio or subtitle on the timeline's `sound` or `subtitle` while
+- `withImportedAsset(timeline, asset)` puts a video on layer 0 where the last
+  layer 0 clip ends, as a clip of its whole source, and an audio or subtitle on the timeline's `sound` or `subtitle` while
   that is empty and no clip has its own. `withUnplacedAssetsFilled(timeline,
   assets)` gives every asset not on the timeline the same rule, taking only the
   first video and only onto an empty timeline.
 - `withProbedFrames(timeline, assetId, frames)` fills the frame count of the
-  clips placed before their source was probed, and `withFirstClipRate` sets the
-  timeline's `fps` to the first clip's probed rate.
+  clips placed before their source was probed, and moves the layer 0 clips after
+  each one along by its length, since it was 0 frames long until then.
+  `withFirstClipRate` sets the timeline's `fps` to the first clip's probed rate.
 - `withReelStartingClipsPlaced(composition)` turns a composition's
   `reelStartingClipIndices`, which a project file upgrade leaves, into reel
   starts at those clips once every clip has its frame count, and drops the list.
@@ -425,10 +453,11 @@ with `type` `'video'`, `'audio'` or `'subtitle'`.
   clip's.
 - `clipIndexShowing(timeline, picturePath, likelyIndex, assetById)`, the clip a
   preview of that file shows, `likelyIndex` winning when the file is on the
-  timeline twice, and `clipPreviewSubtitle(timeline, clipIndex)`, the subtitle
-  asset to show over it.
+  timeline twice and the earliest start otherwise, and
+  `clipPreviewSubtitle(timeline, clipIndex)`, the subtitle asset to show over it.
 - `reelSpans(timeline, assetById)`, one `{ frames, picture, sound, subtitle }`
-  per reel with the assets of the clip it starts in.
+  per reel with the assets of the layer 0 clip it starts in, `picture` null for
+  a reel that starts in a gap.
 - `timelineWire(timeline, assetById)`, postkit's `Timeline` JSON with paths for
   asset ids, the form both wizards' `submit_job` takes.
 - `splitTimecodeFrames(spec, editRate)` reads a comma separated list of
