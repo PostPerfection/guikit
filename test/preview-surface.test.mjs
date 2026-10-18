@@ -11,6 +11,8 @@ const SHOWN_RECTANGLE = { left: 0, top: 0, width: 640, height: 360 };
 const SCROLLED_RECTANGLE = { left: 0, top: -120, width: 640, height: 360 };
 const RESIZED_RECTANGLE = { left: 0, top: -120, width: 800, height: 450 };
 const SCROLL_EVENTS = 3;
+const VIEWPORT = { width: 1920, height: 1080 };
+const SCROLLED_OUT_RECTANGLE = { left: 0, top: -400, width: 640, height: 360 };
 const FULLSCREEN_CLASS = 'preview-fullscreen';
 const FULLSCREEN_HUD_HIDDEN_CLASS = 'preview-fullscreen-hud-hidden';
 const FULLSCREEN_HUD_IDLE_TIMEOUT_MS = 3000;
@@ -75,6 +77,8 @@ globalThis.document = {
   querySelectorAll: () => (panel.classList.contains(FULLSCREEN_CLASS) ? [transport] : []),
 };
 globalThis.window = {
+  innerWidth: VIEWPORT.width,
+  innerHeight: VIEWPORT.height,
   addEventListener: watch,
   removeEventListener(name, handler) {
     watchers[name]?.delete(handler);
@@ -114,7 +118,9 @@ function pressEscape(defaultPrevented) {
 }
 
 test('the first report is sent and the surface watchers are registered', () => {
-  assert.deepEqual(surfaceReports(), [{ x: 0, y: 0, width: 640, height: 360, visible: true }]);
+  assert.deepEqual(surfaceReports(), [
+    { x: 0, y: 0, width: 640, height: 360, clip: { x: 0, y: 0, width: 640, height: 360 }, visible: true },
+  ]);
   assert.ok(
     watchers.scroll?.size && watchers.resize?.size && watchers.surfaceSize?.size,
     'a surface watcher was never registered',
@@ -149,12 +155,57 @@ test('scrolling with the panel shown reports each new placement once', () => {
   surfaceRectangle = SCROLLED_RECTANGLE;
   scroll();
   scroll();
-  assert.deepEqual(surfaceReports(), [{ x: 0, y: -120, width: 640, height: 360, visible: true }]);
+  assert.deepEqual(surfaceReports(), [
+    { x: 0, y: -120, width: 640, height: 360, clip: { x: 0, y: 0, width: 640, height: 240 }, visible: true },
+  ]);
 
   surfaceRectangle = RESIZED_RECTANGLE;
   scroll();
-  assert.deepEqual(surfaceReports().at(-1), { x: 0, y: -120, width: 800, height: 450, visible: true });
+  assert.deepEqual(surfaceReports().at(-1), {
+    x: 0,
+    y: -120,
+    width: 800,
+    height: 450,
+    clip: { x: 0, y: 0, width: 800, height: 330 },
+    visible: true,
+  });
   assert.equal(surfaceReports().length, 2);
+});
+
+test('a surface scrolled wholly out of view is reported hidden', () => {
+  showPanel();
+
+  surfaceRectangle = SCROLLED_OUT_RECTANGLE;
+  scroll();
+  assert.equal(surfaceReports().at(-1).visible, false);
+
+  surfaceRectangle = SHOWN_RECTANGLE;
+  scroll();
+  assert.equal(surfaceReports().at(-1).visible, true);
+});
+
+test('the visible box is the surface cut to the viewport and every clipping box', () => {
+  const surface = { x: 69, y: -41, width: 949, height: 331 };
+  const scrollingContainer = { x: 60, y: 0, width: 900, height: 700 };
+  assert.deepEqual(preview.visibleSurfaceBox(surface, [scrollingContainer], VIEWPORT), {
+    x: 69,
+    y: 0,
+    width: 891,
+    height: 290,
+  });
+});
+
+test('the visible box of a surface inside everything is the surface', () => {
+  const surface = { x: 69, y: 41, width: 949, height: 331 };
+  const container = { x: 0, y: 0, width: 1280, height: 1024 };
+  assert.deepEqual(preview.visibleSurfaceBox(surface, [container], VIEWPORT), surface);
+});
+
+test('the visible box is empty when a clipping box misses the surface', () => {
+  const surface = { x: 0, y: 500, width: 640, height: 360 };
+  const container = { x: 0, y: 0, width: 640, height: 400 };
+  const visible = preview.visibleSurfaceBox(surface, [container], VIEWPORT);
+  assert.equal(visible.height, 0);
 });
 
 test('the full screen button covers the window, restores it, and places the surface again each time', () => {
@@ -206,12 +257,26 @@ test('full screen hides the controls when idle, places the surface over the whol
   surfaceRectangle = IDLE_SURFACE_RECTANGLE;
   context.mock.timers.tick(FULLSCREEN_HUD_IDLE_TIMEOUT_MS);
   assert.ok(body.classList.contains(FULLSCREEN_HUD_HIDDEN_CLASS));
-  assert.deepEqual(surfaceReports().at(-1), { x: 0, y: 0, width: 1920, height: 1080, visible: true });
+  assert.deepEqual(surfaceReports().at(-1), {
+    x: 0,
+    y: 0,
+    width: 1920,
+    height: 1080,
+    clip: { x: 0, y: 0, width: 1920, height: 1080 },
+    visible: true,
+  });
 
   surfaceRectangle = FULLSCREEN_SURFACE_RECTANGLE;
   dispatch('mousemove', POINTER_OVER_PICTURE);
   assert.ok(!body.classList.contains(FULLSCREEN_HUD_HIDDEN_CLASS));
-  assert.deepEqual(surfaceReports().at(-1), { x: 0, y: 32, width: 1920, height: 1000, visible: true });
+  assert.deepEqual(surfaceReports().at(-1), {
+    x: 0,
+    y: 32,
+    width: 1920,
+    height: 1000,
+    clip: { x: 0, y: 32, width: 1920, height: 1000 },
+    visible: true,
+  });
 
   preview.closePreview();
 });

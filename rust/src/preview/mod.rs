@@ -253,6 +253,15 @@ fn create_player_with(
     }
 }
 
+// the part of the placeholder left on screen by the viewport and the page's scrolling containers
+#[derive(Clone, Copy, Default, Deserialize)]
+pub struct SurfaceClip {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
 /// Report where the page's video placeholder sits, in CSS pixels from the
 /// top-left of the webview, so the embedded surface can be moved to match.
 #[tauri::command]
@@ -261,11 +270,12 @@ pub fn preview_set_surface(
     y: i32,
     width: i32,
     height: i32,
+    clip: SurfaceClip,
     visible: bool,
     state: tauri::State<'_, PreviewPlayer>,
 ) {
     if let PreviewSurface::Embedded(preview) = &state.surface {
-        preview.set_surface(x, y, width, height, visible);
+        preview.set_surface(x, y, width, height, clip, visible);
     }
 }
 

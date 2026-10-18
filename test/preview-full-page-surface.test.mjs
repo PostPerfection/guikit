@@ -37,7 +37,14 @@ globalThis.document = {
     watchers[name] = handler;
   },
 };
+// the surface fills the page
 globalThis.window = {
+  get innerWidth() {
+    return surfaceRectangle.width;
+  },
+  get innerHeight() {
+    return surfaceRectangle.height;
+  },
   addEventListener(name, handler) {
     watchers[name] = handler;
   },
@@ -58,14 +65,23 @@ function surfaceReports() {
 }
 
 test('the surface is reported shown straight away', () => {
-  assert.deepEqual(surfaceReports(), [{ x: 0, y: 0, width: 1920, height: 1080, visible: true }]);
+  assert.deepEqual(surfaceReports(), [
+    { x: 0, y: 0, width: 1920, height: 1080, clip: { x: 0, y: 0, width: 1920, height: 1080 }, visible: true },
+  ]);
 });
 
 test('a window resize reports the new size once', () => {
   surfaceRectangle = FULL_SCREEN_RECTANGLE;
   watchers.resize({});
   watchers.surfaceSize([]);
-  assert.deepEqual(surfaceReports().at(-1), { x: 0, y: 0, width: 3840, height: 2160, visible: true });
+  assert.deepEqual(surfaceReports().at(-1), {
+    x: 0,
+    y: 0,
+    width: 3840,
+    height: 2160,
+    clip: { x: 0, y: 0, width: 3840, height: 2160 },
+    visible: true,
+  });
   assert.equal(surfaceReports().length, 2);
 });
 

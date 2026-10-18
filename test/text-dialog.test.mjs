@@ -64,7 +64,7 @@ globalThis.document = {
     return element;
   },
 };
-globalThis.window = { addEventListener: () => {} };
+globalThis.window = { innerWidth: 1920, innerHeight: 1080, addEventListener: () => {} };
 globalThis.ResizeObserver = class {
   observe() {}
 };

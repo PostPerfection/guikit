@@ -19,6 +19,7 @@ use gtk::prelude::*;
 use postkit::mpv_render::NativeDisplay;
 
 use super::player::Player;
+use super::SurfaceClip;
 
 /// `GL_DRAW_FRAMEBUFFER_BINDING`. GtkGLArea renders into a framebuffer it owns
 /// and offers no getter for it, so mpv's target has to be read back from GL.
@@ -39,6 +40,7 @@ struct SurfaceRect {
     y: i32,
     width: i32,
     height: i32,
+    clip: SurfaceClip,
     visible: bool,
 }
 
@@ -60,12 +62,21 @@ impl EmbeddedPreview {
 
     /// Move the video surface to where the page says its placeholder is, in CSS
     /// pixels from the top-left of the webview.
-    pub fn set_surface(&self, x: i32, y: i32, width: i32, height: i32, visible: bool) {
+    pub fn set_surface(
+        &self,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        clip: SurfaceClip,
+        visible: bool,
+    ) {
         *self.rect.lock().unwrap() = SurfaceRect {
             x,
             y,
             width,
             height,
+            clip,
             visible,
         };
         let _ = self.events.try_send(SurfaceEvent::Layout);
@@ -106,7 +117,12 @@ fn attach_stacked(
     // context lives on its GL context, and advanced control needs the render
     // loop answering. An inactive preview shrinks to a transparent pixel.
     let rect = Arc::new(Mutex::new(SurfaceRect::default()));
-    apply_rect(&gl_area, SurfaceRect::default());
+    // holds the area at the negative offset of a surface scrolled partly away, which margins cannot
+    let video_layer = gtk::Layout::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
+    video_layer.set_halign(gtk::Align::Start);
+    video_layer.set_valign(gtk::Align::Start);
+    video_layer.put(&gl_area, 0, 0);
+    apply_rect(&video_layer, &gl_area, SurfaceRect::default());
 
     let (events, incoming) = async_channel::unbounded::<SurfaceEvent>();
     let pacing = Rc::new(RenderPacing::default());
@@ -154,7 +170,7 @@ fn attach_stacked(
     // runs, leaving every draw without a render context.
     let overlay = gtk::Overlay::new();
     gtk_window.remove(&webview_box);
-    stack_video(&overlay, &webview_box, &gl_area, stacking);
+    stack_video(&overlay, &webview_box, &video_layer, stacking);
     gtk_window.add(&overlay);
     overlay.show_all();
     if gl_area.is_realized() {
@@ -163,6 +179,7 @@ fn attach_stacked(
 
     spawn_event_pump(
         incoming,
+        video_layer,
         gl_area,
         Arc::clone(&player),
         Arc::clone(&rect),
@@ -179,21 +196,26 @@ fn attach_stacked(
 fn stack_video(
     overlay: &gtk::Overlay,
     webview_box: &gtk::Box,
-    gl_area: &gtk::GLArea,
+    video_layer: &gtk::Layout,
     stacking: VideoStacking,
 ) {
     match stacking {
         VideoStacking::OverPage => {
             overlay.add(webview_box);
-            overlay.add_overlay(gl_area);
+            overlay.add_overlay(video_layer);
             // the page still needs the pointer moves over the picture
-            overlay.set_overlay_pass_through(gl_area, true);
+            overlay.set_overlay_pass_through(video_layer, true);
+            video_layer.connect_realize(|layer| {
+                for window in [layer.window(), layer.bin_window()].into_iter().flatten() {
+                    window.set_pass_through(true);
+                }
+            });
         }
         VideoStacking::UnderPage => {
-            // as the overlay's main child the area's size request would be the window's minimum size
-            let video_layer = gtk::Layout::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
-            video_layer.add(gl_area);
-            overlay.add(&video_layer);
+            // as the overlay's main child the layer's size request would be the window's minimum size
+            let backdrop = gtk::Layout::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
+            backdrop.put(video_layer, 0, 0);
+            overlay.add(&backdrop);
             overlay.add_overlay(webview_box);
         }
     }
@@ -239,10 +261,20 @@ fn bind_render_context(
     );
 }
 
-fn apply_rect(gl_area: &gtk::GLArea, rect: SurfaceRect) {
-    let active = rect.visible && rect.width > 0 && rect.height > 0;
-    gl_area.set_margin_start(if active { rect.x } else { 0 });
-    gl_area.set_margin_top(if active { rect.y } else { 0 });
+fn apply_rect(video_layer: &gtk::Layout, gl_area: &gtk::GLArea, rect: SurfaceRect) {
+    let clip = rect.clip;
+    let active = rect.visible && clip.width > 0 && clip.height > 0;
+    video_layer.set_margin_start(if active { clip.x } else { 0 });
+    video_layer.set_margin_top(if active { clip.y } else { 0 });
+    video_layer.set_size_request(
+        if active { clip.width } else { 1 },
+        if active { clip.height } else { 1 },
+    );
+    video_layer.move_(
+        gl_area,
+        if active { rect.x - clip.x } else { 0 },
+        if active { rect.y - clip.y } else { 0 },
+    );
     gl_area.set_size_request(
         if active { rect.width } else { 1 },
         if active { rect.height } else { 1 },
@@ -255,6 +287,7 @@ fn apply_rect(gl_area: &gtk::GLArea, rect: SurfaceRect) {
 /// rather than being folded into the draw handler, which GTK may skip.
 fn spawn_event_pump(
     incoming: async_channel::Receiver<SurfaceEvent>,
+    video_layer: gtk::Layout,
     gl_area: gtk::GLArea,
     player: Arc<Player>,
     rect: Arc<Mutex<SurfaceRect>>,
@@ -274,7 +307,7 @@ fn spawn_event_pump(
                 }
                 SurfaceEvent::Layout => {
                     let current = *rect.lock().unwrap();
-                    apply_rect(&gl_area, current);
+                    apply_rect(&video_layer, &gl_area, current);
                 }
             }
         }
@@ -415,21 +448,31 @@ mod tests {
         gtk::init().expect("GTK needs a display, run under xvfb-run -a");
         let overlay = gtk::Overlay::new();
         let gl_area = gtk::GLArea::new();
+        let video_layer = gtk::Layout::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
+        video_layer.put(&gl_area, 0, 0);
         stack_video(
             &overlay,
             &gtk::Box::new(gtk::Orientation::Vertical, 0),
-            &gl_area,
+            &video_layer,
             VideoStacking::UnderPage,
         );
         overlay.show_all();
 
+        let full_screen = SurfaceClip {
+            x: 0,
+            y: 0,
+            width: FULL_SCREEN_WIDTH,
+            height: FULL_SCREEN_HEIGHT,
+        };
         apply_rect(
+            &video_layer,
             &gl_area,
             SurfaceRect {
                 x: 0,
                 y: 0,
                 width: FULL_SCREEN_WIDTH,
                 height: FULL_SCREEN_HEIGHT,
+                clip: full_screen,
                 visible: true,
             },
         );

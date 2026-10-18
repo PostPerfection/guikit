@@ -187,7 +187,15 @@ impl EmbeddedPreview {
 
     /// Move the video surface to where the page says its placeholder is, in CSS
     /// pixels from the top-left of the webview.
-    pub fn set_surface(&self, x: i32, y: i32, width: i32, height: i32, visible: bool) {
+    pub fn set_surface(
+        &self,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        _clip: super::SurfaceClip,
+        visible: bool,
+    ) {
         *self.rect.lock().unwrap() = SurfaceRect {
             x,
             y,

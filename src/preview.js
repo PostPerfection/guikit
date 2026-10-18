@@ -371,19 +371,62 @@ export function initLiveTransport() {
   setTransportEnabled(true);
 }
 
+export function visibleSurfaceBox(surface, clippingBoxes, viewport) {
+  let left = Math.max(surface.x, 0);
+  let top = Math.max(surface.y, 0);
+  let right = Math.min(surface.x + surface.width, viewport.width);
+  let bottom = Math.min(surface.y + surface.height, viewport.height);
+  for (const box of clippingBoxes) {
+    left = Math.max(left, box.x);
+    top = Math.max(top, box.y);
+    right = Math.min(right, box.x + box.width);
+    bottom = Math.min(bottom, box.y + box.height);
+  }
+  return { x: left, y: top, width: Math.max(right - left, 0), height: Math.max(bottom - top, 0) };
+}
+
+function roundedBox(rect) {
+  return {
+    x: Math.round(rect.left),
+    y: Math.round(rect.top),
+    width: Math.round(rect.width),
+    height: Math.round(rect.height),
+  };
+}
+
+// the box overflow is clipped to, inside the border and scrollbar
+function ancestorClippingBoxes(element) {
+  const boxes = [];
+  for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+    const style = getComputedStyle(ancestor);
+    if (style.overflowX === 'visible' && style.overflowY === 'visible') continue;
+    const rect = ancestor.getBoundingClientRect();
+    boxes.push(
+      roundedBox({
+        left: rect.left + ancestor.clientLeft,
+        top: rect.top + ancestor.clientTop,
+        width: ancestor.clientWidth,
+        height: ancestor.clientHeight,
+      }),
+    );
+  }
+  return boxes;
+}
+
 function reportSurfacePlacement(surface, isSurfaceShown) {
   let sentPlacement = null;
   const sendPlacement = (onlyIfChanged) => {
-    const rect = surface.getBoundingClientRect();
+    const surfaceBox = roundedBox(surface.getBoundingClientRect());
+    const clip = visibleSurfaceBox(surfaceBox, ancestorClippingBoxes(surface), {
+      width: window.innerWidth,
+      height: window.innerHeight,
+    });
     const placement = {
-      x: Math.round(rect.left),
-      y: Math.round(rect.top),
-      width: Math.round(rect.width),
-      height: Math.round(rect.height),
-      visible: isSurfaceShown() && !surfaceCovered,
+      ...surfaceBox,
+      clip,
+      visible: isSurfaceShown() && !surfaceCovered && clip.width > 0 && clip.height > 0,
     };
-    const unchanged =
-      sentPlacement !== null && Object.keys(placement).every((key) => placement[key] === sentPlacement[key]);
+    const unchanged = sentPlacement !== null && JSON.stringify(placement) === JSON.stringify(sentPlacement);
     if (onlyIfChanged && unchanged) return;
     sentPlacement = placement;
     invoke('preview_set_surface', placement).catch(() => {});

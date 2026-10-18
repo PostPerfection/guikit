@@ -82,7 +82,8 @@ globalThis.document = {
   addEventListener() {},
   querySelectorAll: () => [],
 };
-globalThis.window = { addEventListener() {}, removeEventListener() {} };
+globalThis.window = { innerWidth: 1920, innerHeight: 1080, addEventListener() {}, removeEventListener() {} };
+globalThis.getComputedStyle = () => ({ overflowX: 'visible', overflowY: 'visible' });
 globalThis.ResizeObserver = class {
   observe() {}
 };
