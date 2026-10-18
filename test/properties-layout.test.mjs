@@ -156,7 +156,7 @@ test("collapsing reports zero width and the show label, expanding reports the sa
   assert.deepEqual(propertiesLayout(false, SAVED_WIDTH), {
     panelWidth: SAVED_WIDTH,
     handleLabel: "Resize Properties",
-    handleTitle: null,
+    handleTitle: "Drag to resize, double-click to hide",
   });
 });
 
@@ -176,7 +176,7 @@ test("a double click collapses the panel and a click on the strip restores its s
   assert.equal(workspace.classList.contains(COLLAPSED_CLASS), false);
   assert.equal(panel.width, SAVED_WIDTH);
   assert.equal(handle.attributes["aria-label"], "Resize Properties");
-  assert.equal("title" in handle.attributes, false);
+  assert.equal(handle.attributes.title, "Drag to resize, double-click to hide");
   assert.equal(saved.has("wizard-properties-collapsed"), false);
 });
 

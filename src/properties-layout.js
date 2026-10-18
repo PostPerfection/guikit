@@ -13,6 +13,7 @@ const COLLAPSED_VALUE = "1";
 const DRAG_START_DISTANCE = 4;
 const RESIZE_PROPERTIES_LABEL = "Resize Properties";
 const SHOW_PROPERTIES_LABEL = "Show Properties";
+const RESIZE_PROPERTIES_TITLE = "Drag to resize, double-click to hide";
 
 export function boundedPropertiesWidth(width, workspaceWidth) {
   const maximumWidth = Math.max(MINIMUM_PROPERTIES_WIDTH, workspaceWidth * MAXIMUM_PROPERTIES_WIDTH_FRACTION);
@@ -21,7 +22,7 @@ export function boundedPropertiesWidth(width, workspaceWidth) {
 
 export function propertiesLayout(collapsed, savedWidth) {
   if (collapsed) return { panelWidth: 0, handleLabel: SHOW_PROPERTIES_LABEL, handleTitle: SHOW_PROPERTIES_LABEL };
-  return { panelWidth: savedWidth, handleLabel: RESIZE_PROPERTIES_LABEL, handleTitle: null };
+  return { panelWidth: savedWidth, handleLabel: RESIZE_PROPERTIES_LABEL, handleTitle: RESIZE_PROPERTIES_TITLE };
 }
 
 export function syncPreviewDock() {
@@ -61,8 +62,7 @@ export function initProjectPropertiesLayout(wizard) {
     workspace.classList.toggle(COLLAPSED_CLASS, collapsed);
     if (layout.panelWidth) setWidth(layout.panelWidth);
     handle.setAttribute("aria-label", layout.handleLabel);
-    if (layout.handleTitle) handle.setAttribute("title", layout.handleTitle);
-    else handle.removeAttribute("title");
+    handle.setAttribute("title", layout.handleTitle);
   };
   const setCollapsed = (value) => {
     collapsed = value;
