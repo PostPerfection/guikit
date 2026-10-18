@@ -72,11 +72,10 @@ export function withProbedFrames(timeline, assetId, frames) {
   return probed;
 }
 
+// call once every probe has run
 export function withReelStartingClipsPlaced(composition) {
   const { reelStartingClipIndices, ...placed } = composition;
-  // a clip's start is unknown until every clip is probed
-  const unprobed = composition.timeline.clips.some((clip) => clip.frames === 0);
-  if (!reelStartingClipIndices || unprobed) return composition;
+  if (!reelStartingClipIndices) return composition;
   const starts = clipStarts(composition.timeline);
   placed.timeline = reelStartingClipIndices.map((index) => starts[index]).reduce(splitReelAt, composition.timeline);
   return placed;

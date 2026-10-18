@@ -139,10 +139,23 @@ test('a reel start lands at each listed clip once every clip is probed', () => {
     reelStartingClipIndices: [1, 2],
   };
 
-  assert.equal(withReelStartingClipsPlaced(unprobed), unprobed);
   const probed = { ...unprobed, timeline: withProbedFrames(withProbedFrames(unprobed.timeline, 2, 96), 3, 24) };
   const placed = withReelStartingClipsPlaced(probed);
   assert.deepEqual(placed.timeline.reelStarts, [240, 336]);
+  assert.equal('reelStartingClipIndices' in placed, false);
+});
+
+test('a reel start survives a clip whose probe failed, which counts as empty', () => {
+  const unprobed = {
+    id: 1,
+    timeline: { ...emptyTimeline([24, 1]), clips: [clip(1, 0, 0, 0), clip(2, 0, 0, 0), clip(3, 0, 0, 0)] },
+    reelStartingClipIndices: [1, 2],
+  };
+  const unreadableSecondClipFrames = 0;
+
+  const probed = withProbedFrames(withProbedFrames(withProbedFrames(unprobed.timeline, 1, 240), 2, unreadableSecondClipFrames), 3, 24);
+  const placed = withReelStartingClipsPlaced({ ...unprobed, timeline: probed });
+  assert.deepEqual(placed.timeline.reelStarts, [240]);
   assert.equal('reelStartingClipIndices' in placed, false);
 });
 
