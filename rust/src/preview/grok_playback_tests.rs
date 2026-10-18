@@ -248,9 +248,11 @@ fn the_black_of_a_timeline_gap_plays_on_the_grok_player_after_a_package() {
         )
         .unwrap();
 
-    let metadata = play_to_the_end(&player, &state, &mut pixels);
-    assert!(
-        metadata.contains(&black.display().to_string()),
+    let metadata: serde_json::Value =
+        serde_json::from_str(&play_to_the_end(&player, &state, &mut pixels)).unwrap();
+    assert_eq!(
+        metadata["source"].as_str(),
+        Some(black.to_str().unwrap()),
         "the player never handed off to the black: {metadata}"
     );
     let centre = pixel(&pixels, SURFACE_WIDTH / 2, SURFACE_HEIGHT / 2);
