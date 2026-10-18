@@ -13,6 +13,8 @@ const TIMECODE_FIELD_DIGITS = 2;
 const FRAME_TIMECODE_PATTERN = /^(\d+):(\d{1,2}):(\d{1,2}):(\d{1,2})$/;
 const ASSET_ID_RADIX = 10;
 const WHOLE_TIMELINE_DROP_HINT = 'Drop a file on this label to cover the whole timeline';
+const PICTURE_ONLY_HINT = 'The JPEG 2000 timeline previews picture only';
+const PRIMARY_BUTTON_PRESSED = 1;
 
 let panel = null;
 let editorOptions = null;
@@ -20,6 +22,9 @@ let timeline = null;
 let selectedIndex = null;
 let playheadFrame = 0;
 let zoom = MINIMUM_ZOOM;
+// set while the preview plays the whole timeline
+let timelineLoaded = false;
+let loadedTimelinePictureOnly = false;
 
 export function initTimelineEditor(container, options) {
   panel = container;
@@ -28,8 +33,11 @@ export function initTimelineEditor(container, options) {
   selectedIndex = null;
   playheadFrame = 0;
   zoom = MINIMUM_ZOOM;
+  timelineLoaded = false;
+  loadedTimelinePictureOnly = false;
   panel.classList.add('timeline-editor');
   panel.addEventListener('click', handleClick);
+  panel.addEventListener('pointermove', handlePointerMove);
   panel.addEventListener('change', handleFieldChange);
   panel.addEventListener('dragover', handleDragOver);
   panel.addEventListener('drop', handleDrop);
@@ -49,6 +57,16 @@ export function getTimeline() {
 export function setPlayhead(frame) {
   playheadFrame = frame;
   panel.querySelector('.timeline-editor-playhead').style.left = playheadLeft();
+}
+
+// the preview's place in a loaded timeline, null while the preview plays anything else
+export function followTimelinePosition(position) {
+  const loaded = position !== null;
+  if (loaded !== timelineLoaded) {
+    timelineLoaded = loaded;
+    render();
+  }
+  if (loaded && position.seconds !== null) setPlayhead(frameAtSeconds(timeline, position.seconds));
 }
 
 export function setReelStarts(frames) {
@@ -78,6 +96,23 @@ export function clipAtFrame(model, frame) {
   );
   if (index === -1) return null;
   return { index, frameInClip: frame - starts[index] };
+}
+
+// the clip under a timeline frame and the frame of its source shown there, null past the last clip
+export function clipSourceFrameAt(model, frame) {
+  const place = clipAtFrame(model, frame);
+  if (!place) return null;
+  return { index: place.index, sourceFrame: model.clips[place.index].inFrame + place.frameInClip };
+}
+
+export function frameAtSeconds(model, seconds) {
+  const [numerator, denominator] = model.fps;
+  return Math.round((seconds * numerator) / denominator);
+}
+
+export function secondsAtFrame(model, frame) {
+  const [numerator, denominator] = model.fps;
+  return (frame * denominator) / numerator;
 }
 
 export function addClip(model, clip, index = model.clips.length) {
@@ -195,6 +230,8 @@ function render() {
       <button class="btn-sm" type="button" data-action="zoom-out" title="Zoom out"${zoom <= MINIMUM_ZOOM ? ' disabled' : ''}>−</button>
       <button class="btn-sm" type="button" data-action="zoom-in" title="Zoom in"${zoom >= MAXIMUM_ZOOM ? ' disabled' : ''}>+</button>
       <button class="btn-sm" type="button" data-action="split-reel">Split ${editorOptions.reelWord} here</button>
+      <button class="btn-sm" type="button" data-action="play-timeline"${timeline.clips.length === 0 ? ' disabled' : ''}>Play timeline</button>
+      ${timelineLoaded && loadedTimelinePictureOnly ? `<span class="timeline-editor-hint">${PICTURE_ONLY_HINT}</span>` : ''}
     </div>
     <div class="timeline-editor-scroll">
       <div class="timeline-editor-body" style="width: ${zoom * PERCENT}%">
@@ -332,8 +369,9 @@ const clickActions = {
   'zoom-out': () => setZoom(zoom / ZOOM_STEP),
   'split-reel': () => applyEdit(splitReelAt(timeline, playheadFrame)),
   'remove-reel-start': (element) => applyEdit(removeReelStart(timeline, Number(element.dataset.frame))),
-  'set-in': () => trySetClipRange(sourceFrameAtPlayhead(), timeline.clips[selectedIndex].outFrame),
-  'set-out': () => trySetClipRange(timeline.clips[selectedIndex].inFrame, sourceFrameAtPlayhead()),
+  'play-timeline': () => playWholeTimeline(),
+  'set-in': () => setPointFromPlayhead('in'),
+  'set-out': () => setPointFromPlayhead('out'),
   'move-left': () => moveSelectedClip(selectedIndex - 1),
   'move-right': () => moveSelectedClip(selectedIndex + 1),
   'remove-clip': () => {
@@ -379,11 +417,27 @@ function handleClick(event) {
     return;
   }
   const ruler = event.target.closest('.timeline-editor-ruler');
+  if (ruler) seekAtRuler(ruler, event);
+}
+
+// a clip preview would reload its file at every step of a drag
+function handlePointerMove(event) {
+  if (!timelineLoaded || (event.buttons & PRIMARY_BUTTON_PRESSED) === 0) return;
+  const ruler = event.target.closest('.timeline-editor-ruler');
+  if (ruler) seekAtRuler(ruler, event);
+}
+
+function seekAtRuler(ruler, event) {
   const total = totalFrames(timeline);
-  if (!ruler || total === 0) return;
+  if (total === 0) return;
   const frame = frameAtPointer(ruler, event, 0, total);
   setPlayhead(frame);
-  editorOptions.onSeek(frame);
+  seekTo(frame);
+}
+
+function seekTo(frame) {
+  if (timelineLoaded) editorOptions.seekTimeline(secondsAtFrame(timeline, frame));
+  else editorOptions.onSeek(frame);
 }
 
 function selectClip(clipElement, event) {
@@ -391,7 +445,15 @@ function selectClip(clipElement, event) {
   const start = clipStarts(timeline)[selectedIndex];
   playheadFrame = frameAtPointer(clipElement, event, start, keptFrames(timeline.clips[selectedIndex]));
   render();
-  editorOptions.onSeek(playheadFrame);
+  seekTo(playheadFrame);
+}
+
+async function playWholeTimeline() {
+  const playback = await editorOptions.playTimeline(structuredClone(timeline));
+  if (playback === null) return;
+  timelineLoaded = true;
+  loadedTimelinePictureOnly = playback.pictureOnly;
+  render();
 }
 
 function frameAtPointer(element, event, firstFrame, frameCount) {
@@ -407,6 +469,21 @@ function setZoom(level) {
 
 function sourceFrameAtPlayhead() {
   return timeline.clips[selectedIndex].inFrame + playheadFrame - clipStarts(timeline)[selectedIndex];
+}
+
+const PLAYHEAD_POINT_RANGES = {
+  in: (clip, sourceFrame) => [sourceFrame, clip.outFrame],
+  out: (clip, sourceFrame) => [clip.inFrame, sourceFrame],
+};
+
+// a loaded timeline trims the clip under the playhead, not the selected one
+function setPointFromPlayhead(point) {
+  const target = timelineLoaded
+    ? clipSourceFrameAt(timeline, playheadFrame)
+    : { index: selectedIndex, sourceFrame: sourceFrameAtPlayhead() };
+  if (target === null) return;
+  selectedIndex = target.index;
+  trySetClipRange(...PLAYHEAD_POINT_RANGES[point](timeline.clips[target.index], target.sourceFrame));
 }
 
 function moveSelectedClip(target) {

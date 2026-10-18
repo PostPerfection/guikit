@@ -13,10 +13,13 @@ let loadWatcher = () => {};
 let shownWatcher = () => {};
 let sourceWatcher = () => {};
 let audioLevelsWatcher = () => {};
+let timelinePositionWatcher = () => {};
 let polledSource = null;
 // the file or directory the last load passed
 let loadedPath = null;
 let playbackEnded = false;
+// the grok poll reports the playing clip's duration, not the timeline's
+let loadedTimelineSeconds = null;
 // set while the page draws something the native surface would otherwise cover
 let surfaceCovered = false;
 let previewPaused = false;
@@ -37,6 +40,7 @@ const FULLSCREEN_HUD_SELECTOR =
   '.preview-panel.preview-fullscreen > :not(.preview-surface), .main-area:has(> .preview-panel.preview-fullscreen) > .timeline-transport';
 
 const PREVIEW_PANEL_DEFAULT_TITLE = 'Preview';
+const TIMELINE_PREVIEW_TITLE = 'Preview: timeline';
 const SCRUBBER_IDLE_CLASS = 'timeline-scrubber-idle';
 
 // What the backend draws over the picture, sent whole on every change.
@@ -92,8 +96,8 @@ export function watchPreviewMetadata(watcher) {
 }
 
 /// Read every load the page asks for, one watcher at a time, as the file or
-/// directory handed over. The playlist lets go of its queue on a load it did not
-/// make itself.
+/// directory handed over, or null for a timeline. The playlist lets go of its
+/// queue on a load it did not make itself.
 export function watchPreviewLoads(watcher) {
   loadWatcher = watcher;
 }
@@ -102,6 +106,11 @@ export function watchPreviewLoads(watcher) {
 /// directory loaded into it, or null once the player is stopped.
 export function watchPreviewShown(watcher) {
   shownWatcher = watcher;
+}
+
+// the poll's timeline_position and timeline_clip_index as { seconds, clipIndex }, null while no timeline is loaded
+export function watchPreviewTimelinePosition(watcher) {
+  timelinePositionWatcher = watcher;
 }
 
 // what the player has loaded, one watcher at a time, each time the polled source or file name changes
@@ -579,10 +588,14 @@ function lastPathSegment(path) {
 }
 
 function showPreviewTitle(path) {
+  showPreviewHeading(path ? `Preview: ${lastPathSegment(path)}` : PREVIEW_PANEL_DEFAULT_TITLE, path || '');
+}
+
+function showPreviewHeading(text, tooltip) {
   const title = document.getElementById('preview-title');
   if (!title) return;
-  title.textContent = path ? `Preview: ${lastPathSegment(path)}` : PREVIEW_PANEL_DEFAULT_TITLE;
-  title.title = path || '';
+  title.textContent = text;
+  title.title = tooltip;
 }
 
 function initScrubber() {
@@ -650,15 +663,19 @@ function startScrubberPolling() {
       metadataWatcher(meta);
       audioLevelsWatcher(meta.audio_levels ?? null);
       reportPolledSource(meta.source ?? meta.filename ?? null);
+      const timelinePosition = polledTimelinePosition(meta);
+      timelinePositionWatcher(timelinePosition);
       // the last frame stays on screen at the end, so the path stays loaded
       if (!!meta.eof !== playbackEnded) {
         playbackEnded = !!meta.eof;
         shownWatcher(loadedPath, playbackEnded);
       }
-      if (meta.position != null && meta.duration != null && meta.duration > 0) {
-        const pct = meta.position / meta.duration;
+      const position = timelinePosition ? timelinePosition.seconds : meta.position;
+      const duration = timelinePosition ? loadedTimelineSeconds : meta.duration;
+      if (position != null && duration != null && duration > 0) {
+        const pct = position / duration;
         updatePlayhead(pct);
-        updateTimecode(meta.position, meta.duration, meta.container_fps);
+        updateTimecode(position, duration, meta.container_fps);
       }
       // nothing loaded reports no paused state, and shows as ready to play
       const paused = meta.paused ?? true;
@@ -672,6 +689,12 @@ function startScrubberPolling() {
       }
     }
   }, 250);
+}
+
+// the backend leaves both fields out while no timeline is loaded
+function polledTimelinePosition(meta) {
+  if (!('timeline_position' in meta)) return null;
+  return { seconds: meta.timeline_position, clipIndex: meta.timeline_clip_index };
 }
 
 function reportPolledSource(source) {
@@ -769,6 +792,31 @@ export function previewDcp(dirPath, contentKeys = null) {
   resetTrackToggles();
   setTransportEnabled(true);
   showPreviewTitle(dirPath);
+  startScrubberPolling();
+  return loaded;
+}
+
+// postkit's Timeline JSON on one player, resolving to { pictureOnly }, or to null once the failure is reported
+export function previewTimeline(timeline) {
+  showEmbeddedPanel();
+  shownWatcher(null, false);
+  loadedPath = null;
+  playbackEnded = false;
+  loadedTimelineSeconds = null;
+  loadWatcher(null);
+  const loaded = invoke('preview_load_timeline', { timeline }).then(
+    async (preview) => {
+      loadedTimelineSeconds = await invoke('preview_get_duration');
+      return { pictureOnly: preview.picture_only };
+    },
+    (error) => {
+      reportPreviewLoadFailure(error);
+      return null;
+    },
+  );
+  resetTrackToggles();
+  setTransportEnabled(true);
+  showPreviewHeading(TIMELINE_PREVIEW_TITLE, '');
   startScrubberPolling();
   return loaded;
 }

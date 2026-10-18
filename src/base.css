@@ -1285,6 +1285,10 @@ body.preview-fullscreen-hud-hidden * {
   font-weight: 600;
 }
 
+.timeline-editor-hint {
+  color: var(--text-muted);
+}
+
 .timeline-editor-timecode {
   width: 12ch;
   font-size: 12px;

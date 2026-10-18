@@ -125,6 +125,16 @@ test('removing rows the queue no longer owns touches nothing', async () => {
   assert.deepEqual(player.calls, []);
 });
 
+test('a timeline load, which names no file, takes the screen off the queue', async () => {
+  const { panel } = await freshQueue(FIRST, SECOND);
+  playRow(panel, 0);
+  player.loadedByTheApp(null);
+  player.forgetCalls();
+
+  player.poll({ eof: true, paused: true });
+  assert.deepEqual(player.calls, []);
+});
+
 test('an end of file advances the queue once, whatever later polls report', async () => {
   const { panel } = await freshQueue(FIRST, SECOND, THIRD);
   playRow(panel, 0);

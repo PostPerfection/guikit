@@ -136,7 +136,7 @@ async function playRow(index) {
 // The app previewing something of its own means the user has gone elsewhere, so
 // the queue lets go: the rows stay, and nothing advances until one is clicked.
 function handleLoad(path) {
-  const ours = path === expectedDirectory;
+  const ours = path !== null && path === expectedDirectory;
   expectedDirectory = null;
   if (ours) return;
   letGoOfPlayback();
