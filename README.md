@@ -66,19 +66,6 @@ directory, or a directory of codestreams. Everything else goes to libmpv.
 `[preview] backend: grok|mpv for <path>`. Every other command follows the
 backend the load picked, so the page drives one player either way.
 
-`preview_load_timeline(timeline)` plays layer 0 of a postkit `Timeline` and
-returns `{ picture_only }`, which is false. Clips above layer 0 are not shown.
-JPEG 2000 clips play on grok one after another in start order, each with its
-range and the timeline's rendered sound and subtitles from its place. A gap
-in layer 0 plays black on grok from a directory of codestreams: one black still
-encoded once per load and hard linked once per frame of the longest gap. Any
-other clips play on mpv as one `edl://` source with the sound, the subtitle and
-postkit's ffv1 black for the gaps, and a mix of the two players is refused. The
-black, like the sound and subtitles, goes in the app's cache folder and is
-removed with the timeline. While a timeline is loaded the position, duration
-and both seeks are in timeline seconds, and `preview_get_metadata` adds
-`timeline_position` and `timeline_clip_index`, which is null in a gap.
-
 An encrypted package plays on grok when its load is given the content keys.
 `previewDcp(dirPath, contentKeys)` and `previewFile(filePath, contentKeys)` take
 `{ kdm, recipient_key, keys }`, the paths to a KDM and the recipient's private
@@ -97,6 +84,53 @@ grok decodes with the JPEG 2000 codec rather than through libavcodec, draws the
 QC overlays and the subtitles into the frame it composes, and starts playing on
 load the way mpv's `loadfile` does. Both players render into the same GL
 framebuffer, and the surface renders whichever one is loaded.
+
+## Timeline preview
+
+`guikit::preview::load_timeline_preview(app, state, timeline, options)` plays a
+postkit `Timeline` and returns `{ picture_only }`, which is false. Each app
+wraps it in its own `preview_load_timeline` command, because the build options
+and the fitting of each clip are the app's. `options` is the app's
+`EncodeRunOptions` with every clip fitted the way the build fits it, given
+exactly when `postkit::timeline::preview_renders_any_stretch` holds: a clip
+above layer 0, or a still or image sequence on layer 0. A load given options it
+does not need, or missing ones it does, is refused.
+
+Each stretch holding such a clip is rendered before playback by the build's
+compositor, at a raster no wider than 2048, and what the build refuses the
+preview refuses with the same message. The other stretches play their layer 0 clip, and a gap in layer 0 plays
+black. JPEG 2000 clips play on grok one after another in start order, each with
+its range and the timeline's sound and subtitles from its place, and a rendered
+stretch plays as a directory of codestreams between them. A gap plays black on
+grok from a directory of codestreams: one black still encoded once per load and
+hard linked once per frame of the longest gap. Any other clips play on mpv as one
+`edl://` source with the sound, the subtitle, postkit's ffv1 black for the gaps
+and an MJPEG file for each rendered stretch. A mix of the two players is
+refused. The sound, subtitles and black go in `preview-timeline` in the app's
+cache folder and are removed with the timeline. The rendered stretches sit
+beside them in `timeline-stretches-mpv` and `timeline-stretches-grok`, kept
+across loads, and a load deletes the ones its timeline does not use.
+
+While a stretch renders, the backend emits `timeline-render-progress` with
+`{ frames_rendered, total_frames, seconds_left }`, counting only the frames this
+load renders. `seconds_left` is null until a frame is done. `preview_stop`, any
+new load, and `preview_cancel_timeline_render` cancel the render, and the
+cancelled load loads nothing.
+
+On the page, `previewTimeline(timeline, request)` invokes the app's
+`preview_load_timeline` with `{ timeline, request }`, the request being whatever
+the app's command takes. It writes "Rendering layers: N of M frames, about S s
+left" to `#status-text` while the render runs and clears it when the load
+settles. It resolves to `{ pictureOnly }`, or to null once the failure is
+reported or a newer load, `stopPreview` or `cancelTimelineRender()` replaced it,
+in which case nothing is reported. An app calls `cancelTimelineRender()` on a
+timeline edit and registers `preview_cancel_timeline_render` beside the other
+commands.
+
+While a timeline is loaded the position, duration and both seeks are in
+timeline seconds, and `preview_get_metadata` adds `timeline_position` and
+`timeline_clip_index`, the layer 0 clip under the position, which is null in a
+gap.
 
 ## Player controls
 
