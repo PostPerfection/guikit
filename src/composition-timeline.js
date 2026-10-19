@@ -1,9 +1,12 @@
 import {
   clipAtFrame,
+  clipDefaultSound,
   clipStarts,
   embeddedSound,
   frameTimecode,
   layerEnd,
+  newPictureClip,
+  placedStillHoldFrames,
   splitReelAt,
   totalFrames,
   withReelStartsInsideTimeline,
@@ -26,19 +29,8 @@ export function emptyTimeline(fps) {
 }
 
 // 0 frames until the source is probed
-function newClip(asset, start) {
-  const frames = asset.frames ?? 0;
-  return {
-    picture: asset.id,
-    frames,
-    start,
-    layer: 0,
-    opacity: 1,
-    inFrame: 0,
-    outFrame: frames,
-    sound: embeddedSound(),
-    subtitle: null,
-  };
+function assetSourceLength(asset) {
+  return asset.still ? { kind: 'still' } : { kind: 'counted', frames: asset.frames ?? 0 };
 }
 
 export function clipHasOwnSound(clip) {
@@ -56,7 +48,7 @@ export function assetPath(assetById, assetId) {
 // a video follows the last layer 0 clip, a sound or subtitle covers the whole timeline while nothing else does
 export function withImportedAsset(timeline, asset) {
   const placed = structuredClone(timeline);
-  if (asset.type === 'video') placed.clips.push(newClip(asset, layerEnd(placed, 0)));
+  if (asset.type === 'video') placed.clips.push(newPictureClip(placed, asset.id, assetSourceLength(asset), layerEnd(placed, 0), 0));
   if (asset.type === 'audio' && placed.sound === null && !placed.clips.some(clipHasOwnSound)) placed.sound = asset.id;
   if (asset.type === 'subtitle' && placed.subtitle === null && !placed.clips.some(clipHasOwnSubtitle)) {
     placed.subtitle = asset.id;
@@ -91,6 +83,21 @@ export function withProbedFrames(timeline, assetId, frames) {
   return probed;
 }
 
+export function withProbedStill(timeline, assetId) {
+  const probed = structuredClone(timeline);
+  const holdFrames = placedStillHoldFrames(probed);
+  probed.clips.forEach((clip, index) => {
+    if (clip.picture !== assetId || clip.still) return;
+    clip.still = true;
+    clip.frames = null;
+    if (clip.sound.kind === 'embedded') clip.sound = clipDefaultSound(clip);
+    if (clip.outFrame !== 0) return;
+    clip.outFrame = holdFrames;
+    if (clip.layer === 0) moveBaseClipsAfter(probed, index, holdFrames);
+  });
+  return probed;
+}
+
 // an unprobed clip is 0 frames long, so the layer 0 clips imported after it start at the same frame
 function moveBaseClipsAfter(timeline, index, frames) {
   const { start } = timeline.clips[index];
@@ -113,7 +120,7 @@ export function withoutAsset(timeline, assetId) {
   const kept = structuredClone(timeline);
   kept.clips = kept.clips.filter((clip) => clip.picture !== assetId);
   for (const clip of kept.clips) {
-    if (clip.sound.asset === assetId) clip.sound = embeddedSound();
+    if (clip.sound.asset === assetId) clip.sound = clipDefaultSound(clip);
     if (clip.subtitle === assetId) clip.subtitle = null;
   }
   if (kept.sound === assetId) kept.sound = null;
@@ -131,7 +138,7 @@ export function timelineWithKnownAssets(composition, assetsById, notRestored) {
   };
   timeline.clips = timeline.clips.filter((clip, index) => known(clip.picture, `clip ${index + 1} picture`));
   timeline.clips.forEach((clip, index) => {
-    if (!known(clip.sound.asset, `clip ${index + 1} sound`)) clip.sound = embeddedSound();
+    if (!known(clip.sound.asset, `clip ${index + 1} sound`)) clip.sound = clipDefaultSound(clip);
     if (!known(clip.subtitle, `clip ${index + 1} subtitle`)) clip.subtitle = null;
   });
   if (!known(timeline.sound, 'timeline sound')) timeline.sound = null;
@@ -209,8 +216,9 @@ export function splitTimecodeSpec(frames, editRate) {
 export function withSplitAtFrames(timeline, typedFrames) {
   if (timeline.clips.length > 1 || typedFrames === null) return timeline;
   const split = typedFrames.reduce(splitReelAt, { ...timeline, reelStarts: [] });
+  const clip = timeline.clips[0];
   // an unprobed clip has no end to measure against yet
-  if ((timeline.clips[0]?.frames ?? 0) === 0) return split;
+  if (clip === undefined || (!clip.still && clip.frames === 0)) return split;
   return withReelStartsInsideTimeline(split);
 }
 

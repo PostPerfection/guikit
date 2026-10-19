@@ -18,6 +18,7 @@ const PRIMARY_BUTTON_PRESSED = 1;
 const MAIN_BUTTON = 0;
 const DRAG_START_PIXELS = 3;
 const SNAP_PIXELS = 6;
+const PLACED_STILL_HOLD_SECONDS = 5;
 
 let panel = null;
 let editorOptions = null;
@@ -147,6 +148,34 @@ function noSound() {
   return { kind: 'none', asset: null };
 }
 
+// only a layer 0 clip from a file with audio has sound of its own
+export function clipDefaultSound(clip) {
+  return clip.layer === 0 && !clip.still ? embeddedSound() : noSound();
+}
+
+export function placedStillHoldFrames(model) {
+  return frameAtSeconds(model, PLACED_STILL_HOLD_SECONDS);
+}
+
+// a still has no source length, and a counted source of 0 frames is not probed yet
+const PICTURE_CLIP_LENGTHS = {
+  counted: (model, { frames }) => ({ frames, outFrame: frames }),
+  still: (model) => ({ still: true, frames: null, outFrame: placedStillHoldFrames(model) }),
+};
+
+export function newPictureClip(model, assetId, sourceLength, start, layer) {
+  const clip = {
+    picture: assetId,
+    ...PICTURE_CLIP_LENGTHS[sourceLength.kind](model, sourceLength),
+    start,
+    layer,
+    opacity: 1,
+    inFrame: 0,
+    subtitle: null,
+  };
+  return { ...clip, sound: clipDefaultSound(clip) };
+}
+
 export function addClip(model, clip) {
   refuseOverlap(model, null, clip);
   return editedCopy(model, (copy) => {
@@ -170,7 +199,7 @@ export function moveClipTo(model, index, start, layer) {
   const clip = model.clips[index];
   const moved = { ...structuredClone(clip), start, layer };
   if (layer === 0 && clip.layer !== 0) {
-    moved.sound = embeddedSound();
+    moved.sound = clipDefaultSound(moved);
     moved.opacity = 1;
   }
   if (layer !== 0 && clip.layer === 0) moved.sound = noSound();
@@ -191,12 +220,15 @@ export function setClipOpacity(model, index, opacity) {
 
 export function setClipRange(model, index, inFrame, outFrame) {
   checkClipIndex(model, index);
-  const { frames } = model.clips[index];
+  const { frames, still } = model.clips[index];
+  if (still && inFrame !== 0) {
+    throw new RangeError(`clip ${index}: in point ${inFrame} is not 0, and a still is held from its first frame`);
+  }
   if (inFrame < 0) throw new RangeError(`clip ${index}: in point ${inFrame} is before the first frame`);
   if (inFrame >= outFrame) {
     throw new RangeError(`clip ${index}: in point ${inFrame} is at or past out point ${outFrame}`);
   }
-  if (outFrame > frames) {
+  if (!still && outFrame > frames) {
     throw new RangeError(`clip ${index}: out point ${outFrame} is past the source's ${frames} frames`);
   }
   refuseOverlap(model, index, { ...model.clips[index], inFrame, outFrame });
@@ -438,12 +470,13 @@ function renderClipPanel() {
     clip.layer === 0
       ? ''
       : `<label>Opacity <input class="timeline-editor-opacity" type="number" min="0" max="100" data-field="opacity" value="${Math.round(clip.opacity * PERCENT)}"> %</label>`;
+  const disabledOnStill = clip.still ? ' disabled' : '';
   return `
     <div class="timeline-editor-clip-panel">
       <span class="timeline-editor-clip-name">${escapeHtml(editorOptions.assetName(clip.picture))}</span>
-      <label>In <input class="timeline-editor-timecode" type="text" spellcheck="false" data-field="in" value="${frameTimecode(clip.inFrame, timeline.fps)}"></label>
+      <label>In <input class="timeline-editor-timecode" type="text" spellcheck="false" data-field="in" value="${frameTimecode(clip.inFrame, timeline.fps)}"${disabledOnStill}></label>
       <label>Out <input class="timeline-editor-timecode" type="text" spellcheck="false" data-field="out" value="${frameTimecode(clip.outFrame, timeline.fps)}"></label>
-      <button class="btn-sm" type="button" data-action="set-in">Set in from playhead</button>
+      <button class="btn-sm" type="button" data-action="set-in"${disabledOnStill}>Set in from playhead</button>
       <button class="btn-sm" type="button" data-action="set-out">Set out from playhead</button>
       <label>Start <input class="timeline-editor-timecode" type="text" spellcheck="false" data-field="start" value="${frameTimecode(clip.start, timeline.fps)}"></label>
       ${opacityField}
@@ -479,7 +512,8 @@ const clickActions = {
   'clear-clip-sound': (element) =>
     applyEdit(
       editedCopy(timeline, (copy) => {
-        copy.clips[Number(element.dataset.targetClip)].sound = embeddedSound();
+        const clip = copy.clips[Number(element.dataset.targetClip)];
+        clip.sound = clipDefaultSound(clip);
       }),
     ),
   'clear-clip-subtitle': (element) =>
@@ -731,19 +765,8 @@ function pictureDropStart(event, clipIndex, layer) {
 }
 
 async function dropPicture(assetId, layer, start) {
-  const frames = await editorOptions.sourceFrames(assetId);
-  const clip = {
-    picture: assetId,
-    frames,
-    start,
-    layer,
-    opacity: 1,
-    inFrame: 0,
-    outFrame: frames,
-    sound: layer === 0 ? embeddedSound() : noSound(),
-    subtitle: null,
-  };
-  tryEdit(() => addClip(timeline, clip));
+  const sourceLength = await editorOptions.sourceLength(assetId);
+  tryEdit(() => addClip(timeline, newPictureClip(timeline, assetId, sourceLength, start, layer)));
 }
 
 const dropOnTrack = {

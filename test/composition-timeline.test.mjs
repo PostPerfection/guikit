@@ -16,6 +16,7 @@ import {
   withFirstClipRate,
   withImportedAsset,
   withProbedFrames,
+  withProbedStill,
   withReelStartingClipsPlaced,
   withSplitAtFrames,
   withUnplacedAssetsFilled,
@@ -30,6 +31,7 @@ const ASSETS = [
   { id: 5, type: 'subtitle', path: '/media/b.srt', name: 'b.srt' },
   { id: 6, type: 'audio', path: '/media/mix.wav', name: 'mix.wav' },
   { id: 8, type: 'subtitle', path: '/media/feature.srt', name: 'feature.srt' },
+  { id: 10, type: 'video', path: '/media/card.png', name: 'card.png', still: true },
 ];
 
 function assetById(assetId) {
@@ -39,6 +41,10 @@ function assetById(assetId) {
 function clip(picture, frames, inFrame, outFrame, fields = {}) {
   const embedded = { kind: 'embedded', asset: null };
   return { picture, frames, start: 0, layer: 0, opacity: 1, inFrame, outFrame, sound: embedded, subtitle: null, ...fields };
+}
+
+function stillClip(picture, outFrame, fields = {}) {
+  return clip(picture, null, 0, outFrame, { still: true, sound: { kind: 'none', asset: null }, ...fields });
 }
 
 test("the wire timeline is postkit's JSON with paths for asset ids", () => {
@@ -313,4 +319,41 @@ test("a previewed clip shows its own subtitle, or the timeline's where each sour
   assert.equal(clipPreviewSubtitle(timeline, 2), null);
   assert.equal(clipPreviewSubtitle({ ...timeline, clips: [clip(1, 240, 24, 96)] }, 0), null);
   assert.equal(clipPreviewSubtitle({ ...timeline, clips: [clip(1, 240, 24, 96, { start: 24 })] }, 0), 8);
+});
+
+test('an imported still is held for 5 seconds at the timeline rate, rounded to whole frames', () => {
+  const atFilm = withImportedAsset(withImportedAsset(emptyTimeline([24, 1]), assetById(2)), assetById(10));
+  const atNtsc = withUnplacedAssetsFilled(emptyTimeline([24000, 1001]), [assetById(10)]);
+
+  assert.deepEqual(atFilm.clips[1], stillClip(10, 120, { start: 96 }));
+  // 5 seconds at 24000/1001 is 119.88 frames
+  assert.deepEqual(atNtsc.clips, [stillClip(10, 120)]);
+});
+
+test('a still clip goes over the wire as its path from in point 0 to its hold', () => {
+  const timeline = { ...emptyTimeline([24, 1]), clips: [stillClip(10, 300)] };
+
+  const [wireClip] = timelineWire(timeline, assetById).clips;
+  assert.deepEqual([wireClip.picture, wireClip.in_frame, wireClip.out_frame], ['/media/card.png', 0, 300]);
+});
+
+test('an unprobed clip of a still becomes a 5 second hold and moves the layer 0 clips after it along', () => {
+  let unprobed = emptyTimeline([24, 1]);
+  for (const assetId of [10, 2]) unprobed = withImportedAsset(unprobed, { ...assetById(assetId), still: undefined, frames: undefined });
+  unprobed.clips.push(clip(10, 0, 0, 48, { start: 200, layer: 1, sound: { kind: 'none', asset: null } }));
+
+  const probed = withProbedFrames(withProbedStill(unprobed, 10), 2, 96);
+
+  assert.deepEqual(probed.clips, [
+    stillClip(10, 120),
+    clip(2, 96, 0, 96, { start: 120 }),
+    stillClip(10, 48, { start: 200, layer: 1, sound: { kind: 'none', asset: null } }),
+  ]);
+  assert.equal(withProbedStill(probed, 10).clips[0].outFrame, 120);
+});
+
+test('a typed split past the end of a one-still timeline is left out, since a still is probed', () => {
+  const timeline = { ...emptyTimeline([24, 1]), clips: [stillClip(10, 48)] };
+
+  assert.deepEqual(withSplitAtFrames(timeline, [24, 120]).reelStarts, [24]);
 });

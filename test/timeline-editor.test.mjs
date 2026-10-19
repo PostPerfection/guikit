@@ -30,6 +30,7 @@ const ASSETS = {
   2: { kind: 'picture', name: 'Reel Two.mov', frames: 120 },
   3: { kind: 'sound', name: 'Music.wav' },
   4: { kind: 'subtitle', name: 'English.srt' },
+  5: { kind: 'picture', name: 'Title Card.png', still: true },
 };
 
 function clip(picture, inFrame, outFrame, start, layer = 0) {
@@ -44,6 +45,10 @@ function clip(picture, inFrame, outFrame, start, layer = 0) {
     sound: layer === 0 ? { kind: 'embedded', asset: null } : NO_SOUND,
     subtitle: null,
   };
+}
+
+function stillClip(picture, outFrame, start, layer = 0) {
+  return { ...clip(picture, 0, outFrame, start, layer), still: true, frames: null, sound: NO_SOUND };
 }
 
 // 240 kept frames from the first clip and 80 from the second right after it, 320 in all
@@ -128,7 +133,7 @@ async function freshEditor(model, reelWord = 'reel', timelinePlayback = { pictur
     reelWord,
     assetName: (assetId) => ASSETS[assetId].name,
     assetKind: (assetId) => ASSETS[assetId].kind,
-    sourceFrames: async (assetId) => ASSETS[assetId].frames,
+    sourceLength: async (assetId) => (ASSETS[assetId].still ? { kind: 'still' } : { kind: 'counted', frames: ASSETS[assetId].frames }),
     onChange: (changed) => changes.push(changed),
     onSeek: (frame) => seeks.push(frame),
     playTimeline: async (played) => {
@@ -248,6 +253,11 @@ test('a clip moved above layer 0 loses its sound, and one moved back down takes 
   const lowered = moveClipTo(faded, 0, 0, 0);
   assert.deepEqual(lowered.clips[0].sound, { kind: 'embedded', asset: null });
   assert.equal(lowered.clips[0].opacity, 1);
+});
+
+test('a still moved down to layer 0 stays silent, since an image carries no sound', () => {
+  const model = { ...gappedTimeline(), clips: [stillClip(1, 120, 0, 1)] };
+  assert.deepEqual(moveClipTo(model, 0, 0, 0).clips[0].sound, NO_SOUND);
 });
 
 test('setClipOpacity refuses an opacity outside 0 to 1', () => {
@@ -655,4 +665,32 @@ test('Set in past the last clip or in a gap changes nothing', async () => {
   editor.followTimelinePosition({ seconds: 100 / 24, clipIndex: null });
   clickAction(container, 'set-in');
   assert.deepEqual(changes, []);
+});
+
+test('a still dropped on a clip is held for 5 seconds at the timeline rate, rounded to whole frames', async () => {
+  for (const fps of [FPS, [24000, 1001]]) {
+    const { container, changes } = await freshEditor({ ...twoClipTimeline(), fps });
+    await drop(container, 5, { track: 'picture', layer: 1, clipIndex: 1 });
+    // 5 seconds at 24000/1001 is 119.88 frames
+    assert.deepEqual(changes.at(-1).clips[2], stillClip(5, 120, 320, 1));
+  }
+});
+
+test('setClipRange refuses an in point other than 0 on a still and leaves its out point unbounded', () => {
+  const model = { ...twoClipTimeline(), clips: [...twoClipTimeline().clips, stillClip(5, 120, 320)] };
+  assert.throws(() => setClipRange(model, 2, 1, 120), { name: 'RangeError', message: /clip 2: in point 1 is not 0/ });
+  assert.equal(setClipRange(model, 2, 0, 10000).clips[2].outFrame, 10000);
+});
+
+test('a selected still has its In field and Set in button disabled, and Set out from playhead sets its hold', async () => {
+  const { editor, container, changes } = await freshEditor({ ...twoClipTimeline(), clips: [stillClip(5, 120, 0)] });
+  click(container, { clipIndex: 0 });
+  assert.match(container.innerHTML, /data-field="in" value="00:00:00:00" disabled>/);
+  assert.match(container.innerHTML, /data-action="set-in" disabled>/);
+  assert.doesNotMatch(container.innerHTML, /data-field="out"[^>]*disabled/);
+  assert.doesNotMatch(container.innerHTML, /data-action="set-out"[^>]*disabled/);
+
+  editor.setPlayhead(200);
+  clickAction(container, 'set-out');
+  assert.deepEqual(changes.at(-1).clips[0], stillClip(5, 200, 0));
 });
