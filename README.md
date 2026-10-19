@@ -107,8 +107,8 @@ hard linked once per frame of the longest gap. Any other clips play on mpv as on
 `edl://` source with the sound, the subtitle, postkit's ffv1 black for the gaps
 and an MJPEG file for each rendered stretch. A mix of the two players is
 refused. The sound, subtitles and black go in `preview-timeline` in the app's
-cache folder and are removed with the timeline. The rendered stretches sit
-beside them in `timeline-stretches-mpv` and `timeline-stretches-grok`, kept
+cache folder and are removed with the timeline. The rendered stretches go in
+its `timeline-stretches-mpv` and `timeline-stretches-grok` subfolders, kept
 across loads, and a load deletes the ones its timeline does not use.
 
 While a stretch renders, the backend emits `timeline-render-progress` with
