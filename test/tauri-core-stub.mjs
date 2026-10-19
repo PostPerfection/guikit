@@ -8,9 +8,16 @@ export const invocations = [];
 const answers = new Map();
 // What each refused command rejects with.
 const refusals = new Map();
+// The replies a test settles itself, one invocation each.
+const deferred = new Map();
 
 export function invoke(command, args) {
   invocations.push([command, args]);
+  if (deferred.has(command)) {
+    const reply = deferred.get(command);
+    deferred.delete(command);
+    return reply;
+  }
   if (refusals.has(command)) return Promise.reject(refusals.get(command));
   return Promise.resolve(answers.has(command) ? answers.get(command) : '{}');
 }
@@ -29,4 +36,16 @@ export function forgetRefusals() {
 
 export function forgetInvocations() {
   invocations.length = 0;
+}
+
+// the next invocation of `command` waits until the test calls resolve or reject
+export function deferAnswer(command) {
+  let settle;
+  deferred.set(
+    command,
+    new Promise((resolve, reject) => {
+      settle = { resolve, reject };
+    }),
+  );
+  return settle;
 }

@@ -1,5 +1,6 @@
 // Preview player - uses mpv via IPC for high-performance video playback
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { FULLSCREEN_HUD_IDLE_TIMEOUT_MS, fullscreenHudStaysShown, pointIsInsideAnyRectangle } from './fullscreen-hud.js';
 
@@ -23,6 +24,9 @@ let loadedTimelineSeconds = null;
 // set while the page draws something the native surface would otherwise cover
 let surfaceCovered = false;
 let previewPaused = false;
+// bumped by every load, stop and render cancel, so a timeline load can tell it was replaced
+let previewLoadCount = 0;
+let renderProgressShown = false;
 // in page coordinates, null once a resize has moved the page under the pointer
 let lastPointer = null;
 let fullscreenHudTimer = null;
@@ -41,6 +45,7 @@ const FULLSCREEN_HUD_SELECTOR =
 
 const PREVIEW_PANEL_DEFAULT_TITLE = 'Preview';
 const TIMELINE_PREVIEW_TITLE = 'Preview: timeline';
+const TIMELINE_RENDER_PROGRESS_EVENT = 'timeline-render-progress';
 const SCRUBBER_IDLE_CLASS = 'timeline-scrubber-idle';
 
 // What the backend draws over the picture, sent whole on every change.
@@ -576,6 +581,7 @@ export function uncoverPreviewSurface() {
 /// Stop the player, leaving the panel where it is. The tracks go with the file
 /// the backend drops.
 export function stopPreview() {
+  endTimelineLoad();
   invoke('preview_stop').catch(() => {});
   shownWatcher(null, false);
   loadedPath = null;
@@ -820,6 +826,7 @@ function formatTimecode(seconds, fps) {
 /// Load a file into the preview player. `otherPackages` are the package
 /// directories a version file CPL takes its original version's assets from.
 export function previewFile(filePath, contentKeys = null, otherPackages = []) {
+  endTimelineLoad();
   showEmbeddedPanel();
   shownWatcher(filePath, false);
   loadedPath = filePath;
@@ -835,6 +842,7 @@ export function previewFile(filePath, contentKeys = null, otherPackages = []) {
 
 /// Load a DCP directory into the preview player
 export function previewDcp(dirPath, contentKeys = null) {
+  endTimelineLoad();
   showEmbeddedPanel();
   shownWatcher(dirPath, false);
   loadedPath = dirPath;
@@ -848,29 +856,65 @@ export function previewDcp(dirPath, contentKeys = null) {
   return loaded;
 }
 
-// postkit's Timeline JSON on one player, resolving to { pictureOnly }, or to null once the failure is reported
-export function previewTimeline(timeline) {
+// resolves to { pictureOnly }, or to null once it failed or a newer load or stop replaced it
+export function previewTimeline(timeline, request) {
+  endTimelineLoad();
+  const load = previewLoadCount;
+  const isCurrent = () => load === previewLoadCount;
   showEmbeddedPanel();
   shownWatcher(null, false);
   loadedPath = null;
   playbackEnded = false;
   loadedTimelineSeconds = null;
   loadWatcher(null);
-  const loaded = invoke('preview_load_timeline', { timeline }).then(
-    async (preview) => {
-      loadedTimelineSeconds = await invoke('preview_get_duration');
-      return { pictureOnly: preview.picture_only };
-    },
-    (error) => {
-      reportPreviewLoadFailure(error);
-      return null;
-    },
-  );
+  const listening = listen(TIMELINE_RENDER_PROGRESS_EVENT, (event) => {
+    if (!isCurrent()) return;
+    renderProgressShown = true;
+    showStatus(renderProgressText(event.payload));
+  });
+  const loaded = invoke('preview_load_timeline', { timeline, request })
+    .then(
+      async (preview) => {
+        if (!isCurrent()) return null;
+        clearRenderProgress();
+        loadedTimelineSeconds = await invoke('preview_get_duration');
+        return { pictureOnly: preview.picture_only };
+      },
+      (error) => {
+        if (!isCurrent()) return null;
+        clearRenderProgress();
+        reportPreviewLoadFailure(error);
+        return null;
+      },
+    )
+    .finally(async () => (await listening)());
   resetTrackToggles();
   setTransportEnabled(true);
   showPreviewHeading(TIMELINE_PREVIEW_TITLE, '');
   startScrubberPolling();
   return loaded;
+}
+
+// for an app's timeline edits, the load it cancels resolves to null
+export function cancelTimelineRender() {
+  endTimelineLoad();
+  invoke('preview_cancel_timeline_render').catch(() => {});
+}
+
+function endTimelineLoad() {
+  previewLoadCount += 1;
+  clearRenderProgress();
+}
+
+function renderProgressText({ frames_rendered, total_frames, seconds_left }) {
+  const frames = `Rendering layers: ${frames_rendered} of ${total_frames} frames`;
+  if (seconds_left === null) return frames;
+  return `${frames}, about ${Math.ceil(seconds_left)} s left`;
+}
+
+function clearRenderProgress() {
+  if (renderProgressShown) showStatus('');
+  renderProgressShown = false;
 }
 
 // true for an encrypted DCP directory, CPL or picture MXF
@@ -879,12 +923,15 @@ export function previewNeedsContentKeys(path) {
 }
 
 function reportPreviewLoadFailure(error) {
-  const message = `Preview failed: ${error}`;
   console.error('[preview] Failed to load:', error);
+  showStatus(`Preview failed: ${error}`);
+  return false;
+}
+
+function showStatus(message) {
   const status = document.getElementById('status-text');
   if (status) {
     status.textContent = message;
     status.title = message;
   }
-  return false;
 }
