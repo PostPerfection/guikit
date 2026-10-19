@@ -9,6 +9,7 @@ import {
   clipStarts,
   frameAtSeconds,
   layersOf,
+  insertClipAt,
   moveClipTo,
   removeClip,
   removeReelStart,
@@ -483,6 +484,24 @@ test('the opacity field shows for a clip above layer 0 only and sets its opacity
   assert.match(container.innerHTML, /data-field="opacity" value="40"/);
 });
 
+test('split reel here does nothing with the playhead at the end of the timeline', async () => {
+  const { editor, container, changes } = await freshEditor(twoClipTimeline());
+  editor.setPlayhead(320);
+  click(container, { action: 'split-reel' });
+  assert.deepEqual(changes, []);
+  editor.setPlayhead(240);
+  click(container, { action: 'split-reel' });
+  assert.deepEqual(changes.at(-1).reelStarts, [240]);
+});
+
+test('playing from the playhead loads the whole timeline and seeks it to the playhead', async () => {
+  const { editor, playedTimelines, timelineSeeks } = await freshEditor(twoClipTimeline());
+  editor.setPlayhead(240);
+  assert.equal(await editor.playTimelineFromPlayhead(), true);
+  assert.equal(playedTimelines.length, 1);
+  assert.deepEqual(timelineSeeks, [240 / 24]);
+});
+
 test('dragging a clip along its row moves its start and leaves the click after it alone', async () => {
   const { container, changes, seeks } = await freshEditor(twoClipTimeline());
   // 320 frames over 100 pixels, so 25 pixels is 80 frames
@@ -513,10 +532,21 @@ test('dragging a clip onto the row above puts it on that layer without sound', a
   assert.match(container.innerHTML, /data-layer="2"/);
 });
 
-test('a drag that would overlap another clip leaves the timeline as it was', async () => {
+test('dragging the last clip onto the start of the first puts it first and the first after it', async () => {
   const { container, changes } = await freshEditor(twoClipTimeline());
-  dragClip(container, 0, { x: 10, y: BASE_ROW_Y }, { x: 20, y: BASE_ROW_Y });
-  assert.deepEqual(changes, []);
+  // 320 frames over 100 pixels, so 75 pixels left takes the start at 240 to 0
+  dragClip(container, 1, { x: 80, y: BASE_ROW_Y }, { x: 5, y: BASE_ROW_Y });
+  assert.deepEqual(clipStarts(changes.at(-1)), [80, 0]);
+  assert.equal(totalFrames(changes.at(-1)), 320);
+});
+
+test('a clip dropped on the second half of another goes in after it and its old place closes up', () => {
+  const model = { ...twoClipTimeline(), clips: [clip(1, 0, 80, 0), clip(2, 0, 60, 80), clip(2, 0, 40, 140)] };
+  assert.deepEqual(clipStarts(insertClipAt(model, 0, 170, 0)), [100, 0, 60]);
+});
+
+test('a clip dropped in a gap pushes the next clip on its row just far enough and leaves other rows alone', () => {
+  assert.deepEqual(clipStarts(insertClipAt(gappedTimeline(), 1, 100, 0)), [180, 100, 60]);
 });
 
 // a pointer captured on the press sends the browser's click to the panel instead of the clip

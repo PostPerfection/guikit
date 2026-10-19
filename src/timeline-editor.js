@@ -192,7 +192,7 @@ export function removeClip(model, index) {
 }
 
 // postkit plays the sound of layer 0 clips only, and the editor shows no opacity on layer 0
-export function moveClipTo(model, index, start, layer) {
+function movedClip(model, index, start, layer) {
   checkClipIndex(model, index);
   if (!Number.isInteger(start) || start < 0) throw new RangeError(`clip ${index}: start ${start} is not a timeline frame`);
   if (!Number.isInteger(layer) || layer < 0) throw new RangeError(`clip ${index}: layer ${layer} is not a layer`);
@@ -203,9 +203,43 @@ export function moveClipTo(model, index, start, layer) {
     moved.opacity = 1;
   }
   if (layer !== 0 && clip.layer === 0) moved.sound = noSound();
+  return moved;
+}
+
+export function moveClipTo(model, index, start, layer) {
+  const moved = movedClip(model, index, start, layer);
   refuseOverlap(model, index, moved);
   const edited = editedCopy(model, (copy) => {
     copy.clips[index] = moved;
+  });
+  return withReelStartsInsideTimeline(edited);
+}
+
+// a drop onto a clip goes in at that clip's nearer edge, and the later clips on the row move right to make room
+export function insertClipAt(model, index, start, layer) {
+  const moved = movedClip(model, index, start, layer);
+  if (overlappedClip(model, index, moved) === -1) return moveClipTo(model, index, start, layer);
+  const length = keptFrames(moved);
+  const dragged = model.clips[index];
+  const onRow = (other) => other !== index && model.clips[other].layer === layer;
+  const landedOn = model.clips.findIndex(
+    (clip, other) => onRow(other) && clip.start <= start && start < clipEnd(clip),
+  );
+  const landedNearStart = landedOn !== -1 && start - model.clips[landedOn].start < clipEnd(model.clips[landedOn]) - start;
+  // dropped onto a clip on its own row, the dragged clip's old place closes up
+  const closesUp = landedOn !== -1 && dragged.layer === layer;
+  const closedStart = (frame) => (closesUp && frame >= clipEnd(dragged) ? frame - keptFrames(dragged) : frame);
+  const starts = model.clips.map((clip, other) => (onRow(other) ? closedStart(clip.start) : clip.start));
+  let insertFrame = start;
+  if (landedOn !== -1) insertFrame = landedNearStart ? starts[landedOn] : starts[landedOn] + keptFrames(model.clips[landedOn]);
+  const later = model.clips.map((_, other) => other).filter((other) => onRow(other) && starts[other] >= insertFrame);
+  const nextStart = Math.min(...later.map((other) => starts[other]));
+  const shift = later.length === 0 ? 0 : Math.max(0, insertFrame + length - nextStart);
+  const edited = editedCopy(model, (copy) => {
+    copy.clips.forEach((clip, other) => {
+      if (onRow(other)) clip.start = starts[other] + (starts[other] >= insertFrame ? shift : 0);
+    });
+    copy.clips[index] = { ...moved, start: insertFrame };
   });
   return withReelStartsInsideTimeline(edited);
 }
@@ -266,12 +300,17 @@ function keptFrames(clip) {
 }
 
 // placedIndex is the clip being placed, null for a new one
-function refuseOverlap(model, placedIndex, placed) {
+function overlappedClip(model, placedIndex, placed) {
   const end = clipEnd(placed);
-  const other = model.clips.findIndex(
+  return model.clips.findIndex(
     (clip, index) => index !== placedIndex && clip.layer === placed.layer && clip.start < end && placed.start < clipEnd(clip),
   );
+}
+
+function refuseOverlap(model, placedIndex, placed) {
+  const other = overlappedClip(model, placedIndex, placed);
   if (other === -1) return;
+  const end = clipEnd(placed);
   const { start: otherStart } = model.clips[other];
   throw new RangeError(
     `frames ${placed.start} to ${end} on layer ${placed.layer} overlap clip ${other}, which runs from ${otherStart} to ${clipEnd(model.clips[other])}`,
@@ -487,7 +526,7 @@ function renderClipPanel() {
 const clickActions = {
   'zoom-in': () => setZoom(zoom * ZOOM_STEP),
   'zoom-out': () => setZoom(zoom / ZOOM_STEP),
-  'split-reel': () => applyEdit(splitReelAt(timeline, playheadFrame)),
+  'split-reel': () => splitReelAtPlayhead(),
   'remove-reel-start': (element) => applyEdit(removeReelStart(timeline, Number(element.dataset.frame))),
   'play-timeline': () => playWholeTimeline(),
   'set-in': () => setPointFromPlayhead('in'),
@@ -619,7 +658,7 @@ function handlePointerUp() {
     render();
     return;
   }
-  tryEdit(() => moveClipTo(timeline, drag.index, drag.start, drag.layer));
+  tryEdit(() => insertClipAt(timeline, drag.index, drag.start, drag.layer));
 }
 
 function handlePointerCancel() {
@@ -647,6 +686,20 @@ function selectClip(clipElement, event) {
   playheadFrame = frameAtPointer(clipElement, event, clip.start, keptFrames(clip));
   render();
   seekTo(playheadFrame);
+}
+
+// a playhead left at the very end would start an empty reel
+function splitReelAtPlayhead() {
+  if (playheadFrame >= totalFrames(timeline)) return;
+  applyEdit(splitReelAt(timeline, playheadFrame));
+}
+
+// the whole timeline, picked up where the playhead is
+export async function playTimelineFromPlayhead() {
+  const frame = playheadFrame;
+  await playWholeTimeline();
+  if (timelineLoaded) editorOptions.seekTimeline(secondsAtFrame(timeline, frame));
+  return timelineLoaded;
 }
 
 async function playWholeTimeline() {

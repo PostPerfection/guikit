@@ -117,3 +117,20 @@ for (const [ending, end, command] of [
     assert.equal(status.textContent, '');
   });
 }
+
+test('play hands over to the app starter, and resumes a paused player once the starter loaded', async () => {
+  bridge.forgetInvocations();
+  preview.setPreviewPlayStarter(() => Promise.resolve(true));
+  bridge.answerWith('preview_get_metadata', JSON.stringify({ paused: true }));
+  await preview.previewPlayPause();
+  assert.deepEqual(bridge.invocations.map(([command]) => command), ['preview_get_metadata', 'preview_play_pause']);
+
+  bridge.forgetInvocations();
+  preview.setPreviewPlayStarter(() => Promise.resolve(false));
+  await preview.previewPlayPause();
+  assert.deepEqual(bridge.invocations, []);
+
+  preview.setPreviewPlayStarter(() => null);
+  await preview.previewPlayPause();
+  assert.deepEqual(bridge.invocations.map(([command]) => command), ['preview_play_pause']);
+});

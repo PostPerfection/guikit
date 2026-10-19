@@ -70,8 +70,23 @@ export function initPreview() {
   initScrubber();
 }
 
-export function previewPlayPause() {
-  invoke('preview_play_pause').catch(() => {});
+let playStarter = () => null;
+
+// the starter returns null to leave play/pause alone, or a promise that it loaded something in its place
+export function setPreviewPlayStarter(starter) {
+  playStarter = starter;
+}
+
+export async function previewPlayPause() {
+  const started = playStarter();
+  if (started === null) {
+    await invoke('preview_play_pause').catch(() => {});
+    return;
+  }
+  if (!(await started)) return;
+  // mpv keeps the pause of the file before the load
+  const metadata = JSON.parse(await invoke('preview_get_metadata'));
+  if (metadata.paused) await invoke('preview_play_pause');
 }
 
 export function previewSeek(seconds) {
