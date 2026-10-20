@@ -118,19 +118,35 @@ for (const [ending, end, command] of [
   });
 }
 
-test('play hands over to the app starter, and resumes a paused player once the starter loaded', async () => {
+test('play and pause invoke preview_play_pause and nothing else', async () => {
   bridge.forgetInvocations();
-  preview.setPreviewPlayStarter(() => Promise.resolve(true));
+  preview.previewPlayPause();
+  await settled();
+  assert.deepEqual(bridge.invocations, [['preview_play_pause', undefined]]);
+});
+
+test('a load that keeps the transport plays or pauses the new picture the way the old one was', async () => {
+  for (const [pausedBefore, pausedAfter, toggled] of [
+    [true, false, true],
+    [false, true, true],
+    [false, false, false],
+  ]) {
+    bridge.forgetInvocations();
+    bridge.answerWith('preview_get_metadata', JSON.stringify({ paused: pausedBefore }));
+    await preview.loadKeepingTransport(async () => {
+      bridge.answerWith('preview_get_metadata', JSON.stringify({ paused: pausedAfter }));
+      return true;
+    });
+    assert.equal(bridge.invocations.some(([command]) => command === 'preview_play_pause'), toggled);
+  }
+});
+
+test('a load that keeps the transport and fails leaves play and pause alone', async () => {
+  bridge.forgetInvocations();
   bridge.answerWith('preview_get_metadata', JSON.stringify({ paused: true }));
-  await preview.previewPlayPause();
-  assert.deepEqual(bridge.invocations.map(([command]) => command), ['preview_get_metadata', 'preview_play_pause']);
-
-  bridge.forgetInvocations();
-  preview.setPreviewPlayStarter(() => Promise.resolve(false));
-  await preview.previewPlayPause();
-  assert.deepEqual(bridge.invocations, []);
-
-  preview.setPreviewPlayStarter(() => null);
-  await preview.previewPlayPause();
-  assert.deepEqual(bridge.invocations.map(([command]) => command), ['preview_play_pause']);
+  await preview.loadKeepingTransport(async () => {
+    bridge.answerWith('preview_get_metadata', JSON.stringify({ paused: false }));
+    return false;
+  });
+  assert.deepEqual(bridge.invocations.map(([command]) => command), ['preview_get_metadata']);
 });

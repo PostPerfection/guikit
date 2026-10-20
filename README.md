@@ -194,7 +194,9 @@ binding the same jump to a key labels it from that constant rather than its own.
 `previewFrameStepBack()` and `previewFrameStepForward()` are also exported for an
 app's shortcuts. Both frame steps pause playback, and need
 `preview_frame_back_step` and `preview_frame_step` registered beside the other
-commands.
+commands. `loadKeepingTransport(load)` awaits `load()`, and when it resolves
+true plays or pauses the new picture the way the replaced one was, since grok
+starts every load playing.
 
 ## Preview QC controls
 

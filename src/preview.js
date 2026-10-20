@@ -70,23 +70,21 @@ export function initPreview() {
   initScrubber();
 }
 
-let playStarter = () => null;
-
-// the starter returns null to leave play/pause alone, or a promise that it loaded something in its place
-export function setPreviewPlayStarter(starter) {
-  playStarter = starter;
+export function previewPlayPause() {
+  invoke('preview_play_pause').catch(() => {});
 }
 
-export async function previewPlayPause() {
-  const started = playStarter();
-  if (started === null) {
-    await invoke('preview_play_pause').catch(() => {});
-    return;
-  }
-  if (!(await started)) return;
-  // mpv keeps the pause of the file before the load
+// grok starts every load playing, whatever the pause before it
+export async function loadKeepingTransport(load) {
+  const paused = await previewIsPaused();
+  if (!(await load())) return;
+  if ((await previewIsPaused()) !== paused) await invoke('preview_play_pause');
+}
+
+// nothing loaded reports no paused state
+async function previewIsPaused() {
   const metadata = JSON.parse(await invoke('preview_get_metadata'));
-  if (metadata.paused) await invoke('preview_play_pause');
+  return metadata.paused ?? true;
 }
 
 export function previewSeek(seconds) {
