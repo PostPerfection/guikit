@@ -466,7 +466,7 @@ that the edit refuses changes nothing, and the field shows the clip's own value
 again. Clicking the ruler seeks.
 
 The Play whole timeline box in the toolbar picks what a seek loads. It starts
-ticked for each page load, and is disabled while the timeline has no clips.
+unticked for each page load, and is disabled while the timeline has no clips.
 Ticked, a seek loads the whole timeline through `playTimeline` and seeks it to
 the playhead, and once it is loaded a seek only seeks it. Unticked, a seek goes
 to `previewClipSource`. Either way a seek loads nothing while the preview shows

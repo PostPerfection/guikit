@@ -166,10 +166,9 @@ async function setPlayWholeTimeline(container, checked) {
   await settled();
 }
 
-// the box unticked with a clip's source on screen, so a seek goes to that clip's source
-async function previewingClipSources({ container, preview }) {
+// a clip's source on screen with the box unticked, as it starts, so a seek goes to that clip's source
+function previewingClipSources({ preview }) {
   preview.showsClipSource = true;
-  await setPlayWholeTimeline(container, false);
 }
 
 function click(container, target, clientX = 0) {
@@ -442,7 +441,7 @@ test('a subtitle dropped over a clip is that clip subtitle, on the empty track t
 test('Set in from playhead trims the selected clip at the playhead', async () => {
   const harness = await freshEditor(twoClipTimeline());
   const { editor, container, changes, seeks } = harness;
-  await previewingClipSources(harness);
+  previewingClipSources(harness);
   // the left edge of the second clip is timeline frame 240
   click(container, { clipIndex: 1 }, 0);
   assert.deepEqual(seeks, [240]);
@@ -574,7 +573,7 @@ test('a clip dropped in a gap pushes the next clip on its row just far enough an
 test('a press and release without a move selects the clip and seeks without capturing the pointer', async () => {
   const harness = await freshEditor(twoClipTimeline());
   const { container, changes, seeks } = harness;
-  await previewingClipSources(harness);
+  previewingClipSources(harness);
   dragClip(container, 1, { x: 0, y: BASE_ROW_Y }, { x: 1, y: BASE_ROW_Y });
   assert.deepEqual(changes, []);
   assert.deepEqual(seeks, [240]);
@@ -615,7 +614,7 @@ test('reel starts from the app are sorted and reported like any edit', async () 
 test('a ruler click seeks to the frame under the pointer and moves the playhead', async () => {
   const harness = await freshEditor(twoClipTimeline());
   const { container, seeks } = harness;
-  await previewingClipSources(harness);
+  previewingClipSources(harness);
   click(container, { ruler: true }, 50);
   assert.deepEqual(seeks, [160]);
   assert.match(container.playhead.style.left, /\* 0\.5\)$/);
@@ -648,18 +647,22 @@ test('the timeline load hands the whole timeline over and a picture only answer 
   assert.match(container.innerHTML, /The JPEG 2000 timeline previews picture only/);
 });
 
-test('the Play whole timeline box is ticked from the start, and disabled while the timeline has no clips', async () => {
+test('the Play whole timeline box is unticked from the start, and disabled while the timeline has no clips', async () => {
   const empty = await freshEditor();
-  assert.match(empty.container.innerHTML, /data-action="play-whole-timeline" checked disabled> Play whole timeline</);
-  assert.equal(empty.editor.playsWholeTimeline(), true);
+  assert.match(empty.container.innerHTML, /data-action="play-whole-timeline" disabled> Play whole timeline</);
+  assert.equal(empty.editor.playsWholeTimeline(), false);
 
-  const { container } = await freshEditor(twoClipTimeline());
+  const { editor, container } = await freshEditor(twoClipTimeline());
+  assert.match(container.innerHTML, /data-action="play-whole-timeline"> Play whole timeline</);
+  await setPlayWholeTimeline(container, true);
   assert.match(container.innerHTML, /data-action="play-whole-timeline" checked> Play whole timeline</);
+  assert.equal(editor.playsWholeTimeline(), true);
   assert.doesNotMatch(container.innerHTML, /Play timeline</);
 });
 
 test('with the box ticked a seek over a clip source loads the whole timeline at the playhead, then seeks it', async () => {
   const { container, preview, seeks, playedTimelines, timelineSeeks } = await freshEditor(twoClipTimeline());
+  await setPlayWholeTimeline(container, true);
   preview.showsClipSource = true;
   click(container, { ruler: true }, 50);
   await settled();
@@ -675,7 +678,7 @@ test('with the box ticked a seek over a clip source loads the whole timeline at 
 test('with the box unticked a seek goes to the clip source under the playhead', async () => {
   const harness = await freshEditor(twoClipTimeline());
   const { editor, container, seeks, playedTimelines, timelineSeeks } = harness;
-  await previewingClipSources(harness);
+  previewingClipSources(harness);
   assert.equal(editor.playsWholeTimeline(), false);
   assert.match(container.innerHTML, /data-action="play-whole-timeline"> Play whole timeline</);
   click(container, { ruler: true }, 50);
@@ -698,7 +701,7 @@ test('a seek while the preview shows neither the timeline nor a clip source only
 test('the box swaps a clip source for the timeline and back at the playhead, keeping the transport', async () => {
   const harness = await freshEditor(twoClipTimeline());
   const { editor, container, seeks, playedTimelines, timelineSeeks, transportKeepingLoads } = harness;
-  await previewingClipSources(harness);
+  previewingClipSources(harness);
   assert.deepEqual(transportKeepingLoads, []);
   editor.setPlayhead(100);
 
@@ -715,13 +718,14 @@ test('the box swaps a clip source for the timeline and back at the playhead, kee
 
 test('the box loads nothing while the preview shows something other than the timeline or a clip source', async () => {
   const { container, seeks, playedTimelines, transportKeepingLoads } = await freshEditor(twoClipTimeline());
-  await setPlayWholeTimeline(container, false);
   await setPlayWholeTimeline(container, true);
+  await setPlayWholeTimeline(container, false);
   assert.deepEqual([seeks, playedTimelines, transportKeepingLoads], [[], [], []]);
 });
 
 test('the playhead follows the loaded timeline and lets go once the preview plays something else', async () => {
   const { editor, container, seeks, timelineSeeks } = await freshEditor(twoClipTimeline(), 'reel', { pictureOnly: true });
+  await setPlayWholeTimeline(container, true);
   await editor.playTimelineFromPlayhead();
   timelineSeeks.length = 0;
 
@@ -739,6 +743,7 @@ test('the playhead follows the loaded timeline and lets go once the preview play
 
 test('a refused load does not count the timeline as loaded', async () => {
   const { editor, container, preview, playedTimelines, timelineSeeks } = await freshEditor(twoClipTimeline(), 'reel', null);
+  await setPlayWholeTimeline(container, true);
   preview.showsClipSource = true;
   assert.equal(await editor.playTimelineFromPlayhead(), false);
   click(container, { ruler: true }, 50);
@@ -753,6 +758,7 @@ test('a drag along the ruler seeks a loaded timeline and a hover does not', asyn
   move(25, 1);
   assert.deepEqual(timelineSeeks, []);
 
+  await setPlayWholeTimeline(container, true);
   await editor.playTimelineFromPlayhead();
   timelineSeeks.length = 0;
   move(25, 0);
@@ -763,6 +769,7 @@ test('a drag along the ruler seeks a loaded timeline and a hover does not', asyn
 
 test('with the timeline loaded Set in and Set out trim the clip under the playhead', async () => {
   const { editor, container, changes } = await freshEditor(twoClipTimeline());
+  await setPlayWholeTimeline(container, true);
   await editor.playTimelineFromPlayhead();
   // the first clip is selected, the playhead plays on into the second
   click(container, { clipIndex: 0 }, 0);

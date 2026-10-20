@@ -29,7 +29,7 @@ let zoom = MINIMUM_ZOOM;
 // set while the preview plays the whole timeline
 let timelineLoaded = false;
 let loadedTimelinePictureOnly = false;
-let playsWholeTimelineChecked = true;
+let playsWholeTimelineChecked = false;
 // set from a clip's pointerdown to its pointerup
 let clipDrag = null;
 // the click that ends a clip drag must not select or seek
@@ -44,7 +44,7 @@ export function initTimelineEditor(container, options) {
   zoom = MINIMUM_ZOOM;
   timelineLoaded = false;
   loadedTimelinePictureOnly = false;
-  playsWholeTimelineChecked = true;
+  playsWholeTimelineChecked = false;
   clipDrag = null;
   clickEndsClipDrag = false;
   panel.classList.add('timeline-editor');
