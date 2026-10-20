@@ -390,7 +390,13 @@ supplies. The options are all required:
 - `sourceFrames(assetId)`, a Promise of the source's frame count, which the app
   probes.
 - `onChange(model)`, called with a copy of the whole model after every edit.
-- `onSeek(timelineFrame)`, called on a ruler or clip click.
+- `previewShowsClipSource()`, true while the preview shows a clip's source.
+- `previewClipSource(timelineFrame)`, a Promise of whether it loaded the source
+  of the layer 0 clip under the frame, unless already shown, and sought it to
+  the source frame there.
+- `playTimeline(model)`, a Promise of `previewTimeline`'s answer for the model.
+- `seekTimeline(seconds)`, a seek in the loaded timeline.
+- `loadKeepingTransport(load)`, the export of `preview.js`.
 
 `setTimeline(model)` replaces the model and re-renders, for project open and
 restore, and reports nothing. `getTimeline()` returns a copy.
@@ -457,7 +463,20 @@ non-drop at the rate rounded to whole frames, Set in from playhead, Set out
 from playhead, a Start field in timeline timecode, an Opacity field in percent
 for a clip above layer 0, and Remove. A value typed in that does not parse or
 that the edit refuses changes nothing, and the field shows the clip's own value
-again. Clicking the ruler seeks. Split reel here (Split segment here with
+again. Clicking the ruler seeks.
+
+The Play whole timeline box in the toolbar picks what a seek loads. It starts
+ticked for each page load, and is disabled while the timeline has no clips.
+Ticked, a seek loads the whole timeline through `playTimeline` and seeks it to
+the playhead, and once it is loaded a seek only seeks it. Unticked, a seek goes
+to `previewClipSource`. Either way a seek loads nothing while the preview shows
+neither the timeline nor a clip's source. Ticking or unticking the box while the
+preview shows the other one swaps it at the playhead through
+`loadKeepingTransport`. `playsWholeTimeline()` returns the box's state, and
+`playTimelineFromPlayhead()` loads the whole timeline, seeks it to the playhead
+and resolves to whether it loaded, for an app's Preview button.
+
+Split reel here (Split segment here with
 `reelWord: 'segment'`) adds a reel start at the playhead, and clicking a marker
 removes it. The − and + buttons zoom the tracks and ruler between 1 and 20
 times the view's width, and the track labels stay in view while it scrolls.

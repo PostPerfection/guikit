@@ -29,6 +29,7 @@ let zoom = MINIMUM_ZOOM;
 // set while the preview plays the whole timeline
 let timelineLoaded = false;
 let loadedTimelinePictureOnly = false;
+let playsWholeTimelineChecked = true;
 // set from a clip's pointerdown to its pointerup
 let clipDrag = null;
 // the click that ends a clip drag must not select or seek
@@ -43,6 +44,7 @@ export function initTimelineEditor(container, options) {
   zoom = MINIMUM_ZOOM;
   timelineLoaded = false;
   loadedTimelinePictureOnly = false;
+  playsWholeTimelineChecked = true;
   clipDrag = null;
   clickEndsClipDrag = false;
   panel.classList.add('timeline-editor');
@@ -362,7 +364,7 @@ function render() {
       <button class="btn-sm" type="button" data-action="zoom-out" title="Zoom out"${zoom <= MINIMUM_ZOOM ? ' disabled' : ''}>−</button>
       <button class="btn-sm" type="button" data-action="zoom-in" title="Zoom in"${zoom >= MAXIMUM_ZOOM ? ' disabled' : ''}>+</button>
       <button class="btn-sm" type="button" data-action="split-reel">Split ${editorOptions.reelWord} here</button>
-      <button class="btn-sm" type="button" data-action="play-timeline"${timeline.clips.length === 0 ? ' disabled' : ''}>Play timeline</button>
+      <label><input type="checkbox" data-action="play-whole-timeline"${playsWholeTimelineChecked ? ' checked' : ''}${timeline.clips.length === 0 ? ' disabled' : ''}> Play whole timeline</label>
       ${timelineLoaded && loadedTimelinePictureOnly ? `<span class="timeline-editor-hint">${PICTURE_ONLY_HINT}</span>` : ''}
     </div>
     <div class="timeline-editor-scroll">
@@ -528,7 +530,7 @@ const clickActions = {
   'zoom-out': () => setZoom(zoom / ZOOM_STEP),
   'split-reel': () => splitReelAtPlayhead(),
   'remove-reel-start': (element) => applyEdit(removeReelStart(timeline, Number(element.dataset.frame))),
-  'play-timeline': () => playWholeTimeline(),
+  'play-whole-timeline': (element) => setPlaysWholeTimeline(element.checked),
   'set-in': () => setPointFromPlayhead('in'),
   'set-out': () => setPointFromPlayhead('out'),
   'remove-clip': () => {
@@ -613,7 +615,7 @@ function handlePointerMove(event) {
     dragClip(event);
     return;
   }
-  if (!timelineLoaded || (event.buttons & PRIMARY_BUTTON_PRESSED) === 0) return;
+  if (!seeksLoadedTimeline() || (event.buttons & PRIMARY_BUTTON_PRESSED) === 0) return;
   const ruler = event.target.closest('.timeline-editor-ruler');
   if (ruler) seekAtRuler(ruler, event);
 }
@@ -672,12 +674,17 @@ function seekAtRuler(ruler, event) {
   if (total === 0) return;
   const frame = frameAtPointer(ruler, event, 0, total);
   setPlayhead(frame);
-  seekTo(frame);
+  seekToPlayhead();
 }
 
-function seekTo(frame) {
-  if (timelineLoaded) editorOptions.seekTimeline(secondsAtFrame(timeline, frame));
-  else editorOptions.onSeek(frame);
+function seeksLoadedTimeline() {
+  return playsWholeTimelineChecked && timelineLoaded;
+}
+
+// while the preview shows anything other than the timeline or a clip's source, a seek moves the playhead only
+function seekToPlayhead() {
+  if (seeksLoadedTimeline()) editorOptions.seekTimeline(secondsAtFrame(timeline, playheadFrame));
+  else if (timelineLoaded || editorOptions.previewShowsClipSource()) loadCheckedPreviewAtPlayhead();
 }
 
 function selectClip(clipElement, event) {
@@ -685,7 +692,7 @@ function selectClip(clipElement, event) {
   const clip = timeline.clips[selectedIndex];
   playheadFrame = frameAtPointer(clipElement, event, clip.start, keptFrames(clip));
   render();
-  seekTo(playheadFrame);
+  seekToPlayhead();
 }
 
 // a playhead left at the very end would start an empty reel
@@ -694,20 +701,33 @@ function splitReelAtPlayhead() {
   applyEdit(splitReelAt(timeline, playheadFrame));
 }
 
+export function playsWholeTimeline() {
+  return playsWholeTimelineChecked;
+}
+
 // the whole timeline, picked up where the playhead is
 export async function playTimelineFromPlayhead() {
   const frame = playheadFrame;
-  await playWholeTimeline();
-  if (timelineLoaded) editorOptions.seekTimeline(secondsAtFrame(timeline, frame));
-  return timelineLoaded;
-}
-
-async function playWholeTimeline() {
   const playback = await editorOptions.playTimeline(structuredClone(timeline));
-  if (playback === null) return;
+  if (playback === null) return false;
   timelineLoaded = true;
   loadedTimelinePictureOnly = playback.pictureOnly;
   render();
+  editorOptions.seekTimeline(secondsAtFrame(timeline, frame));
+  return true;
+}
+
+// resolves to whether the preview loaded the timeline or the clip source the checkbox picks
+function loadCheckedPreviewAtPlayhead() {
+  if (playsWholeTimelineChecked) return playTimelineFromPlayhead();
+  return editorOptions.previewClipSource(playheadFrame);
+}
+
+async function setPlaysWholeTimeline(checked) {
+  playsWholeTimelineChecked = checked;
+  render();
+  const previewShowsTheOther = checked ? editorOptions.previewShowsClipSource() : timelineLoaded;
+  if (previewShowsTheOther) await editorOptions.loadKeepingTransport(loadCheckedPreviewAtPlayhead);
 }
 
 function frameAtPointer(element, event, firstFrame, frameCount) {
