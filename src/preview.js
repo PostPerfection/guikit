@@ -44,7 +44,6 @@ const FULLSCREEN_HUD_SELECTOR =
   '.preview-panel.preview-fullscreen > :not(.preview-surface), .main-area:has(> .preview-panel.preview-fullscreen) > .timeline-transport';
 
 const PREVIEW_PANEL_DEFAULT_TITLE = 'Preview';
-const TIMELINE_PREVIEW_TITLE = 'Preview: timeline';
 const TIMELINE_RENDER_PROGRESS_EVENT = 'timeline-render-progress';
 const SCRUBBER_IDLE_CLASS = 'timeline-scrubber-idle';
 
@@ -870,7 +869,7 @@ export function previewDcp(dirPath, contentKeys = null) {
 }
 
 // resolves to { pictureOnly }, or to null once it failed or a newer load or stop replaced it
-export function previewTimeline(timeline, request) {
+export function previewTimeline(timeline, request, compositionName) {
   endTimelineLoad();
   const load = previewLoadCount;
   const isCurrent = () => load === previewLoadCount;
@@ -903,7 +902,7 @@ export function previewTimeline(timeline, request) {
     .finally(async () => (await listening)());
   resetTrackToggles();
   setTransportEnabled(true);
-  showPreviewHeading(TIMELINE_PREVIEW_TITLE, '');
+  showPreviewHeading(`Preview: ${compositionName} timeline`, '');
   startScrubberPolling();
   return loaded;
 }

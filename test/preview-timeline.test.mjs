@@ -8,6 +8,7 @@ const POLL_MILLISECONDS = 250;
 const TIMELINE = { version: 1, clips: [{ picture: '/media/first.mov', in_frame: 0, out_frame: 48 }] };
 // opaque to guikit, the app's command reads it
 const REQUEST = { container: 'flat' };
+const COMPOSITION_NAME = 'Feature';
 const RENDER_PROGRESS = 'timeline-render-progress';
 const TIMELINE_SECONDS = 3.25;
 // a grok timeline's poll reports the duration of the clip it plays
@@ -18,7 +19,7 @@ const bridge = await import('./tauri-core-stub.mjs');
 const events = await import('./tauri-event-stub.mjs');
 const preview = await import('../src/preview.js');
 
-const elements = new Map(['status-text', 'timeline-duration', 'timeline-position'].map((id) => [id, { textContent: '', title: '', dataset: {} }]));
+const elements = new Map(['status-text', 'timeline-duration', 'timeline-position', 'preview-title'].map((id) => [id, { textContent: '', title: '', dataset: {} }]));
 globalThis.document = { getElementById: (id) => elements.get(id) ?? null };
 
 const positions = [];
@@ -34,12 +35,13 @@ async function poll(metadata) {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
-test('a timeline load hands the timeline and the app request over and resolves to its picture only flag', async () => {
+test('a timeline load hands the timeline and the app request over, resolves to its picture only flag and names the composition', async () => {
   bridge.forgetInvocations();
   bridge.answerWith('preview_load_timeline', { picture_only: true });
   bridge.answerWith('preview_get_duration', TIMELINE_SECONDS);
-  assert.deepEqual(await preview.previewTimeline(TIMELINE, REQUEST), { pictureOnly: true });
+  assert.deepEqual(await preview.previewTimeline(TIMELINE, REQUEST, COMPOSITION_NAME), { pictureOnly: true });
   assert.deepEqual(bridge.invocations[0], ['preview_load_timeline', { timeline: TIMELINE, request: REQUEST }]);
+  assert.equal(elements.get('preview-title').textContent, 'Preview: Feature timeline');
 });
 
 test('the poll reports the timeline position and the scrubber spans the whole timeline', async () => {
@@ -55,7 +57,7 @@ test('the poll reports the timeline position and the scrubber spans the whole ti
 
 test('a refused timeline resolves null and says why', async () => {
   bridge.refuseWith('preview_load_timeline', 'clip 2 plays on mpv and clip 1 on grok');
-  assert.equal(await preview.previewTimeline(TIMELINE, REQUEST), null);
+  assert.equal(await preview.previewTimeline(TIMELINE, REQUEST, COMPOSITION_NAME), null);
   assert.equal(elements.get('status-text').textContent, 'Preview failed: clip 2 plays on mpv and clip 1 on grok');
   bridge.forgetRefusals();
 });
@@ -63,7 +65,7 @@ test('a refused timeline resolves null and says why', async () => {
 test('the status line counts the rendered frames and the time left, and clears once the timeline plays', async () => {
   const status = elements.get('status-text');
   const load = bridge.deferAnswer('preview_load_timeline');
-  const loaded = preview.previewTimeline(TIMELINE, REQUEST);
+  const loaded = preview.previewTimeline(TIMELINE, REQUEST, COMPOSITION_NAME);
   await settled();
   events.emit(RENDER_PROGRESS, { frames_rendered: 0, total_frames: 48, seconds_left: null });
   assert.equal(status.textContent, 'Rendering layers: 0 of 48 frames');
@@ -80,10 +82,10 @@ test('the status line counts the rendered frames and the time left, and clears o
 test('a load a newer one replaced resolves null and leaves the status line to the newer one', async () => {
   const status = elements.get('status-text');
   const replaced = bridge.deferAnswer('preview_load_timeline');
-  const replacedLoad = preview.previewTimeline(TIMELINE, REQUEST);
+  const replacedLoad = preview.previewTimeline(TIMELINE, REQUEST, COMPOSITION_NAME);
   await settled();
   const newer = bridge.deferAnswer('preview_load_timeline');
-  const newerLoad = preview.previewTimeline(TIMELINE, REQUEST);
+  const newerLoad = preview.previewTimeline(TIMELINE, REQUEST, COMPOSITION_NAME);
   await settled();
   events.emit(RENDER_PROGRESS, { frames_rendered: 1, total_frames: 2, seconds_left: 1 });
 
@@ -102,7 +104,7 @@ for (const [ending, end, command] of [
     const status = elements.get('status-text');
     status.textContent = '';
     const load = bridge.deferAnswer('preview_load_timeline');
-    const loaded = preview.previewTimeline(TIMELINE, REQUEST);
+    const loaded = preview.previewTimeline(TIMELINE, REQUEST, COMPOSITION_NAME);
     await settled();
     events.emit(RENDER_PROGRESS, { frames_rendered: 3, total_frames: 48, seconds_left: 9 });
     bridge.forgetInvocations();

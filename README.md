@@ -117,9 +117,10 @@ load renders. `seconds_left` is null until a frame is done. `preview_stop`, any
 new load, and `preview_cancel_timeline_render` cancel the render, and the
 cancelled load loads nothing.
 
-On the page, `previewTimeline(timeline, request)` invokes the app's
-`preview_load_timeline` with `{ timeline, request }`, the request being whatever
-the app's command takes. It writes "Rendering layers: N of M frames, about S s
+On the page, `previewTimeline(timeline, request, compositionName)` invokes the
+app's `preview_load_timeline` with `{ timeline, request }`, the request being
+whatever the app's command takes, and titles the panel "Preview:
+compositionName timeline". It writes "Rendering layers: N of M frames, about S s
 left" to `#status-text` while the render runs and clears it when the load
 settles. It resolves to `{ pictureOnly }`, or to null once the failure is
 reported or a newer load, `stopPreview` or `cancelTimelineRender()` replaced it,
