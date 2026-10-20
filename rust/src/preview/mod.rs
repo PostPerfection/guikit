@@ -1168,6 +1168,9 @@ mod loaded_picture_tests;
 mod level_meter_tests;
 
 #[cfg(test)]
+mod sound_source_tests;
+
+#[cfg(test)]
 mod overlay_placement_tests;
 
 #[cfg(test)]

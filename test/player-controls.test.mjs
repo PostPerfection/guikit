@@ -9,6 +9,7 @@ import {
   playerControlsFromFields,
   playerControlsFromPreferences,
   soundDeviceChoices,
+  soundSourceSelection,
 } from '../src/player-controls.js';
 
 const PROFILE = '/usr/share/color/icc/booth.icc';
@@ -123,4 +124,22 @@ test('3D applies to a stereoscopic DCP only, and everything applies with nothing
   assert.equal(mono.displayProfile, null);
   assert.match(mono.stereo, /one eye/);
   assert.deepEqual(notApplicableReasons({ kind: 'nothing' }), { panel: null, displayProfile: null, stereo: null });
+});
+
+test('the Source select follows the sound the metadata names while every reel carries Atmos', () => {
+  assert.deepEqual(soundSourceSelection({ sound_source: 'atmos', atmos_available: true }), {
+    value: 'atmos',
+    disabled: false,
+  });
+  assert.deepEqual(soundSourceSelection({ sound_source: 'main', atmos_available: true }), {
+    value: 'main',
+    disabled: false,
+  });
+});
+
+test('the Source select shows Main sound and is disabled without Atmos, with no sound and on mpv', () => {
+  const fixedOnTheMainSound = { value: 'main', disabled: true };
+  assert.deepEqual(soundSourceSelection({ sound_source: 'main', atmos_available: false }), fixedOnTheMainSound);
+  assert.deepEqual(soundSourceSelection({ sound_source: null, atmos_available: false }), fixedOnTheMainSound);
+  assert.deepEqual(soundSourceSelection({ position: 1.5 }), fixedOnTheMainSound);
 });

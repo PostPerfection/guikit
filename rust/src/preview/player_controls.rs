@@ -1,6 +1,6 @@
 use postkit::grok_player::{
     sound_output_device_names, GrokPlayer, PictureMasks, PictureScaling, PresentationSettings,
-    SoundOutputLayout, StereoOutput, SubtitlePresentation,
+    SoundOutputLayout, SoundSource, StereoOutput, SubtitlePresentation,
 };
 use postkit::preview::resolve_picture;
 use postkit::subtitle_formats::Rgba;
@@ -62,6 +62,23 @@ pub enum SoundLayout {
     FivePointOne,
     SevenPointOne,
     Automatic,
+}
+
+// the track a package carrying both plays, kept for the session and never saved
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SoundSourceChoice {
+    Atmos,
+    Main,
+}
+
+impl SoundSourceChoice {
+    fn sound_source(self) -> SoundSource {
+        match self {
+            SoundSourceChoice::Atmos => SoundSource::Atmos,
+            SoundSourceChoice::Main => SoundSource::MainSound,
+        }
+    }
 }
 
 // what a 3D source shows, a mono source ignores it
@@ -223,6 +240,20 @@ pub fn preview_set_sound_delay(
     apply_to_grok(&state, |grok| {
         grok.set_sound_delay_milliseconds(milliseconds)
     })
+}
+
+pub(super) fn set_sound_source(player: &Player, source: SoundSourceChoice) -> PlayerControlOutcome {
+    player.grok().set_sound_source(source.sound_source());
+    outcome(player)
+}
+
+// switches on the fly, a package lacking the chosen track plays the other
+#[tauri::command(async)]
+pub fn preview_set_sound_source(
+    source: SoundSourceChoice,
+    state: tauri::State<'_, PreviewPlayer>,
+) -> Result<PlayerControlOutcome, String> {
+    Ok(set_sound_source(state.player()?, source))
 }
 
 #[tauri::command(async)]

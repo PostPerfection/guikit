@@ -145,6 +145,10 @@ an optional `RRGGBB` colour), `preview_set_stereo_output` (`leftEye`, `rightEye`
 pictures) with `preview_stereo_output` reading it back, `preview_set_display_profile` (a monitor ICC
 profile path for DCP pictures, or null for the built-in sRGB, refused naming
 the file and why when the player cannot use it) and `preview_sound_devices`.
+`preview_set_sound_source` (`atmos` or `main`) picks the track a package with
+both plays, switched while it plays and kept for the session but never saved.
+The panel's Source select takes its value from the metadata's `sound_source` and
+is enabled only while `atmos_available` is true.
 The grok player keeps them through loads and stops. A file mpv plays is left alone, which each command
 reports as `mpvFileUnchanged`. Their argument types are serde structs an app can
 keep in its own settings file. Only dcpscreen registers them.

@@ -10,6 +10,7 @@ import {
   playerControlsFromFields,
   playerControlsFromPreferences,
   soundDeviceChoices,
+  soundSourceSelection,
 } from './player-controls.js';
 
 const PANEL_ID = 'player-controls';
@@ -74,6 +75,12 @@ const PANEL_MARKUP = `
           <option value="fivePointOne">5.1</option>
           <option value="sevenPointOne">7.1</option>
           <option value="automatic">Automatic</option>
+        </select>
+      </label>
+      <label title="The track a package with both plays, for this session">Source
+        <select id="player-control-sound-source">
+          <option value="atmos">Atmos</option>
+          <option value="main">Main sound</option>
         </select>
       </label>
       <label title="Milliseconds, positive delays the sound">A/V delay
@@ -144,6 +151,7 @@ function panelFields() {
     soundDevice: element('player-control-sound-device'),
     soundDeviceError: element('player-control-sound-device-error'),
     soundLayout: element('player-control-sound-layout'),
+    soundSource: element('player-control-sound-source'),
     soundDelayMilliseconds: element('player-control-sound-delay'),
     subtitleOffsetPercent: element('player-control-subtitle-offset'),
     subtitleColourOverridden: element('player-control-subtitle-colour-overridden'),
@@ -232,6 +240,12 @@ async function showApplicability(fields) {
   fields.stereoGroup.disabled = reasons.stereo !== null;
 }
 
+async function showSoundSource(fields) {
+  const selection = soundSourceSelection(JSON.parse(await invoke('preview_get_metadata')));
+  fields.soundSource.value = selection.value;
+  fields.soundSource.disabled = selection.disabled;
+}
+
 // the screening controls under the preview, applied live and kept in the app's preferences through save
 export async function initPlayerControlsPanel({ preferences, save }) {
   if (!addPanel()) return;
@@ -274,6 +288,13 @@ export async function initPlayerControlsPanel({ preferences, save }) {
     showBrightness(fields);
     applyChanges();
   });
+  fields.soundSource.addEventListener('change', (event) => {
+    // the choice is the session's, so it stays out of the saved controls
+    event.stopPropagation();
+    invoke('preview_set_sound_source', { source: fields.soundSource.value }).catch((error) =>
+      showText(fields.error, String(error)),
+    );
+  });
   fields.subtitleColourOverridden.addEventListener('change', () => enableSubtitleColour(fields));
   element('player-control-profile-choose').addEventListener('click', async () => {
     const profile = await open({ filters: DISPLAY_PROFILE_FILTERS });
@@ -285,7 +306,10 @@ export async function initPlayerControlsPanel({ preferences, save }) {
     showProfile(fields, null);
     applyAndSave();
   });
-  const refreshApplicability = () => showApplicability(fields).catch((error) => showText(fields.error, String(error)));
+  const refreshApplicability = () =>
+    Promise.all([showApplicability(fields), showSoundSource(fields)]).catch((error) =>
+      showText(fields.error, String(error)),
+    );
   watchPreviewSource(refreshApplicability);
   await refreshApplicability();
 }

@@ -22,6 +22,7 @@ const MPV_FILE_REASON = 'Not applicable: this file plays on mpv, which these con
 const IMF_PROFILE_REASON = 'Not applicable to IMF, the picture is shown in the colour its track signals';
 const IMF_STEREO_REASON = 'Not applicable to IMF, the picture plays as one eye';
 const MONO_PICTURE_REASON = 'Not applicable, the picture has one eye';
+const MAIN_SOUND_SOURCE = 'main';
 
 // what the player does not apply to the loaded picture, keyed by preview_loaded_picture's kind
 const NOT_APPLICABLE_BY_KIND = {
@@ -126,6 +127,12 @@ export function soundDeviceChoices(deviceNames, savedDevice) {
 // the file name of the chosen profile, with either separator
 export function displayProfileText(profile) {
   return profile ? profile.split(/[/\\]/).pop() : BUILT_IN_PROFILE_TEXT;
+}
+
+// the Source select as the player's metadata has it, fixed on the main sound unless every reel carries Atmos
+export function soundSourceSelection(metadata) {
+  if (!metadata.atmos_available) return { value: MAIN_SOUND_SOURCE, disabled: true };
+  return { value: metadata.sound_source, disabled: false };
 }
 
 // why each part of the panel does nothing to the loaded picture, null where it applies
