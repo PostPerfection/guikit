@@ -713,7 +713,7 @@ export async function playTimelineFromPlayhead() {
   timelineLoaded = true;
   loadedTimelinePictureOnly = playback.pictureOnly;
   render();
-  editorOptions.seekTimeline(secondsAtFrame(timeline, frame));
+  await editorOptions.seekTimeline(secondsAtFrame(timeline, frame));
   return true;
 }
 

@@ -73,7 +73,7 @@ export function previewPlayPause() {
   invoke('preview_play_pause').catch(() => {});
 }
 
-// grok starts every load playing, whatever the pause before it
+// grok and an mpv timeline start every load playing, whatever the pause before it
 export async function loadKeepingTransport(load) {
   const paused = await previewIsPaused();
   if (!(await load())) return;
@@ -92,6 +92,22 @@ export function previewSeek(seconds) {
 
 export function previewSeekAbsolute(seconds) {
   invoke('preview_seek_absolute', { seconds }).catch(() => {});
+}
+
+const LOADED_SEEK_ATTEMPTS = 100;
+const LOADED_SEEK_RETRY_MILLISECONDS = 100;
+
+// mpv refuses a seek from a load until the new file is open, and applies the new file's pause only then
+export async function previewSeekOnceLoaded(seconds) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await invoke('preview_seek_absolute', { seconds });
+      return;
+    } catch (error) {
+      if (attempt === LOADED_SEEK_ATTEMPTS) throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, LOADED_SEEK_RETRY_MILLISECONDS));
+  }
 }
 
 /// How far the skip buttons and an app's skip shortcuts move, so the two cannot

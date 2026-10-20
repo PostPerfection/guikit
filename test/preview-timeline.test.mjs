@@ -9,12 +9,13 @@ const TIMELINE = { version: 1, clips: [{ picture: '/media/first.mov', in_frame: 
 // opaque to guikit, the app's command reads it
 const REQUEST = { container: 'flat' };
 const COMPOSITION_NAME = 'Feature';
+const RETRY_MILLISECONDS = 100;
 const RENDER_PROGRESS = 'timeline-render-progress';
 const TIMELINE_SECONDS = 3.25;
 // a grok timeline's poll reports the duration of the clip it plays
 const PLAYING_CLIP_SECONDS = 2;
 
-mock.timers.enable({ apis: ['setInterval'] });
+mock.timers.enable({ apis: ['setInterval', 'setTimeout'] });
 const bridge = await import('./tauri-core-stub.mjs');
 const events = await import('./tauri-event-stub.mjs');
 const preview = await import('../src/preview.js');
@@ -125,6 +126,26 @@ test('play and pause invoke preview_play_pause and nothing else', async () => {
   preview.previewPlayPause();
   await settled();
   assert.deepEqual(bridge.invocations, [['preview_play_pause', undefined]]);
+});
+
+test('a seek after a load is sent again while the player refuses it, until the new file takes it', async () => {
+  const seek = ['preview_seek_absolute', { seconds: 2.5 }];
+  bridge.forgetInvocations();
+  bridge.refuseWith('preview_seek_absolute', 'error running command');
+  let sought = false;
+  const seeking = preview.previewSeekOnceLoaded(2.5).then(() => {
+    sought = true;
+  });
+  await settled();
+  mock.timers.tick(RETRY_MILLISECONDS);
+  await settled();
+  assert.deepEqual(bridge.invocations, [seek, seek]);
+  assert.equal(sought, false);
+
+  bridge.forgetRefusals();
+  mock.timers.tick(RETRY_MILLISECONDS);
+  await seeking;
+  assert.deepEqual(bridge.invocations, [seek, seek, seek]);
 });
 
 test('a load that keeps the transport plays or pauses the new picture the way the old one was', async () => {

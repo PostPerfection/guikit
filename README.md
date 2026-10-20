@@ -197,7 +197,10 @@ app's shortcuts. Both frame steps pause playback, and need
 `preview_frame_back_step` and `preview_frame_step` registered beside the other
 commands. `loadKeepingTransport(load)` awaits `load()`, and when it resolves
 true plays or pauses the new picture the way the replaced one was, since grok
-starts every load playing.
+and an mpv timeline start every load playing. `previewSeekOnceLoaded(seconds)`
+sends the absolute seek again every 100 ms, up to 100 times, while the player
+refuses it, which mpv does from a load until the new file is open. A seek
+right after a load goes through it.
 
 ## Preview QC controls
 
@@ -395,7 +398,8 @@ supplies. The options are all required:
   of the layer 0 clip under the frame, unless already shown, and sought it to
   the source frame there.
 - `playTimeline(model)`, a Promise of `previewTimeline`'s answer for the model.
-- `seekTimeline(seconds)`, a seek in the loaded timeline.
+- `seekTimeline(seconds)`, a seek in the loaded timeline, awaited after the
+  load, `previewSeekOnceLoaded` in both wizards.
 - `loadKeepingTransport(load)`, the export of `preview.js`.
 
 `setTimeline(model)` replaces the model and re-renders, for project open and
