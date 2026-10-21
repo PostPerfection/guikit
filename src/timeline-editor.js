@@ -630,19 +630,19 @@ function dragClip(event) {
   if (!clipDrag.moved) panel.setPointerCapture(clipDrag.pointerId);
   clipDrag.moved = true;
   const proposedStart = Math.max(0, clip.start + Math.round(offsetPixels * clipDrag.framesPerPixel));
-  clipDrag.start = snappedStart(clipDrag.index, proposedStart, SNAP_PIXELS * clipDrag.framesPerPixel);
+  const otherClips = timeline.clips.filter((_, other) => other !== clipDrag.index);
+  clipDrag.start = snappedStart(proposedStart, keptFrames(clip), otherClips, SNAP_PIXELS * clipDrag.framesPerPixel);
   if (layer !== clipDrag.layer) row.content.append(clipDrag.element);
   clipDrag.layer = layer;
   clipDrag.element.classList.add('dragging');
   clipDrag.element.style.left = `${(clipDrag.start / totalFrames(timeline)) * PERCENT}%`;
 }
 
-// the start that puts the clip's start or end on another clip's edge or the playhead within the tolerance
-function snappedStart(index, proposedStart, toleranceFrames) {
-  const length = keptFrames(timeline.clips[index]);
-  const otherEdges = timeline.clips.flatMap((clip, other) => (other === index ? [] : [clip.start, clipEnd(clip)]));
+// the start that puts a clip's start or end on an edge of clipsToSnapTo or the playhead within the tolerance
+function snappedStart(proposedStart, length, clipsToSnapTo, toleranceFrames) {
+  const edges = clipsToSnapTo.flatMap((clip) => [clip.start, clipEnd(clip)]);
   const distance = (start) => Math.abs(start - proposedStart);
-  const snaps = [playheadFrame, ...otherEdges]
+  const snaps = [playheadFrame, ...edges]
     .flatMap((edge) => [edge, edge - length])
     .filter((start) => start >= 0 && distance(start) <= toleranceFrames)
     .sort((first, second) => distance(first) - distance(second));
@@ -826,20 +826,26 @@ async function handleDrop(event) {
     return;
   }
   const layer = Number(trackElement.dataset.layer);
-  await dropPicture(assetId, layer, pictureDropStart(event, clipIndex, layer));
+  await dropPicture(assetId, layer, pictureDropProposal(event, clipIndex, layer));
 }
 
-// after the clip under the pointer, at the pointer on empty track, after the row's last clip on its label
-function pictureDropStart(event, clipIndex, layer) {
-  if (clipIndex !== null) return clipEnd(timeline.clips[clipIndex]);
+// after the clip under the pointer or the row's last clip on its label, at the pointer with snapping on empty track
+function pictureDropProposal(event, clipIndex, layer) {
+  if (clipIndex !== null) return { proposedStart: clipEnd(timeline.clips[clipIndex]), toleranceFrames: 0 };
   const content = event.target.closest('.timeline-editor-track-content');
-  if (content) return Math.round(pointerFraction(content, event) * totalFrames(timeline));
-  return layerEnd(timeline, layer);
+  if (!content) return { proposedStart: layerEnd(timeline, layer), toleranceFrames: 0 };
+  const framesPerPixel = totalFrames(timeline) / content.getBoundingClientRect().width;
+  return {
+    proposedStart: Math.round(pointerFraction(content, event) * totalFrames(timeline)),
+    toleranceFrames: SNAP_PIXELS * framesPerPixel,
+  };
 }
 
-async function dropPicture(assetId, layer, start) {
+async function dropPicture(assetId, layer, { proposedStart, toleranceFrames }) {
   const sourceLength = await editorOptions.sourceLength(assetId);
-  tryEdit(() => addClip(timeline, newPictureClip(timeline, assetId, sourceLength, start, layer)));
+  const placed = newPictureClip(timeline, assetId, sourceLength, proposedStart, layer);
+  const start = snappedStart(proposedStart, keptFrames(placed), timeline.clips, toleranceFrames);
+  tryEdit(() => addClip(timeline, { ...placed, start }));
 }
 
 const dropOnTrack = {

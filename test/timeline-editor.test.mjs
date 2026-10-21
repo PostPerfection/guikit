@@ -397,9 +397,36 @@ test('a picture dropped on a clip lands after its end with the probed frame coun
 
 test('a picture dropped on empty track lands at the pointer frame on that row', async () => {
   const { container, changes } = await freshEditor(twoClipTimeline());
-  // a quarter of the way along 320 frames
+  // a quarter of the way along 320 frames, 40 frames from the nearest snap at 120 where its end meets 240
   await drop(container, 2, { track: 'picture', layer: 1, trackContent: true }, 25);
   assert.deepEqual(changes.at(-1).clips[2], clip(2, 0, 120, 80, 1));
+});
+
+// clips from 0 to 100 and from 200 to 320, 320 frames over 100 pixels so a drop snaps within 19.2 frames
+function spacedClipsTimeline() {
+  return { ...twoClipTimeline(), clips: [clip(1, 0, 100, 0), clip(2, 0, 120, 200)] };
+}
+
+test('a picture dropped on empty track just after a clip end lands at that end', async () => {
+  const { container, changes } = await freshEditor(spacedClipsTimeline());
+  // frame 109, 9 past the first clip's end
+  await drop(container, 2, { track: 'picture', layer: 1, trackContent: true }, 34);
+  assert.equal(changes.at(-1).clips[2].start, 100);
+});
+
+test('a picture dropped on empty track with its end just short of a clip start lands with its end on that start', async () => {
+  const { container, changes } = await freshEditor(spacedClipsTimeline());
+  // frame 70, so its 120 frames end at 190, 10 short of the second clip's start
+  await drop(container, 2, { track: 'picture', layer: 1, trackContent: true }, 22);
+  assert.equal(changes.at(-1).clips[2].start, 80);
+});
+
+test('a picture dropped on empty track just past the playhead lands on the playhead', async () => {
+  const { editor, container, changes } = await freshEditor(spacedClipsTimeline());
+  editor.setPlayhead(160);
+  // frame 166
+  await drop(container, 2, { track: 'picture', layer: 1, trackContent: true }, 52);
+  assert.equal(changes.at(-1).clips[2].start, 160);
 });
 
 test('a picture dropped where it would overlap a clip on its row changes nothing', async () => {

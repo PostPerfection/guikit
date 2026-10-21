@@ -450,7 +450,9 @@ parsed as an integer as the wizards' assets lists set it, and an asset only
 lands on its own kind of track. A picture becomes a new clip on the row it is
 dropped on, from source frame 0 to the frame count `sourceFrames` resolves:
 dropped on a clip it starts where that clip ends, on empty track at the frame
-under the pointer, and on the row's label after the row's last clip. A drop
+under the pointer, and on the row's label after the row's last clip. On empty
+track the new clip snaps to a clip edge or the playhead the way a dragged clip
+does. A drop
 that would overlap a clip changes nothing. A sound dropped over a clip becomes
 that clip's sound file, and one dropped on the track's label, or anywhere on
 the track when the timeline's `sound` is set or there are no clips, becomes the
