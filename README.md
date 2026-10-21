@@ -390,7 +390,7 @@ supplies. The options are all required:
   Split button and the marker titles.
 - `assetName(assetId)`, the label for a span.
 - `assetKind(assetId)`, `'picture'`, `'sound'` or `'subtitle'`.
-- `sourceFrames(assetId)`, a Promise of the source's frame count, which the app
+- `sourceLength(assetId)`, a Promise of the source's length (a frame count or a still), which the app
   probes.
 - `onChange(model)`, called with a copy of the whole model after every edit.
 - `previewShowsClipSource()`, true while the preview shows a clip's source.
@@ -448,7 +448,7 @@ to embedded.
 Assets come in by drag and drop. The drop's `text/plain` data is the asset id,
 parsed as an integer as the wizards' assets lists set it, and an asset only
 lands on its own kind of track. A picture becomes a new clip on the row it is
-dropped on, from source frame 0 to the frame count `sourceFrames` resolves:
+dropped on, from source frame 0 to the length `sourceLength` resolves:
 dropped on a clip it starts where that clip ends, on empty track at the frame
 under the pointer, and on the row's label after the row's last clip. On empty
 track the new clip snaps to a clip edge or the playhead the way a dragged clip
