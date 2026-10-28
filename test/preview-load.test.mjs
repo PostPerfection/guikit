@@ -38,16 +38,22 @@ test('a package load given no keys sends null', () => {
 
 test('a file load carries its content keys or null', () => {
   assert.deepEqual(loadsAskedFor(() => preview.previewFile(PICTURE, CONTENT_KEYS)).invocations, [
-    ['preview_load', { filePath: PICTURE, contentKeys: CONTENT_KEYS, otherPackages: [] }],
+    ['preview_load', { filePath: PICTURE, contentKeys: CONTENT_KEYS, otherPackages: [], playState: 'playing' }],
   ]);
   assert.deepEqual(loadsAskedFor(() => preview.previewFile(PICTURE)).invocations, [
-    ['preview_load', { filePath: PICTURE, contentKeys: null, otherPackages: [] }],
+    ['preview_load', { filePath: PICTURE, contentKeys: null, otherPackages: [], playState: 'playing' }],
+  ]);
+});
+
+test('a file load asked to start paused tells the backend so', () => {
+  assert.deepEqual(loadsAskedFor(() => preview.previewFile(PICTURE, null, [], { paused: true })).invocations, [
+    ['preview_load', { filePath: PICTURE, contentKeys: null, otherPackages: [], playState: 'paused' }],
   ]);
 });
 
 test('a version file load carries the packages its original version is in', () => {
   assert.deepEqual(loadsAskedFor(() => preview.previewFile(VERSION_FILE_CPL, null, [ORIGINAL_VERSION])).invocations, [
-    ['preview_load', { filePath: VERSION_FILE_CPL, contentKeys: null, otherPackages: [ORIGINAL_VERSION] }],
+    ['preview_load', { filePath: VERSION_FILE_CPL, contentKeys: null, otherPackages: [ORIGINAL_VERSION], playState: 'playing' }],
   ]);
 });
 

@@ -78,7 +78,9 @@ Keys given with a source mpv plays fail the load. An app registers
 A version file CPL takes some of its assets from its original version.
 `previewFile(filePath, contentKeys, otherPackages)` takes the package
 directories to search after the CPL's own, `[]` by default, and the load goes
-to grok only when those packages complete the composition.
+to grok only when those packages complete the composition. Its last argument,
+`{ paused }`, false by default, makes the source open paused instead of
+playing, on either backend.
 
 grok decodes with the JPEG 2000 codec rather than through libavcodec, draws the
 QC overlays and the subtitles into the frame it composes, and starts playing on
@@ -117,9 +119,11 @@ load renders. `seconds_left` is null until a frame is done. `preview_stop`, any
 new load, and `preview_cancel_timeline_render` cancel the render, and the
 cancelled load loads nothing.
 
-On the page, `previewTimeline(timeline, request, compositionName)` invokes the
-app's `preview_load_timeline` with `{ timeline, request }`, the request being
-whatever the app's command takes, and titles the panel "Preview:
+On the page, `previewTimeline(timeline, request, compositionName, { paused })`
+invokes the app's `preview_load_timeline` with `{ timeline, request, playState }`,
+the request being whatever the app's command takes and `playState` the
+`guikit::preview::PlayState` the command passes on to `load_timeline_preview`,
+`paused` when `paused` is true. It titles the panel "Preview:
 compositionName timeline". It writes "Rendering layers: N of M frames, about S s
 left" to `#status-text` while the render runs and clears it when the load
 settles. It resolves to `{ pictureOnly }`, or to null once the failure is
@@ -195,9 +199,9 @@ binding the same jump to a key labels it from that constant rather than its own.
 `previewFrameStepBack()` and `previewFrameStepForward()` are also exported for an
 app's shortcuts. Both frame steps pause playback, and need
 `preview_frame_back_step` and `preview_frame_step` registered beside the other
-commands. `loadKeepingTransport(load)` awaits `load()`, and when it resolves
-true plays or pauses the new picture the way the replaced one was, since grok
-and an mpv timeline start every load playing. `previewSeekOnceLoaded(seconds)`
+commands. `loadKeepingTransport(load)` calls `load({ paused })` with whether the
+preview is paused now, and the load passes it on, so the new picture opens
+paused or playing the way the replaced one was. `previewSeekOnceLoaded(seconds)`
 sends the absolute seek again every 100 ms, up to 100 times, while the player
 refuses it, which mpv does from a load until the new file is open. A seek
 right after a load goes through it.
@@ -398,10 +402,11 @@ supplies. The options are all required:
   so a clip dropped from it has no sound.
 - `onChange(model)`, called with a copy of the whole model after every edit.
 - `previewShowsClipSource()`, true while the preview shows a clip's source.
-- `previewClipSource(timelineFrame)`, a Promise of whether it loaded the source
+- `previewClipSource(timelineFrame, { paused })`, a Promise of whether it loaded the source
   of the layer 0 clip under the frame, unless already shown, and sought it to
-  the source frame there.
-- `playTimeline(model)`, a Promise of `previewTimeline`'s answer for the model.
+  the source frame there, opening it paused when `paused` is true.
+- `playTimeline(model, { paused })`, a Promise of `previewTimeline`'s answer for
+  the model.
 - `seekTimeline(seconds)`, a seek in the loaded timeline, awaited after the
   load, `previewSeekOnceLoaded` in both wizards.
 - `loadKeepingTransport(load)`, the export of `preview.js`.
@@ -481,9 +486,9 @@ Ticked, a seek loads the whole timeline through `playTimeline` and seeks it to
 the playhead, and once it is loaded a seek only seeks it. Unticked, a seek goes
 to `previewClipSource`. Either way a seek loads nothing while the preview shows
 neither the timeline nor a clip's source. Ticking or unticking the box while the
-preview shows the other one swaps it at the playhead through
-`loadKeepingTransport`. `playsWholeTimeline()` returns the box's state, and
-`playTimelineFromPlayhead()` loads the whole timeline, seeks it to the playhead
+preview shows the other one swaps it at the playhead. A seek's load and a swap
+both go through `loadKeepingTransport`. `playsWholeTimeline()` returns the box's
+state, and `playTimelineFromPlayhead({ paused })` loads the whole timeline, seeks it to the playhead
 and resolves to whether it loaded, for an app's Preview button.
 
 Split reel here (Split segment here with

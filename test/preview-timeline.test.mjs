@@ -41,8 +41,16 @@ test('a timeline load hands the timeline and the app request over, resolves to i
   bridge.answerWith('preview_load_timeline', { picture_only: true });
   bridge.answerWith('preview_get_duration', TIMELINE_SECONDS);
   assert.deepEqual(await preview.previewTimeline(TIMELINE, REQUEST, COMPOSITION_NAME), { pictureOnly: true });
-  assert.deepEqual(bridge.invocations[0], ['preview_load_timeline', { timeline: TIMELINE, request: REQUEST }]);
+  assert.deepEqual(bridge.invocations[0], ['preview_load_timeline', { timeline: TIMELINE, request: REQUEST, playState: 'playing' }]);
   assert.equal(elements.get('preview-title').textContent, 'Preview: Feature timeline');
+});
+
+test('a timeline load asked to start paused tells the backend so', async () => {
+  bridge.forgetInvocations();
+  bridge.answerWith('preview_load_timeline', { picture_only: false });
+  bridge.answerWith('preview_get_duration', TIMELINE_SECONDS);
+  await preview.previewTimeline(TIMELINE, REQUEST, COMPOSITION_NAME, { paused: true });
+  assert.deepEqual(bridge.invocations[0], ['preview_load_timeline', { timeline: TIMELINE, request: REQUEST, playState: 'paused' }]);
 });
 
 test('the poll reports the timeline position and the scrubber spans the whole timeline', async () => {
@@ -148,28 +156,13 @@ test('a seek after a load is sent again while the player refuses it, until the n
   assert.deepEqual(bridge.invocations, [seek, seek, seek]);
 });
 
-test('a load that keeps the transport plays or pauses the new picture the way the old one was', async () => {
-  for (const [pausedBefore, pausedAfter, toggled] of [
-    [true, false, true],
-    [false, true, true],
-    [false, false, false],
-  ]) {
+test('a load that keeps the transport starts paused when the old picture was, and never toggles play and pause', async () => {
+  for (const paused of [true, false]) {
     bridge.forgetInvocations();
-    bridge.answerWith('preview_get_metadata', JSON.stringify({ paused: pausedBefore }));
-    await preview.loadKeepingTransport(async () => {
-      bridge.answerWith('preview_get_metadata', JSON.stringify({ paused: pausedAfter }));
-      return true;
-    });
-    assert.equal(bridge.invocations.some(([command]) => command === 'preview_play_pause'), toggled);
+    bridge.answerWith('preview_get_metadata', JSON.stringify({ paused }));
+    const loads = [];
+    await preview.loadKeepingTransport(async (options) => loads.push(options));
+    assert.deepEqual(loads, [{ paused }]);
+    assert.deepEqual(bridge.invocations.map(([command]) => command), ['preview_get_metadata']);
   }
-});
-
-test('a load that keeps the transport and fails leaves play and pause alone', async () => {
-  bridge.forgetInvocations();
-  bridge.answerWith('preview_get_metadata', JSON.stringify({ paused: true }));
-  await preview.loadKeepingTransport(async () => {
-    bridge.answerWith('preview_get_metadata', JSON.stringify({ paused: false }));
-    return false;
-  });
-  assert.deepEqual(bridge.invocations.map(([command]) => command), ['preview_get_metadata']);
 });

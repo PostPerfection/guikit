@@ -685,7 +685,7 @@ function seeksLoadedTimeline() {
 // while the preview shows anything other than the timeline or a clip's source, a seek moves the playhead only
 function seekToPlayhead() {
   if (seeksLoadedTimeline()) editorOptions.seekTimeline(secondsAtFrame(timeline, playheadFrame));
-  else if (timelineLoaded || editorOptions.previewShowsClipSource()) loadCheckedPreviewAtPlayhead();
+  else if (timelineLoaded || editorOptions.previewShowsClipSource()) editorOptions.loadKeepingTransport(loadCheckedPreviewAtPlayhead);
 }
 
 function selectClip(clipElement, event) {
@@ -707,9 +707,9 @@ export function playsWholeTimeline() {
 }
 
 // the whole timeline, picked up where the playhead is
-export async function playTimelineFromPlayhead() {
+export async function playTimelineFromPlayhead({ paused = false } = {}) {
   const frame = playheadFrame;
-  const playback = await editorOptions.playTimeline(structuredClone(timeline));
+  const playback = await editorOptions.playTimeline(structuredClone(timeline), { paused });
   if (playback === null) return false;
   timelineLoaded = true;
   loadedTimelinePictureOnly = playback.pictureOnly;
@@ -719,9 +719,9 @@ export async function playTimelineFromPlayhead() {
 }
 
 // resolves to whether the preview loaded the timeline or the clip source the checkbox picks
-function loadCheckedPreviewAtPlayhead() {
-  if (playsWholeTimelineChecked) return playTimelineFromPlayhead();
-  return editorOptions.previewClipSource(playheadFrame);
+function loadCheckedPreviewAtPlayhead({ paused }) {
+  if (playsWholeTimelineChecked) return playTimelineFromPlayhead({ paused });
+  return editorOptions.previewClipSource(playheadFrame, { paused });
 }
 
 async function setPlaysWholeTimeline(checked) {

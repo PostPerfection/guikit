@@ -131,6 +131,8 @@ async function freshEditor(model, reelWord = 'reel', timelinePlayback = { pictur
   const playedTimelines = [];
   const timelineSeeks = [];
   const transportKeepingLoads = [];
+  const clipSourceLoadsPaused = [];
+  const timelineLoadsPaused = [];
   // what the fake preview shows besides the timeline, which the editor tracks itself
   const preview = { showsClipSource: false };
   editor.initTimelineEditor(container, {
@@ -142,21 +144,24 @@ async function freshEditor(model, reelWord = 'reel', timelinePlayback = { pictur
     noAudioStream: (assetId) => ASSETS[assetId].noAudioStream,
     onChange: (changed) => changes.push(changed),
     previewShowsClipSource: () => preview.showsClipSource,
-    previewClipSource: async (frame) => {
+    previewClipSource: async (frame, { paused }) => {
       seeks.push(frame);
+      clipSourceLoadsPaused.push(paused);
       preview.showsClipSource = true;
       return true;
     },
-    playTimeline: async (played) => {
+    playTimeline: async (played, { paused }) => {
       playedTimelines.push(played);
+      timelineLoadsPaused.push(paused);
       if (timelinePlayback !== null) preview.showsClipSource = false;
       return timelinePlayback;
     },
     seekTimeline: (seconds) => timelineSeeks.push(seconds),
-    loadKeepingTransport: async (load) => transportKeepingLoads.push(await load()),
+    // the fake preview is paused before every load that keeps the transport
+    loadKeepingTransport: async (load) => transportKeepingLoads.push(await load({ paused: true })),
   });
   if (model) editor.setTimeline(model);
-  return { editor, container, changes, seeks, playedTimelines, timelineSeeks, transportKeepingLoads, preview };
+  return { editor, container, changes, seeks, playedTimelines, timelineSeeks, transportKeepingLoads, clipSourceLoadsPaused, timelineLoadsPaused, preview };
 }
 
 function settled() {
@@ -564,10 +569,11 @@ test('split reel here does nothing with the playhead at the end of the timeline'
 });
 
 test('playing from the playhead loads the whole timeline and seeks it to the playhead', async () => {
-  const { editor, playedTimelines, timelineSeeks } = await freshEditor(twoClipTimeline());
+  const { editor, playedTimelines, timelineLoadsPaused, timelineSeeks } = await freshEditor(twoClipTimeline());
   editor.setPlayhead(240);
   assert.equal(await editor.playTimelineFromPlayhead(), true);
   assert.equal(playedTimelines.length, 1);
+  assert.deepEqual(timelineLoadsPaused, [false]);
   assert.deepEqual(timelineSeeks, [240 / 24]);
 });
 
@@ -724,14 +730,17 @@ test('with the box ticked a seek over a clip source loads the whole timeline at 
   assert.deepEqual(seeks, []);
 });
 
-test('with the box unticked a seek goes to the clip source under the playhead', async () => {
+test('with the box unticked a seek goes to the clip source under the playhead, keeping the transport', async () => {
   const harness = await freshEditor(twoClipTimeline());
-  const { editor, container, seeks, playedTimelines, timelineSeeks } = harness;
+  const { editor, container, seeks, clipSourceLoadsPaused, playedTimelines, timelineSeeks, transportKeepingLoads } = harness;
   previewingClipSources(harness);
   assert.equal(editor.playsWholeTimeline(), false);
   assert.match(container.innerHTML, /data-action="play-whole-timeline"> Play whole timeline</);
   click(container, { ruler: true }, 50);
+  await settled();
   assert.deepEqual(seeks, [160]);
+  assert.deepEqual(clipSourceLoadsPaused, [true]);
+  assert.deepEqual(transportKeepingLoads, [true]);
   assert.deepEqual(playedTimelines, []);
   assert.deepEqual(timelineSeeks, []);
 });
@@ -749,19 +758,21 @@ test('a seek while the preview shows neither the timeline nor a clip source only
 
 test('the box swaps a clip source for the timeline and back at the playhead, keeping the transport', async () => {
   const harness = await freshEditor(twoClipTimeline());
-  const { editor, container, seeks, playedTimelines, timelineSeeks, transportKeepingLoads } = harness;
+  const { editor, container, seeks, playedTimelines, timelineSeeks, transportKeepingLoads, clipSourceLoadsPaused, timelineLoadsPaused } = harness;
   previewingClipSources(harness);
   assert.deepEqual(transportKeepingLoads, []);
   editor.setPlayhead(100);
 
   await setPlayWholeTimeline(container, true);
   assert.deepEqual(playedTimelines, [twoClipTimeline()]);
+  assert.deepEqual(timelineLoadsPaused, [true]);
   assert.deepEqual(timelineSeeks, [100 / 24]);
   assert.deepEqual(transportKeepingLoads, [true]);
 
   editor.followTimelinePosition({ seconds: 250 / 24, clipIndex: 1 });
   await setPlayWholeTimeline(container, false);
   assert.deepEqual(seeks, [250]);
+  assert.deepEqual(clipSourceLoadsPaused, [true]);
   assert.deepEqual(transportKeepingLoads, [true, true]);
 });
 

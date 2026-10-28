@@ -73,11 +73,9 @@ export function previewPlayPause() {
   invoke('preview_play_pause').catch(() => {});
 }
 
-// grok and an mpv timeline start every load playing, whatever the pause before it
+// the load starts paused when the preview was paused before it
 export async function loadKeepingTransport(load) {
-  const paused = await previewIsPaused();
-  if (!(await load())) return;
-  if ((await previewIsPaused()) !== paused) await invoke('preview_play_pause');
+  return load({ paused: await previewIsPaused() });
 }
 
 // nothing loaded reports no paused state
@@ -851,16 +849,20 @@ function formatTimecode(seconds, fps) {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}:${String(f).padStart(2, '0')}`;
 }
 
+function playStateFor(paused) {
+  return paused ? 'paused' : 'playing';
+}
+
 /// Load a file into the preview player. `otherPackages` are the package
 /// directories a version file CPL takes its original version's assets from.
-export function previewFile(filePath, contentKeys = null, otherPackages = []) {
+export function previewFile(filePath, contentKeys = null, otherPackages = [], { paused = false } = {}) {
   endTimelineLoad();
   showEmbeddedPanel();
   shownWatcher(filePath, false);
   loadedPath = filePath;
   playbackEnded = false;
   loadWatcher(filePath);
-  const loaded = invoke('preview_load', { filePath, contentKeys, otherPackages }).then(() => true, reportPreviewLoadFailure);
+  const loaded = invoke('preview_load', { filePath, contentKeys, otherPackages, playState: playStateFor(paused) }).then(() => true, reportPreviewLoadFailure);
   resetTrackToggles();
   setTransportEnabled(true);
   showPreviewTitle(filePath);
@@ -885,7 +887,7 @@ export function previewDcp(dirPath, contentKeys = null) {
 }
 
 // resolves to { pictureOnly }, or to null once it failed or a newer load or stop replaced it
-export function previewTimeline(timeline, request, compositionName) {
+export function previewTimeline(timeline, request, compositionName, { paused = false } = {}) {
   endTimelineLoad();
   const load = previewLoadCount;
   const isCurrent = () => load === previewLoadCount;
@@ -900,7 +902,7 @@ export function previewTimeline(timeline, request, compositionName) {
     renderProgressShown = true;
     showStatus(renderProgressText(event.payload));
   });
-  const loaded = invoke('preview_load_timeline', { timeline, request })
+  const loaded = invoke('preview_load_timeline', { timeline, request, playState: playStateFor(paused) })
     .then(
       async (preview) => {
         if (!isCurrent()) return null;

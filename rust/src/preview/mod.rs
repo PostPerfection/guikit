@@ -33,7 +33,7 @@ pub use overlays::{
 };
 
 mod player;
-pub use player::{Backend, Player};
+pub use player::{Backend, PlayState, Player};
 
 pub mod player_controls;
 pub mod screening_runner;
@@ -326,6 +326,7 @@ pub fn preview_load(
     file_path: String,
     content_keys: Option<ContentKeyPaths>,
     other_packages: Vec<PathBuf>,
+    play_state: PlayState,
     state: tauri::State<'_, PreviewPlayer>,
 ) -> Result<(), String> {
     state.cancel_timeline_render();
@@ -334,7 +335,7 @@ pub fn preview_load(
     state.clear_timeline();
     state.forget_loaded_file(player.mpv())?;
     send_decode_scale_to_grok(player, &state);
-    player.load_source_with_packages(&file_path, keys, &other_packages)
+    player.load_source_with_packages(&file_path, keys, &other_packages, play_state)
 }
 
 #[derive(Serialize)]
@@ -348,6 +349,7 @@ pub fn load_timeline_preview(
     state: &PreviewPlayer,
     timeline: Timeline,
     options: Option<EncodeRunOptions>,
+    play_state: PlayState,
 ) -> Result<TimelinePreview, String> {
     let player = state.player()?;
     let work_dir = app
@@ -365,6 +367,7 @@ pub fn load_timeline_preview(
         state,
         timeline,
         options.as_ref(),
+        play_state,
         &work_dir,
         &mut emit_progress,
     )?;
@@ -387,6 +390,7 @@ fn load_timeline(
     state: &PreviewPlayer,
     timeline: Timeline,
     options: Option<&EncodeRunOptions>,
+    play_state: PlayState,
     work_dir: &Path,
     on_progress: &mut dyn FnMut(TimelineRenderProgress),
 ) -> Result<Option<u64>, String> {
@@ -419,11 +423,14 @@ fn load_timeline(
             work_dir,
             render,
             &cancel,
+            play_state,
             &PreviewRunnerPlayer(state),
         )?;
         return Ok(Some(generation));
     }
-    load_mpv_timeline(player, state, &timeline, work_dir, render, &cancel)?;
+    load_mpv_timeline(
+        player, state, &timeline, work_dir, render, &cancel, play_state,
+    )?;
     Ok(None)
 }
 
@@ -433,6 +440,7 @@ fn load_grok_timeline(
     work_dir: &Path,
     render: Option<StretchRender>,
     cancel: &Arc<AtomicBool>,
+    play_state: PlayState,
     player: &impl TimelinePlayer,
 ) -> Result<u64, String> {
     postkit::timeline::refuse_two_subtitle_sources(&timeline)?;
@@ -452,7 +460,14 @@ fn load_grok_timeline(
     let black_dir = work_dir.join(TIMELINE_BLACK_DIRECTORY);
     let black = render_black_codestreams(&timeline, &black_dir)?;
     state.load_unless_cancelled(cancel, || {
-        let run = GrokTimelineRun::start(timeline, sound, black.as_deref(), &rendered, player)?;
+        let run = GrokTimelineRun::start(
+            timeline,
+            sound,
+            black.as_deref(),
+            &rendered,
+            play_state,
+            player,
+        )?;
         Ok(state.install_timeline(TimelinePlayback::Grok(run), vec![sound_file, black_dir]))
     })
 }
@@ -464,6 +479,7 @@ fn load_mpv_timeline(
     work_dir: &Path,
     render: Option<StretchRender>,
     cancel: &Arc<AtomicBool>,
+    play_state: PlayState,
 ) -> Result<(), String> {
     postkit::timeline::refuse_two_subtitle_sources(timeline)?;
     std::fs::create_dir_all(work_dir)
@@ -492,7 +508,7 @@ fn load_mpv_timeline(
         let file_options = {
             let mut tracks = state.subtitle_tracks.lock().unwrap();
             tracks.subtitle.file_path = subtitle.map(|path| path.display().to_string());
-            reload_file_options(false, None, &tracks)
+            reload_file_options(play_state.is_paused(), None, &tracks)
         };
         player.load_mpv_uri(&uri, &file_options)?;
         state.install_timeline(

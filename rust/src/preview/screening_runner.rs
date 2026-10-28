@@ -10,14 +10,19 @@ use serde::{Deserialize, Serialize};
 use tauri::Manager;
 use uuid::Uuid;
 
-use super::PreviewPlayer;
+use super::{PlayState, PreviewPlayer};
 
 const TICK_INTERVAL: Duration = Duration::from_millis(100);
 const MILLISECONDS_PER_SECOND: f64 = 1000.0;
 
 // the boundary the runner drives, the preview player in the app and a fake in the tests
 pub trait RunnerPlayer {
-    fn load(&self, source: &Path, options: SourceOptions) -> Result<(), String>;
+    fn load(
+        &self,
+        source: &Path,
+        options: SourceOptions,
+        play_state: PlayState,
+    ) -> Result<(), String>;
     fn queue_next(&self, source: &Path, options: SourceOptions) -> Result<(), String>;
     fn stop(&self) -> Result<(), String>;
     fn status(&self) -> Result<PlayerStatus, String>;
@@ -270,7 +275,7 @@ impl ScreeningRun {
     ) -> Result<String, String> {
         let source = (self.lookup)(package_directory, cpl_id)?;
         let cpl_path = source.cpl_path.clone();
-        player.load(&cpl_path, source_options(source, range))?;
+        player.load(&cpl_path, source_options(source, range), PlayState::Playing)?;
         Ok(cpl_path.display().to_string())
     }
 
@@ -462,11 +467,16 @@ impl ScreeningRun {
 pub(super) struct PreviewRunnerPlayer<'a>(pub(super) &'a PreviewPlayer);
 
 impl RunnerPlayer for PreviewRunnerPlayer<'_> {
-    fn load(&self, source: &Path, options: SourceOptions) -> Result<(), String> {
+    fn load(
+        &self,
+        source: &Path,
+        options: SourceOptions,
+        play_state: PlayState,
+    ) -> Result<(), String> {
         let player = self.0.player()?;
         self.0.forget_loaded_file(player.mpv())?;
         super::send_decode_scale_to_grok(player, self.0);
-        player.load_source_with_options(&source.display().to_string(), options)
+        player.load_source_with_options(&source.display().to_string(), options, play_state)
     }
 
     fn queue_next(&self, source: &Path, options: SourceOptions) -> Result<(), String> {
@@ -592,7 +602,12 @@ mod tests {
 
     impl RunnerPlayer for FakePlayer {
         // the grok player counts position and duration from the in frame
-        fn load(&self, source: &Path, options: SourceOptions) -> Result<(), String> {
+        fn load(
+            &self,
+            source: &Path,
+            options: SourceOptions,
+            _play_state: PlayState,
+        ) -> Result<(), String> {
             self.calls
                 .borrow_mut()
                 .push(format!("load {}", described(source, &options)));
@@ -978,7 +993,11 @@ mod tests {
         player.calls();
 
         player
-            .load(Path::new("/elsewhere/CPL.xml"), SourceOptions::default())
+            .load(
+                Path::new("/elsewhere/CPL.xml"),
+                SourceOptions::default(),
+                PlayState::Playing,
+            )
             .unwrap();
         player.calls();
         run.tick(&player, later(1.0));

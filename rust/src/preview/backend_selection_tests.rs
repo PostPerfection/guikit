@@ -3,7 +3,7 @@ use super::grok_fixture::{
     wait_until, write_package, write_picture_file, write_version_file_and_original_version,
     FRAMES_PER_SECOND,
 };
-use super::{Backend, Player};
+use super::{Backend, PlayState, Player};
 
 // long enough that the fixture is still playing when the assert reads it
 const PICTURE_FRAMES: usize = 48;
@@ -67,7 +67,12 @@ fn a_version_file_plays_on_grok_with_its_original_version() {
     let player = Player::new().unwrap();
     player.init_software().unwrap();
     player
-        .load_source_with_packages(&cpl.to_string_lossy(), None, &[original_version])
+        .load_source_with_packages(
+            &cpl.to_string_lossy(),
+            None,
+            &[original_version],
+            PlayState::Playing,
+        )
         .unwrap();
 
     assert_eq!(player.active(), Backend::Grok);

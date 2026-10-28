@@ -5,8 +5,9 @@ use std::sync::{Arc, Mutex};
 use postkit::content_keys::ContentKeys;
 use postkit::grok_player::{GetProcAddressFn, GrokPlayer, SourceOptions};
 use postkit::mpv_render::{MpvRenderPlayer, NativeDisplay};
+use serde::Deserialize;
 
-use super::{FRAME_BACK_STEP, FRAME_STEP};
+use super::{yes_or_no, FRAME_BACK_STEP, FRAME_STEP, PAUSE_PROPERTY};
 
 const FORCED_TITLE_PROPERTY: &str = "force-media-title";
 
@@ -22,6 +23,20 @@ impl Backend {
             Backend::Mpv => "mpv",
             Backend::Grok => "grok",
         }
+    }
+}
+
+// whether a source starts playing or paused once it loads
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PlayState {
+    Playing,
+    Paused,
+}
+
+impl PlayState {
+    pub fn is_paused(self) -> bool {
+        self == PlayState::Paused
     }
 }
 
@@ -129,7 +144,7 @@ impl Player {
     // ─── loading ───────────────────────────────────────────────────────────
 
     pub fn load_source(&self, path: &str, keys: Option<ContentKeys>) -> Result<(), String> {
-        self.load_source_with_packages(path, keys, &[])
+        self.load_source_with_packages(path, keys, &[], PlayState::Playing)
     }
 
     // other_packages hold the assets a version file takes from its original version
@@ -138,26 +153,31 @@ impl Player {
         path: &str,
         keys: Option<ContentKeys>,
         other_packages: &[PathBuf],
+        play_state: PlayState,
     ) -> Result<(), String> {
         let options = SourceOptions {
             keys,
             other_packages: other_packages.to_vec(),
             ..SourceOptions::default()
         };
-        self.load_source_with_options(path, options)
+        self.load_source_with_options(path, options, play_state)
     }
 
     pub fn load_source_with_options(
         &self,
         path: &str,
         options: SourceOptions,
+        play_state: PlayState,
     ) -> Result<(), String> {
         if GrokPlayer::accepts_with_packages(Path::new(path), &options.other_packages) {
-            return self.start_grok(path, options);
+            return self.start_grok(path, options, play_state);
         }
         refuse_options_for_mpv(path, &options)?;
-        self.start_mpv(path);
-        self.mpv.load_file(path)
+        if !Path::new(path).exists() {
+            return Err(format!("File not found: {path}"));
+        }
+        let pause_option = format!("{PAUSE_PROPERTY}={}", yes_or_no(play_state.is_paused()));
+        self.load_mpv_uri(path, &pause_option)
     }
 
     pub fn load_package_dir(&self, path: &str, keys: Option<ContentKeys>) -> Result<(), String> {
@@ -166,14 +186,13 @@ impl Player {
             ..Default::default()
         };
         if GrokPlayer::accepts(Path::new(path)) {
-            return self.start_grok(path, options);
+            return self.start_grok(path, options, PlayState::Playing);
         }
         refuse_options_for_mpv(path, &options)?;
         self.start_mpv(path);
         self.mpv.load_package_dir(path)
     }
 
-    // an edl:// timeline, which load_source would look for on disk as a file
     pub fn load_mpv_uri(&self, uri: &str, file_options: &str) -> Result<(), String> {
         self.start_mpv(uri);
         // clears a composition title an earlier package load forced
@@ -182,12 +201,16 @@ impl Player {
             .command(&["loadfile", uri, "replace", "0", file_options])
     }
 
-    // the page sends no play after a load, mpv's loadfile starts playing itself
-    fn start_grok(&self, path: &str, options: SourceOptions) -> Result<(), String> {
+    fn start_grok(
+        &self,
+        path: &str,
+        options: SourceOptions,
+        play_state: PlayState,
+    ) -> Result<(), String> {
         self.take_over(Backend::Grok, path);
         self.mpv.stop()?;
         self.grok.load_with_options(Path::new(path), options)?;
-        self.grok.set_paused(false);
+        self.grok.set_paused(play_state.is_paused());
         Ok(())
     }
 

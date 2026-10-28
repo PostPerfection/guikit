@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 use postkit::encode::{FrameRate, SourceColour};
 use postkit::picture_processing::{Fit, PictureProcessing, Placement};
@@ -11,8 +12,8 @@ use super::end_of_file_tests::{overlay_state, pump_until, write_clip};
 use super::grok_fixture::wait_until;
 use super::timeline_preview::{TimelineRenderProgress, TIMELINE_LOAD_CANCELLED};
 use super::{
-    load_timeline, poll_metadata, stop_preview, Backend, Player, PreviewOverlays, PreviewPlayer,
-    TIMELINE_BLACK_FILE, TIMELINE_MPV_STRETCHES_DIRECTORY, TIMELINE_SOUND_FILE,
+    load_timeline, poll_metadata, stop_preview, Backend, PlayState, Player, PreviewOverlays,
+    PreviewPlayer, TIMELINE_BLACK_FILE, TIMELINE_MPV_STRETCHES_DIRECTORY, TIMELINE_SOUND_FILE,
     TIMELINE_SUBTITLE_FILE,
 };
 
@@ -95,6 +96,7 @@ fn an_mpv_timeline_lasts_as_long_as_its_clips_and_reports_the_clip_it_plays() {
         &state,
         timeline,
         None,
+        PlayState::Playing,
         directory.path(),
         &mut |_| {},
     )
@@ -156,7 +158,16 @@ fn clearing_an_mpv_timeline_removes_the_sound_and_subtitles_rendered_for_it() {
     player.init_software().unwrap();
     let state = overlay_state(PreviewOverlays::default());
 
-    load_timeline(&player, &state, timeline, None, &work_dir, &mut |_| {}).unwrap();
+    load_timeline(
+        &player,
+        &state,
+        timeline,
+        None,
+        PlayState::Playing,
+        &work_dir,
+        &mut |_| {},
+    )
+    .unwrap();
     assert!(sound_file.exists() && subtitle_file.exists());
 
     state.clear_timeline();
@@ -200,7 +211,16 @@ fn an_mpv_timeline_plays_black_through_a_gap_and_reports_no_clip_there() {
     player.init_software().unwrap();
     let state = overlay_state(PreviewOverlays::default());
 
-    load_timeline(&player, &state, timeline, None, &work_dir, &mut |_| {}).unwrap();
+    load_timeline(
+        &player,
+        &state,
+        timeline,
+        None,
+        PlayState::Playing,
+        &work_dir,
+        &mut |_| {},
+    )
+    .unwrap();
     assert!(black_file.exists());
     pump_until(player.mpv(), |_| player.mpv().get_duration().is_ok())
         .unwrap_or_else(|last| panic!("mpv never read the timeline, last read {last}"));
@@ -229,6 +249,74 @@ fn an_mpv_timeline_plays_black_through_a_gap_and_reports_no_clip_there() {
 // the clips write_clip writes
 const CLIP_WIDTH: u32 = 320;
 const CLIP_HEIGHT: u32 = 180;
+
+// half a second covers twelve frames of a timeline that plays
+const PAUSED_WATCH: Duration = Duration::from_millis(500);
+
+// pumps for PAUSED_WATCH once the load is read, and returns the furthest position seen
+fn furthest_position_once_loaded(player: &Player) -> f64 {
+    pump_until(player.mpv(), |_| player.mpv().get_duration().is_ok())
+        .unwrap_or_else(|last| panic!("mpv never read the load, last read {last}"));
+    let watched = Instant::now();
+    let mut furthest: f64 = 0.0;
+    pump_until(player.mpv(), |_| {
+        furthest = furthest.max(player.mpv().get_position().unwrap_or(0.0));
+        watched.elapsed() > PAUSED_WATCH
+    })
+    .unwrap();
+    furthest
+}
+
+fn reports_paused(player: &Player, state: &PreviewPlayer) -> bool {
+    let metadata: serde_json::Value =
+        serde_json::from_str(&poll_metadata(player, state).unwrap()).unwrap();
+    metadata["paused"] == true
+}
+
+#[test]
+fn a_clip_source_and_a_timeline_loaded_paused_on_mpv_stay_on_their_first_frame() {
+    let directory = tempfile::tempdir().unwrap();
+    let first = directory.path().join("first.mov");
+    let second = directory.path().join("second.mov");
+    write_clip(&first, 1);
+    write_clip(&second, 1);
+    let timeline = Timeline {
+        version: TIMELINE_FORMAT_VERSION,
+        fps: FrameRate::whole(CLIP_FPS),
+        clips: vec![
+            clip(first.clone(), 0, FIRST_CLIP_FRAMES),
+            clip(
+                second,
+                FIRST_CLIP_FRAMES.1 - FIRST_CLIP_FRAMES.0,
+                SECOND_CLIP_FRAMES,
+            ),
+        ],
+        sound: SoundTrack::PerClip,
+        subtitle: None,
+        reel_starts: Vec::new(),
+    };
+    let player = software_player();
+    let state = overlay_state(PreviewOverlays::default());
+
+    player
+        .load_source_with_packages(&first.to_string_lossy(), None, &[], PlayState::Paused)
+        .unwrap();
+    assert_eq!(furthest_position_once_loaded(&player), 0.0);
+    assert!(reports_paused(&player, &state));
+
+    load_timeline(
+        &player,
+        &state,
+        timeline,
+        None,
+        PlayState::Paused,
+        &directory.path().join("work"),
+        &mut |_| {},
+    )
+    .unwrap();
+    assert_eq!(furthest_position_once_loaded(&player), 0.0);
+    assert!(reports_paused(&player, &state));
+}
 
 fn write_card(directory: &Path) -> PathBuf {
     let card = directory.join("card.png");
@@ -309,6 +397,7 @@ fn a_held_still_on_layer_0_renders_and_plays_on_mpv_before_the_clip_after_it() {
         &state,
         timeline,
         Some(&fitted_to_the_clips()),
+        PlayState::Playing,
         &work_dir,
         &mut |reported| progress.push(reported),
     );
@@ -386,6 +475,7 @@ fn the_loader_refuses_build_options_that_do_not_match_the_timeline() {
         &state,
         plain,
         Some(&fitted_to_the_clips()),
+        PlayState::Playing,
         &work_dir,
         &mut |_| {},
     )
@@ -394,8 +484,16 @@ fn the_loader_refuses_build_options_that_do_not_match_the_timeline() {
         given_options.contains("load_timeline_preview takes build options only"),
         "{given_options}"
     );
-    let not_given =
-        load_timeline(&player, &state, overlaid, None, &work_dir, &mut |_| {}).unwrap_err();
+    let not_given = load_timeline(
+        &player,
+        &state,
+        overlaid,
+        None,
+        PlayState::Playing,
+        &work_dir,
+        &mut |_| {},
+    )
+    .unwrap_err();
     assert!(
         not_given.contains("load_timeline_preview was given no build options"),
         "{not_given}"
@@ -428,6 +526,7 @@ fn assert_cancelled_during_its_render(
                 state,
                 timeline,
                 Some(options),
+                PlayState::Playing,
                 work_dir,
                 &mut |reported| {
                     if progress.is_empty() {
@@ -495,10 +594,17 @@ fn a_newer_load_cancels_a_timeline_render_and_plays_once_it_has_stopped() {
         assert_cancelled_during_its_render(&player, &state, directory.path(), || {
             let render_in_flight = state.timeline_render_cancel.lock().unwrap().clone();
             let (player, state, work_dir) = (&player, &state, &work_dir);
-            newer_load =
-                Some(scope.spawn(move || {
-                    load_timeline(player, state, newer, None, work_dir, &mut |_| {})
-                }));
+            newer_load = Some(scope.spawn(move || {
+                load_timeline(
+                    player,
+                    state,
+                    newer,
+                    None,
+                    PlayState::Playing,
+                    work_dir,
+                    &mut |_| {},
+                )
+            }));
             wait_until("the newer load's cancel", || {
                 render_in_flight.load(Ordering::Relaxed)
             });

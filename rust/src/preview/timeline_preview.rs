@@ -20,26 +20,20 @@ use serde::Serialize;
 use tauri::Manager;
 
 use super::screening_runner::{handed_off, PlayerStatus, PreviewRunnerPlayer, RunnerPlayer};
-use super::{json_number, Backend, PreviewPlayer};
+use super::{json_number, Backend, PlayState, PreviewPlayer};
 
 const TIMELINE_TICK_INTERVAL: Duration = Duration::from_millis(100);
 const TIMELINE_POSITION_FIELD: &str = "timeline_position";
 const TIMELINE_CLIP_INDEX_FIELD: &str = "timeline_clip_index";
 
-// a grok timeline seeks within a clip and keeps the pause across the load into another clip
+// a grok timeline seeks within a clip
 pub trait TimelinePlayer: RunnerPlayer {
     fn seek_absolute(&self, seconds: f64) -> Result<(), String>;
-    fn set_paused(&self, paused: bool) -> Result<(), String>;
 }
 
 impl TimelinePlayer for PreviewRunnerPlayer<'_> {
     fn seek_absolute(&self, seconds: f64) -> Result<(), String> {
         self.0.player()?.grok().seek_absolute(seconds);
-        Ok(())
-    }
-
-    fn set_paused(&self, paused: bool) -> Result<(), String> {
-        self.0.player()?.grok().set_paused(paused);
         Ok(())
     }
 }
@@ -271,6 +265,7 @@ impl GrokTimelineRun {
         sound: Option<PathBuf>,
         black: Option<&Path>,
         rendered: &[RenderedStretch],
+        play_state: PlayState,
         player: &impl TimelinePlayer,
     ) -> Result<Self, String> {
         let mut run = GrokTimelineRun {
@@ -281,7 +276,7 @@ impl GrokTimelineRun {
             current_segment: 0,
             queued_segment: None,
         };
-        run.load_segment(0, player)?;
+        run.load_segment(0, play_state, player)?;
         Ok(run)
     }
 
@@ -321,8 +316,17 @@ impl GrokTimelineRun {
         })
     }
 
-    fn load_segment(&mut self, index: usize, player: &impl TimelinePlayer) -> Result<(), String> {
-        player.load(&self.segments[index].picture, self.segment_options(index))?;
+    fn load_segment(
+        &mut self,
+        index: usize,
+        play_state: PlayState,
+        player: &impl TimelinePlayer,
+    ) -> Result<(), String> {
+        player.load(
+            &self.segments[index].picture,
+            self.segment_options(index),
+            play_state,
+        )?;
         self.current_segment = index;
         self.queued_segment = None;
         self.queue_segment(index + 1, player)
@@ -371,7 +375,7 @@ impl GrokTimelineRun {
         }
         // a segment shorter than a tick ends before its follower could be queued
         if status.eof {
-            self.load_segment(next, player)?;
+            self.load_segment(next, PlayState::Playing, player)?;
         } else {
             self.queue_segment(next, player)?;
         }
@@ -393,10 +397,12 @@ impl GrokTimelineRun {
             .partition_point(|segment| segment.start <= target)
             .saturating_sub(1);
         if segment != self.current_segment {
-            self.load_segment(segment, player)?;
-            if status.paused {
-                player.set_paused(true)?;
-            }
+            let play_state = if status.paused {
+                PlayState::Paused
+            } else {
+                PlayState::Playing
+            };
+            self.load_segment(segment, play_state, player)?;
         }
         let segment_fps = player.status()?.container_fps.ok_or_else(|| {
             format!(
@@ -777,8 +783,12 @@ mod tests {
     }
 
     impl RunnerPlayer for FakePlayer {
-        // the grok player starts a load playing
-        fn load(&self, source: &Path, options: SourceOptions) -> Result<(), String> {
+        fn load(
+            &self,
+            source: &Path,
+            options: SourceOptions,
+            play_state: PlayState,
+        ) -> Result<(), String> {
             self.calls
                 .borrow_mut()
                 .push(format!("load {}", described(source, &options)));
@@ -787,6 +797,7 @@ mod tests {
                 source: Some(source.display().to_string()),
                 position: Some(0.0),
                 container_fps: Some(CODESTREAM_DIRECTORY_FPS),
+                paused: play_state.is_paused(),
                 ..PlayerStatus::default()
             };
             Ok(())
@@ -816,12 +827,6 @@ mod tests {
         fn seek_absolute(&self, seconds: f64) -> Result<(), String> {
             self.calls.borrow_mut().push(format!("seek {seconds}"));
             self.status.borrow_mut().position = Some(seconds);
-            Ok(())
-        }
-
-        fn set_paused(&self, paused: bool) -> Result<(), String> {
-            self.calls.borrow_mut().push(format!("paused {paused}"));
-            self.status.borrow_mut().paused = paused;
             Ok(())
         }
     }
@@ -860,7 +865,8 @@ mod tests {
     #[test]
     fn the_first_clip_loads_with_its_range_and_the_second_queues_behind_it() {
         let player = FakePlayer::default();
-        GrokTimelineRun::start(three_clips(), None, None, &[], &player).unwrap();
+        GrokTimelineRun::start(three_clips(), None, None, &[], PlayState::Playing, &player)
+            .unwrap();
         assert_eq!(
             player.calls(),
             vec![
@@ -873,7 +879,9 @@ mod tests {
     #[test]
     fn the_position_adds_the_clip_start_and_follows_the_hand_off() {
         let player = FakePlayer::default();
-        let mut run = GrokTimelineRun::start(three_clips(), None, None, &[], &player).unwrap();
+        let mut run =
+            GrokTimelineRun::start(three_clips(), None, None, &[], PlayState::Playing, &player)
+                .unwrap();
         player.play_to(1.0);
         let status = player.status().unwrap();
         assert_eq!(run.position(&status), Some(1.0));
@@ -902,6 +910,7 @@ mod tests {
             Some(PathBuf::from(TIMELINE_SOUND)),
             None,
             &[],
+            PlayState::Playing,
             &player,
         )
         .unwrap();
@@ -924,7 +933,8 @@ mod tests {
         let mut timeline = three_clips();
         timeline.clips[1].subtitle = Some(PathBuf::from("/media/second.srt"));
         let player = FakePlayer::default();
-        let mut run = GrokTimelineRun::start(timeline, None, None, &[], &player).unwrap();
+        let mut run =
+            GrokTimelineRun::start(timeline, None, None, &[], PlayState::Playing, &player).unwrap();
         player.reach_the_end();
         run.tick(&player).unwrap();
         assert_eq!(
@@ -939,7 +949,8 @@ mod tests {
         let mut timeline = three_clips();
         timeline.subtitle = Some(PathBuf::from("/media/timeline.srt"));
         let player = FakePlayer::default();
-        let mut run = GrokTimelineRun::start(timeline, None, None, &[], &player).unwrap();
+        let mut run =
+            GrokTimelineRun::start(timeline, None, None, &[], PlayState::Playing, &player).unwrap();
         // timeline frame 54 is frame 6 of the second clip
         run.seek(2.25, &player).unwrap();
         // the third clip starts at timeline frame 72 on its source frame 100
@@ -971,6 +982,7 @@ mod tests {
             Some(PathBuf::from(TIMELINE_SOUND)),
             Some(Path::new(BLACK)),
             &[],
+            PlayState::Playing,
             &player,
         )
         .unwrap();
@@ -1007,9 +1019,15 @@ mod tests {
     #[test]
     fn a_seek_into_a_gap_loads_the_black_and_seeks_within_it() {
         let player = FakePlayer::default();
-        let mut run =
-            GrokTimelineRun::start(gapped_clips(), None, Some(Path::new(BLACK)), &[], &player)
-                .unwrap();
+        let mut run = GrokTimelineRun::start(
+            gapped_clips(),
+            None,
+            Some(Path::new(BLACK)),
+            &[],
+            PlayState::Playing,
+            &player,
+        )
+        .unwrap();
         player.calls();
         // timeline frame 54 is frame 6 of the gap
         run.seek(2.25, &player).unwrap();
@@ -1026,7 +1044,8 @@ mod tests {
     #[test]
     fn a_gap_without_black_is_refused() {
         let player = FakePlayer::default();
-        let refused = GrokTimelineRun::start(gapped_clips(), None, None, &[], &player);
+        let refused =
+            GrokTimelineRun::start(gapped_clips(), None, None, &[], PlayState::Playing, &player);
         let error = refused.err().expect("a gap with no black plays");
         assert!(error.contains("gap of 12 frames at frame 48"), "{error}");
     }
@@ -1117,7 +1136,16 @@ mod tests {
         let state = overlay_state(PreviewOverlays::default());
         let player = FakePlayer::default();
 
-        load_grok_timeline(&state, timeline, &work_dir, None, &not_cancelled(), &player).unwrap();
+        load_grok_timeline(
+            &state,
+            timeline,
+            &work_dir,
+            None,
+            &not_cancelled(),
+            PlayState::Playing,
+            &player,
+        )
+        .unwrap();
         assert!(sound_file.exists() && black_dir.exists());
         assert!(
             player.clip_media()[0].contains(&format!("{} from 0", sound_file.display())),
@@ -1135,7 +1163,9 @@ mod tests {
     #[test]
     fn the_last_clip_queues_nothing_after_it() {
         let player = FakePlayer::default();
-        let mut run = GrokTimelineRun::start(three_clips(), None, None, &[], &player).unwrap();
+        let mut run =
+            GrokTimelineRun::start(three_clips(), None, None, &[], PlayState::Playing, &player)
+                .unwrap();
         player.reach_the_end();
         run.tick(&player).unwrap();
         player.reach_the_end();
@@ -1148,7 +1178,9 @@ mod tests {
     #[test]
     fn a_clip_that_ends_between_ticks_loads_the_clip_after_it() {
         let player = FakePlayer::default();
-        let mut run = GrokTimelineRun::start(three_clips(), None, None, &[], &player).unwrap();
+        let mut run =
+            GrokTimelineRun::start(three_clips(), None, None, &[], PlayState::Playing, &player)
+                .unwrap();
         player.reach_the_end();
         player.reach_the_end();
         player.calls();
@@ -1160,7 +1192,9 @@ mod tests {
     #[test]
     fn a_seek_inside_the_playing_clip_seeks_within_its_range() {
         let player = FakePlayer::default();
-        let mut run = GrokTimelineRun::start(three_clips(), None, None, &[], &player).unwrap();
+        let mut run =
+            GrokTimelineRun::start(three_clips(), None, None, &[], PlayState::Playing, &player)
+                .unwrap();
         player.calls();
         run.seek(1.5, &player).unwrap();
         assert_eq!(player.calls(), vec!["seek 1.5"]);
@@ -1169,7 +1203,9 @@ mod tests {
     #[test]
     fn a_seek_into_another_clip_loads_it_and_queues_the_one_after() {
         let player = FakePlayer::default();
-        let mut run = GrokTimelineRun::start(three_clips(), None, None, &[], &player).unwrap();
+        let mut run =
+            GrokTimelineRun::start(three_clips(), None, None, &[], PlayState::Playing, &player)
+                .unwrap();
         player.calls();
         // timeline frame 54 is frame 6 of the second clip
         run.seek(2.25, &player).unwrap();
@@ -1187,24 +1223,32 @@ mod tests {
     #[test]
     fn a_seek_into_another_clip_while_paused_stays_paused() {
         let player = FakePlayer::default();
-        let mut run = GrokTimelineRun::start(three_clips(), None, None, &[], &player).unwrap();
-        player.set_paused(true).unwrap();
+        let mut run =
+            GrokTimelineRun::start(three_clips(), None, None, &[], PlayState::Playing, &player)
+                .unwrap();
+        player.status.borrow_mut().paused = true;
         player.calls();
         run.seek(3.25, &player).unwrap();
         assert_eq!(
             player.calls(),
-            vec![
-                format!("load {THIRD} 100..112"),
-                "paused true".to_string(),
-                "seek 0.25".to_string()
-            ]
+            vec![format!("load {THIRD} 100..112"), "seek 0.25".to_string()]
         );
+        assert!(player.status().unwrap().paused);
+    }
+
+    #[test]
+    fn a_timeline_started_paused_loads_its_first_clip_paused() {
+        let player = FakePlayer::default();
+        GrokTimelineRun::start(three_clips(), None, None, &[], PlayState::Paused, &player).unwrap();
+        assert!(player.status().unwrap().paused);
     }
 
     #[test]
     fn a_relative_seek_moves_from_the_timeline_position() {
         let player = FakePlayer::default();
-        let mut run = GrokTimelineRun::start(three_clips(), None, None, &[], &player).unwrap();
+        let mut run =
+            GrokTimelineRun::start(three_clips(), None, None, &[], PlayState::Playing, &player)
+                .unwrap();
         player.play_to(1.5);
         player.calls();
         run.seek_by(1.0, &player).unwrap();
@@ -1221,7 +1265,9 @@ mod tests {
     #[test]
     fn another_source_on_the_player_ends_the_run() {
         let player = FakePlayer::default();
-        let mut run = GrokTimelineRun::start(three_clips(), None, None, &[], &player).unwrap();
+        let mut run =
+            GrokTimelineRun::start(three_clips(), None, None, &[], PlayState::Playing, &player)
+                .unwrap();
         player
             .load(
                 Path::new("/elsewhere.mxf"),
@@ -1232,6 +1278,7 @@ mod tests {
                     }),
                     ..SourceOptions::default()
                 },
+                PlayState::Playing,
             )
             .unwrap();
         assert!(!run.tick(&player).unwrap());
@@ -1308,6 +1355,7 @@ mod tests {
             Some(PathBuf::from(TIMELINE_SOUND)),
             Some(Path::new(BLACK)),
             rendered,
+            PlayState::Playing,
             &player,
         )
         .unwrap();
@@ -1495,9 +1543,15 @@ mod tests {
 
     fn media_of_every_segment(timeline: Timeline, rendered: &[RenderedStretch]) -> Vec<String> {
         let player = FakePlayer::default();
-        let mut run =
-            GrokTimelineRun::start(timeline, None, Some(Path::new(BLACK)), rendered, &player)
-                .unwrap();
+        let mut run = GrokTimelineRun::start(
+            timeline,
+            None,
+            Some(Path::new(BLACK)),
+            rendered,
+            PlayState::Playing,
+            &player,
+        )
+        .unwrap();
         player.reach_the_end();
         run.tick(&player).unwrap();
         player.clip_media()
@@ -1541,9 +1595,15 @@ mod tests {
             on_layer(OVERLAY, 12, 0, 12, 1),
         ];
         let player = FakePlayer::default();
-        let mut run =
-            GrokTimelineRun::start(timeline_of(clips), None, None, &[rendered(12..24)], &player)
-                .unwrap();
+        let mut run = GrokTimelineRun::start(
+            timeline_of(clips),
+            None,
+            None,
+            &[rendered(12..24)],
+            PlayState::Playing,
+            &player,
+        )
+        .unwrap();
         assert_eq!(
             player.calls(),
             vec![
@@ -1708,6 +1768,7 @@ mod tests {
             &work_dir,
             Some(render),
             &not_cancelled(),
+            PlayState::Playing,
             &player,
         )
         .unwrap();
