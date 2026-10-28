@@ -158,7 +158,10 @@ async function freshEditor(model, reelWord = 'reel', timelinePlayback = { pictur
     },
     seekTimeline: (seconds) => timelineSeeks.push(seconds),
     // the fake preview is paused before every load that keeps the transport
-    loadKeepingTransport: async (load) => transportKeepingLoads.push(await load({ paused: true })),
+    loadKeepingTransport: async (load) => {
+      if (preview.whileReadingPaused) await preview.whileReadingPaused();
+      transportKeepingLoads.push(await load({ paused: true }));
+    },
   });
   if (model) editor.setTimeline(model);
   return { editor, container, changes, seeks, playedTimelines, timelineSeeks, transportKeepingLoads, clipSourceLoadsPaused, timelineLoadsPaused, preview };
@@ -743,6 +746,16 @@ test('with the box unticked a seek goes to the clip source under the playhead, k
   assert.deepEqual(transportKeepingLoads, [true]);
   assert.deepEqual(playedTimelines, []);
   assert.deepEqual(timelineSeeks, []);
+});
+
+test('a seek loads the clip source at the clicked frame though the playhead follows the preview meanwhile', async () => {
+  const harness = await freshEditor(twoClipTimeline());
+  const { editor, container, seeks } = harness;
+  previewingClipSources(harness);
+  harness.preview.whileReadingPaused = () => editor.setPlayhead(10);
+  click(container, { ruler: true }, 50);
+  await settled();
+  assert.deepEqual(seeks, [160]);
 });
 
 test('a seek while the preview shows neither the timeline nor a clip source only moves the playhead', async () => {

@@ -685,7 +685,7 @@ function seeksLoadedTimeline() {
 // while the preview shows anything other than the timeline or a clip's source, a seek moves the playhead only
 function seekToPlayhead() {
   if (seeksLoadedTimeline()) editorOptions.seekTimeline(secondsAtFrame(timeline, playheadFrame));
-  else if (timelineLoaded || editorOptions.previewShowsClipSource()) editorOptions.loadKeepingTransport(loadCheckedPreviewAtPlayhead);
+  else if (timelineLoaded || editorOptions.previewShowsClipSource()) loadCheckedPreviewAtPlayhead();
 }
 
 function selectClip(clipElement, event) {
@@ -707,8 +707,11 @@ export function playsWholeTimeline() {
 }
 
 // the whole timeline, picked up where the playhead is
-export async function playTimelineFromPlayhead({ paused = false } = {}) {
-  const frame = playheadFrame;
+export function playTimelineFromPlayhead() {
+  return playTimelineFrom(playheadFrame, { paused: false });
+}
+
+async function playTimelineFrom(frame, { paused }) {
   const playback = await editorOptions.playTimeline(structuredClone(timeline), { paused });
   if (playback === null) return false;
   timelineLoaded = true;
@@ -719,16 +722,20 @@ export async function playTimelineFromPlayhead({ paused = false } = {}) {
 }
 
 // resolves to whether the preview loaded the timeline or the clip source the checkbox picks
-function loadCheckedPreviewAtPlayhead({ paused }) {
-  if (playsWholeTimelineChecked) return playTimelineFromPlayhead({ paused });
-  return editorOptions.previewClipSource(playheadFrame, { paused });
+function loadCheckedPreviewAtPlayhead() {
+  // the preview's position poll can move the playhead while the paused state is read
+  const frame = playheadFrame;
+  return editorOptions.loadKeepingTransport(({ paused }) => {
+    if (playsWholeTimelineChecked) return playTimelineFrom(frame, { paused });
+    return editorOptions.previewClipSource(frame, { paused });
+  });
 }
 
 async function setPlaysWholeTimeline(checked) {
   playsWholeTimelineChecked = checked;
   render();
   const previewShowsTheOther = checked ? editorOptions.previewShowsClipSource() : timelineLoaded;
-  if (previewShowsTheOther) await editorOptions.loadKeepingTransport(loadCheckedPreviewAtPlayhead);
+  if (previewShowsTheOther) await loadCheckedPreviewAtPlayhead();
 }
 
 function frameAtPointer(element, event, firstFrame, frameCount) {

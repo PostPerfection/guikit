@@ -488,7 +488,7 @@ to `previewClipSource`. Either way a seek loads nothing while the preview shows
 neither the timeline nor a clip's source. Ticking or unticking the box while the
 preview shows the other one swaps it at the playhead. A seek's load and a swap
 both go through `loadKeepingTransport`. `playsWholeTimeline()` returns the box's
-state, and `playTimelineFromPlayhead({ paused })` loads the whole timeline, seeks it to the playhead
+state, and `playTimelineFromPlayhead()` loads the whole timeline, seeks it to the playhead
 and resolves to whether it loaded, for an app's Preview button.
 
 Split reel here (Split segment here with
