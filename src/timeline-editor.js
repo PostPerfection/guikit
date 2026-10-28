@@ -152,7 +152,7 @@ function noSound() {
 
 // only a layer 0 clip from a file with audio has sound of its own
 export function clipDefaultSound(clip) {
-  return clip.layer === 0 && !clip.still ? embeddedSound() : noSound();
+  return clip.layer === 0 && !clip.still && !clip.noAudioStream ? embeddedSound() : noSound();
 }
 
 export function placedStillHoldFrames(model) {
@@ -165,10 +165,11 @@ const PICTURE_CLIP_LENGTHS = {
   still: (model) => ({ still: true, frames: null, outFrame: placedStillHoldFrames(model) }),
 };
 
-export function newPictureClip(model, assetId, sourceLength, start, layer) {
+export function newPictureClip(model, assetId, sourceLength, start, layer, { noAudioStream }) {
   const clip = {
     picture: assetId,
     ...PICTURE_CLIP_LENGTHS[sourceLength.kind](model, sourceLength),
+    ...(noAudioStream ? { noAudioStream } : {}),
     start,
     layer,
     opacity: 1,
@@ -843,7 +844,9 @@ function pictureDropProposal(event, clipIndex, layer) {
 
 async function dropPicture(assetId, layer, { proposedStart, toleranceFrames }) {
   const sourceLength = await editorOptions.sourceLength(assetId);
-  const placed = newPictureClip(timeline, assetId, sourceLength, proposedStart, layer);
+  const placed = newPictureClip(timeline, assetId, sourceLength, proposedStart, layer, {
+    noAudioStream: editorOptions.noAudioStream(assetId),
+  });
   const start = snappedStart(proposedStart, keptFrames(placed), timeline.clips, toleranceFrames);
   tryEdit(() => addClip(timeline, { ...placed, start }));
 }

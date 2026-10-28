@@ -32,6 +32,7 @@ const ASSETS = {
   3: { kind: 'sound', name: 'Music.wav' },
   4: { kind: 'subtitle', name: 'English.srt' },
   5: { kind: 'picture', name: 'Title Card.png', still: true },
+  6: { kind: 'picture', name: 'Silent.mov', frames: 120, noAudioStream: true },
 };
 
 function clip(picture, inFrame, outFrame, start, layer = 0) {
@@ -138,6 +139,7 @@ async function freshEditor(model, reelWord = 'reel', timelinePlayback = { pictur
     assetName: (assetId) => ASSETS[assetId].name,
     assetKind: (assetId) => ASSETS[assetId].kind,
     sourceLength: async (assetId) => (ASSETS[assetId].still ? { kind: 'still' } : { kind: 'counted', frames: ASSETS[assetId].frames }),
+    noAudioStream: (assetId) => ASSETS[assetId].noAudioStream,
     onChange: (changed) => changes.push(changed),
     previewShowsClipSource: () => preview.showsClipSource,
     previewClipSource: async (frame) => {
@@ -277,6 +279,26 @@ test('a clip moved above layer 0 loses its sound, and one moved back down takes 
 test('a still moved down to layer 0 stays silent, since an image carries no sound', () => {
   const model = { ...gappedTimeline(), clips: [stillClip(1, 120, 0, 1)] };
   assert.deepEqual(moveClipTo(model, 0, 0, 0).clips[0].sound, NO_SOUND);
+});
+
+test('a clip of a source with no audio stream gets no sound when dropped, moved down to layer 0 or cleared of its sound', async () => {
+  const { container, changes } = await freshEditor(twoClipTimeline());
+  await drop(container, 6, { track: 'picture', layer: 1, clipIndex: 1 });
+  const dropped = changes.at(-1).clips[2];
+  assert.deepEqual(dropped.sound, NO_SOUND);
+  assert.equal(dropped.noAudioStream, true);
+
+  const silentBase = { ...twoClipTimeline(), clips: [{ ...dropped, start: 320, layer: 0, sound: { kind: 'file', asset: 3 } }], sound: 3 };
+  const editing = await freshEditor(silentBase);
+  clickAction(editing.container, 'clear-sound');
+  assert.deepEqual(editing.changes.at(-1).clips[0].sound, { kind: 'file', asset: 3 });
+  clickAction(editing.container, 'clear-clip-sound', { targetClip: 0 });
+  assert.deepEqual(editing.changes.at(-1).clips[0].sound, NO_SOUND);
+  assert.match(editing.container.innerHTML, /no sound/);
+  assert.doesNotMatch(editing.container.innerHTML, /embedded/);
+
+  const raised = { ...twoClipTimeline(), clips: [{ ...dropped, start: 0 }] };
+  assert.deepEqual(moveClipTo(raised, 0, 0, 0).clips[0].sound, NO_SOUND);
 });
 
 test('setClipOpacity refuses an opacity outside 0 to 1', () => {

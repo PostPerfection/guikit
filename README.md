@@ -377,7 +377,9 @@ the clip starts at. Layer 0 is the picture, with gaps that play black and
 silent, and higher layers composite over it bottom to top at their `opacity`,
 0 to 1. Two clips on one layer never overlap. A clip's `sound.kind` is
 `'embedded'` (the audio inside the picture file), `'file'` (the WAV in
-`sound.asset`) or `'none'`, and a clip above layer 0 is always `'none'`. The
+`sound.asset`) or `'none'`. A clip above layer 0 is always `'none'`, and so is
+a clip with `noAudioStream`, which `withNoAudioStream` sets once the probe
+finds no audio in the source. The
 timeline's `sound` replaces every clip's sound when it is set. This is the GUI
 side of postkit's version 2 `Timeline`, and `timelineWire` in
 `composition-timeline.js` writes it as postkit's JSON.
@@ -392,6 +394,8 @@ supplies. The options are all required:
 - `assetKind(assetId)`, `'picture'`, `'sound'` or `'subtitle'`.
 - `sourceLength(assetId)`, a Promise of the source's length (a frame count or a still), which the app
   probes.
+- `noAudioStream(assetId)`, true when the probe found no audio in the source,
+  so a clip dropped from it has no sound.
 - `onChange(model)`, called with a copy of the whole model after every edit.
 - `previewShowsClipSource()`, true while the preview shows a clip's source.
 - `previewClipSource(timelineFrame)`, a Promise of whether it loaded the source
@@ -532,7 +536,7 @@ with `type` `'video'`, `'audio'` or `'subtitle'`.
   starts of a one-clip timeline.
 - `parseFrameRate('24000/1001')`, `sourceFrameCount(seconds, rate)` and
   `ffprobeVideoInfo(json)`, which reads ffprobe's `-show_streams -show_format`
-  output into `{ width, height, fps, duration, frames, ... }`.
+  output into `{ width, height, fps, duration, frames, hasAudio, ... }`.
 - `TIMELINE_KIND_BY_ASSET_TYPE` maps an asset type to the editor's track.
 
 `test/composition-timeline.test.mjs` covers it.

@@ -48,7 +48,10 @@ export function assetPath(assetById, assetId) {
 // a video follows the last layer 0 clip, a sound or subtitle covers the whole timeline while nothing else does
 export function withImportedAsset(timeline, asset) {
   const placed = structuredClone(timeline);
-  if (asset.type === 'video') placed.clips.push(newPictureClip(placed, asset.id, assetSourceLength(asset), layerEnd(placed, 0), 0));
+  if (asset.type === 'video') {
+    const { noAudioStream } = asset;
+    placed.clips.push(newPictureClip(placed, asset.id, assetSourceLength(asset), layerEnd(placed, 0), 0, { noAudioStream }));
+  }
   if (asset.type === 'audio' && placed.sound === null && !placed.clips.some(clipHasOwnSound)) placed.sound = asset.id;
   if (asset.type === 'subtitle' && placed.subtitle === null && !placed.clips.some(clipHasOwnSubtitle)) {
     placed.subtitle = asset.id;
@@ -95,6 +98,16 @@ export function withProbedStill(timeline, assetId) {
     clip.outFrame = holdFrames;
     if (clip.layer === 0) moveBaseClipsAfter(probed, index, holdFrames);
   });
+  return probed;
+}
+
+export function withNoAudioStream(timeline, assetId) {
+  const probed = structuredClone(timeline);
+  for (const clip of probed.clips) {
+    if (clip.picture !== assetId) continue;
+    clip.noAudioStream = true;
+    if (clip.sound.kind === 'embedded') clip.sound = clipDefaultSound(clip);
+  }
   return probed;
 }
 
@@ -174,6 +187,7 @@ export function ffprobeVideoInfo(probe) {
     colorTransfer: stream.color_transfer,
     colorSpace: stream.color_space,
     bitRate: parseInt(stream.bit_rate ?? probe.format?.bit_rate) || null,
+    hasAudio: probe.streams.some((each) => each.codec_type === 'audio'),
   };
 }
 

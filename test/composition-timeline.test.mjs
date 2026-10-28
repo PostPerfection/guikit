@@ -15,6 +15,7 @@ import {
   timelineWithKnownAssets,
   withFirstClipRate,
   withImportedAsset,
+  withNoAudioStream,
   withProbedFrames,
   withProbedStill,
   withReelStartingClipsPlaced,
@@ -157,7 +158,30 @@ test("ffprobe's video stream gives the size, rate and frame count", () => {
   assert.equal(info.frames, 96);
   assert.equal(info.duration, 4.1);
   assert.equal(info.bitRate, 8000);
+  assert.equal(info.hasAudio, true);
+  assert.equal(ffprobeVideoInfo({ ...probe, streams: probe.streams.slice(1) }).hasAudio, false);
   assert.equal(ffprobeVideoInfo({ streams: [{ codec_type: 'audio' }] }), null);
+});
+
+test('a source probed with no audio stream gives its clips no sound, also after their sound file or the timeline sound is removed', () => {
+  const none = { kind: 'none', asset: null };
+  const imported = withImportedAsset(emptyTimeline([24, 1]), assetById(1));
+  assert.deepEqual(imported.clips[0].sound, { kind: 'embedded', asset: null });
+
+  const probed = withNoAudioStream(imported, 1);
+  assert.deepEqual(probed.clips[0], clip(1, 240, 0, 240, { sound: none, noAudioStream: true }));
+
+  const scored = { ...probed, clips: [{ ...probed.clips[0], sound: { kind: 'file', asset: 4 } }], sound: 6 };
+  const withoutSounds = withoutAsset(withoutAsset(scored, 4), 6);
+  assert.deepEqual(withoutSounds.clips[0].sound, none);
+  assert.equal(withoutSounds.sound, null);
+
+  const unlistedSound = { ...scored, clips: [{ ...scored.clips[0], sound: { kind: 'file', asset: 9 } }] };
+  const restored = timelineWithKnownAssets({ name: 'Main', timeline: unlistedSound }, new Map(ASSETS.map((asset) => [asset.id, asset])), []);
+  assert.deepEqual(restored.clips[0].sound, none);
+
+  const silentAsset = { ...assetById(2), noAudioStream: true };
+  assert.deepEqual(withImportedAsset(emptyTimeline([24, 1]), silentAsset).clips[0], clip(2, 96, 0, 96, { sound: none, noAudioStream: true }));
 });
 
 test('filling the timeline places the first unplaced video only on an empty timeline', () => {
