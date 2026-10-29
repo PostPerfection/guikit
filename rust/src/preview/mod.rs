@@ -76,6 +76,9 @@ const FILTERED_WIDTH_PROPERTY: &str = "video-out-params/w";
 const FILTERED_HEIGHT_PROPERTY: &str = "video-out-params/h";
 // mpv replaces a filter added under a label it already has
 const PICTURE_FILTERS_LABEL: &str = "@picturefilters";
+const HARDWARE_DECODING_PROPERTY: &str = "hwdec";
+const HARDWARE_DECODING_OFF: &str = "no";
+const HARDWARE_DECODING_COPY: &str = "auto-copy-safe";
 const NO_PICTURE_FILTERS_ON_GROK: &str = "the grok player has no picture filter chain";
 /// How many tracks the loaded file has, all types counted together.
 const TRACK_COUNT_PROPERTY: &str = "track-list/count";
@@ -157,6 +160,7 @@ pub struct PreviewPlayer {
     sent_rectangles: Mutex<Option<Vec<OverlayRectangle>>>,
     stereo_output: Mutex<player_controls::StereoMode>,
     picture_filters: Mutex<Option<Vec<String>>>,
+    hardware_decoding_before_filters: Mutex<Option<String>>,
     timeline: Mutex<Option<LoadedTimeline>>,
     timeline_generation: AtomicU64,
     // held through a timeline load, so two renders never write one cache folder
@@ -177,6 +181,7 @@ impl PreviewPlayer {
             sent_rectangles: Mutex::new(None),
             stereo_output: Mutex::new(player_controls::StereoMode::default()),
             picture_filters: Mutex::new(None),
+            hardware_decoding_before_filters: Mutex::new(None),
             timeline: Mutex::new(None),
             timeline_generation: AtomicU64::new(0),
             timeline_load: Mutex::new(()),
@@ -790,12 +795,49 @@ fn set_picture_filters(
     let wanted_graph = filters.as_ref().filter(|chain| !chain.is_empty());
     let installed_graph = installed.as_ref().is_some_and(|chain| !chain.is_empty());
     match wanted_graph {
-        Some(chain) => player.command(&["vf", "add", &picture_filter_entry(chain)])?,
-        None if installed_graph => player.command(&["vf", "remove", PICTURE_FILTERS_LABEL])?,
+        Some(chain) if installed_graph => {
+            player.command(&["vf", "add", &picture_filter_entry(chain)])?
+        }
+        Some(chain) => add_first_picture_filters(player, state, chain)?,
+        None if installed_graph => {
+            player.command(&["vf", "remove", PICTURE_FILTERS_LABEL])?;
+            restore_hardware_decoding(player, state)?;
+        }
         None => {}
     }
     *installed = filters;
     Ok(())
+}
+
+// mpv's lavfi graph takes software frames only
+fn add_first_picture_filters(
+    player: &MpvRenderPlayer,
+    state: &PreviewPlayer,
+    chain: &[String],
+) -> Result<(), String> {
+    let hardware_decoding = player.get_property_string(HARDWARE_DECODING_PROPERTY)?;
+    if hardware_decoding != HARDWARE_DECODING_OFF {
+        player.set_property(HARDWARE_DECODING_PROPERTY, HARDWARE_DECODING_COPY)?;
+    }
+    *state.hardware_decoding_before_filters.lock().unwrap() = Some(hardware_decoding);
+    let added = player.command(&["vf", "add", &picture_filter_entry(chain)]);
+    if added.is_err() {
+        restore_hardware_decoding(player, state)?;
+    }
+    added
+}
+
+fn restore_hardware_decoding(
+    player: &MpvRenderPlayer,
+    state: &PreviewPlayer,
+) -> Result<(), String> {
+    let hardware_decoding = state
+        .hardware_decoding_before_filters
+        .lock()
+        .unwrap()
+        .take()
+        .ok_or("the picture filters went on without recording the hwdec they replaced")?;
+    player.set_property(HARDWARE_DECODING_PROPERTY, &hardware_decoding)
 }
 
 // mpv reads everything between the brackets as one lavfi graph

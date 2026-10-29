@@ -269,10 +269,13 @@ container with its bands. `null` takes the graph off, and loading or stopping
 takes it off too, so the wizard sends it again for each source. While it is set
 the overlays are measured against `video-out-params/w` and `h`, the filtered
 frame, and the crop overlay is not drawn, since the frame has the crop taken
-off already. The grok player has no filter chain and refuses a list.
-`previewTakesPictureFilters(path)` is false for a source grok would play. An app
-registers `preview_set_picture_filters` and `preview_takes_picture_filters`
-beside the other commands.
+off already. The graph takes software frames only, so while it is set a
+hardware decoder runs in its copy mode (`hwdec` `auto-copy-safe`), and the
+`hwdec` value from before comes back when the graph comes off. A player on
+`hwdec` `no` stays as it is. The grok player has no filter chain and refuses a
+list. `previewTakesPictureFilters(path)` is false for a source grok would
+play. An app registers `preview_set_picture_filters` and
+`preview_takes_picture_filters` beside the other commands.
 
 `preview_get_metadata` installs the overlay again whenever the picture or the
 surface has moved under it, since nothing tells the page when either happens: a

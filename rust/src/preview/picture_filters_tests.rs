@@ -5,7 +5,7 @@ use postkit::mpv_render::MpvRenderPlayer;
 use super::end_of_file_tests::{overlay_state, write_clip};
 use super::{
     apply_overlays, player_metadata, set_picture_filters, PreviewCrop, PreviewOverlays, SourceSize,
-    PAUSE_PROPERTY,
+    HARDWARE_DECODING_COPY, HARDWARE_DECODING_OFF, HARDWARE_DECODING_PROPERTY, PAUSE_PROPERTY,
 };
 
 const CLIP_SECONDS: u32 = 10;
@@ -145,4 +145,46 @@ fn the_build_filters_set_the_frame_the_overlays_measure_and_a_load_drops_them() 
         "the filters outlived the source they were set for"
     );
     assert!(state.picture_filters.lock().unwrap().is_none());
+}
+
+// the software renderer decodes in software under any hwdec value
+#[test]
+fn the_build_filters_copy_hardware_decoding_while_they_run() {
+    let directory = tempfile::tempdir().unwrap();
+    let clip = directory.path().join("clip.mp4");
+    write_clip(&clip, CLIP_SECONDS);
+    let player = MpvRenderPlayer::new().unwrap();
+    player.init_software().unwrap();
+    player.load_file(&clip.to_string_lossy()).unwrap();
+    let state = overlay_state(PreviewOverlays::default());
+    let hardware_decoding = || {
+        player
+            .get_property_string(HARDWARE_DECODING_PROPERTY)
+            .unwrap()
+    };
+
+    set_picture_filters(&player, &state, Some(build_filters())).unwrap();
+    assert_eq!(hardware_decoding(), HARDWARE_DECODING_OFF);
+    set_picture_filters(&player, &state, None).unwrap();
+
+    player
+        .set_property(HARDWARE_DECODING_PROPERTY, "auto-safe")
+        .unwrap();
+    set_picture_filters(&player, &state, Some(build_filters())).unwrap();
+    assert_eq!(hardware_decoding(), HARDWARE_DECODING_COPY);
+    set_picture_filters(&player, &state, None).unwrap();
+    assert_eq!(hardware_decoding(), "auto-safe");
+
+    set_picture_filters(&player, &state, Some(build_filters())).unwrap();
+    state.forget_loaded_file(&player).unwrap();
+    assert_eq!(
+        hardware_decoding(),
+        "auto-safe",
+        "a load left the player decoding through the copy mode"
+    );
+    assert!(state
+        .hardware_decoding_before_filters
+        .lock()
+        .unwrap()
+        .is_none());
 }
