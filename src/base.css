@@ -17,6 +17,14 @@
   --properties-width: 280px;
   --bottom-bar-height: 36px;
   --toolbar-height: 44px;
+  --channel-colour-1: #3987e5;
+  --channel-colour-2: #d95926;
+  --channel-colour-3: #199e70;
+  --channel-colour-4: #c98500;
+  --channel-colour-5: #d55181;
+  --channel-colour-6: #008300;
+  --channel-colour-7: #9085e9;
+  --channel-colour-8: #e66767;
   color-scheme: dark;
 }
 
@@ -32,6 +40,14 @@ body.light {
   --text-muted: #5f6368;
   --border: #dadce0;
   --border-light: #e0e0e0;
+  --channel-colour-1: #2a78d6;
+  --channel-colour-2: #eb6834;
+  --channel-colour-3: #1baf7a;
+  --channel-colour-4: #eda100;
+  --channel-colour-5: #e87ba4;
+  --channel-colour-6: #008300;
+  --channel-colour-7: #6250d6;
+  --channel-colour-8: #e34948;
   color-scheme: light;
 }
 
@@ -1818,4 +1834,148 @@ body.preview-fullscreen-hud-hidden * {
 [role="menu"] .access-key {
   text-decoration: underline;
   text-underline-offset: 2px;
+}
+
+/* a fieldset is at least as wide as the matrix table by default */
+.properties-content fieldset {
+  min-width: 0;
+}
+
+/* the loudness buttons wrap under the field together on a narrow panel */
+.input-with-btn.loudness-row {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+.input-with-btn.loudness-row input {
+  flex: 1 1 12em;
+  min-width: 0;
+}
+.loudness-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.loudness-chart {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.loudness-chart-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+/* the surface coloured outline keeps a label readable where the curve crosses it */
+.loudness-chart-label {
+  fill: var(--text-muted);
+  font-size: 10px;
+  paint-order: stroke;
+  stroke: var(--surface);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+.loudness-chart-curve,
+.loudness-chart-channel {
+  fill: none;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.loudness-chart-curve {
+  stroke: var(--text);
+}
+.loudness-curve-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  margin-top: 4px;
+  font-size: 11px;
+}
+.loudness-curve-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text);
+}
+.loudness-curve-swatch {
+  width: 12px;
+  height: 2px;
+}
+.loudness-curve-swatch-mix {
+  background: var(--text);
+}
+.loudness-curve-note {
+  flex-basis: 100%;
+  color: var(--text-muted);
+}
+.loudness-chart-integrated {
+  stroke: var(--text);
+  stroke-width: 1;
+}
+.loudness-chart-target {
+  stroke: var(--text-muted);
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+}
+.loudness-chart-peak {
+  stroke: var(--text);
+  stroke-width: 1;
+  stroke-dasharray: 2 2;
+}
+.loudness-chart-peak-label {
+  fill: var(--text);
+}
+
+/* Audio channel mapping matrix: one row per source channel, its lanes wrapped onto lines of --lanes-per-line */
+/* each input channel's name takes a full-width line above its cells */
+.audio-map table {
+  display: grid;
+  /* 40px holds -12.5 at the panel's 12px input font */
+  grid-template-columns: repeat(var(--lanes-per-line), minmax(40px, 1fr));
+}
+.audio-map thead,
+.audio-map tbody,
+.audio-map tr {
+  display: contents;
+}
+.audio-map th,
+.audio-map td {
+  padding: 2px;
+  text-align: center;
+}
+.audio-map th {
+  color: var(--text-muted);
+  font-weight: normal;
+}
+.audio-map thead th.upmix-lane {
+  color: var(--primary);
+  font-weight: bold;
+}
+.audio-map tbody th {
+  grid-column: 1 / -1;
+  padding-top: 4px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.prop-field .audio-map input[type="text"] {
+  padding: 2px;
+  text-align: center;
+}
+.prop-field .audio-map input:invalid {
+  border-color: var(--error, #dc2626);
+}
+/* the placeholder goes once a typed gain in the row replaces the auto route */
+.prop-field .audio-map input.auto-routed[placeholder] {
+  border-style: dotted;
+}
+.prop-field .audio-map input.auto-routed[placeholder]:not(:focus) {
+  border-color: var(--text-muted);
+}
+.audio-map input.auto-routed::placeholder {
+  color: var(--text-muted);
+}
+.prop-field .audio-map input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }

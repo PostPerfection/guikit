@@ -16,6 +16,8 @@ Shared code for the PostPerfection wizard GUIs, frontend and native.
 - `src/project.js`: project files (save, save as, open), the unsaved draft, the recent list and the window title
 - `src/properties-layout.js`: the project view's Properties width handle, and the preview docked above the assets while that view shows
 - `src/preview-resize.js`: the drag handle that sets the preview's picture height
+- `src/loudness-panel.js` and `src/loudness-chart.js`: the Measure button, the levels it reads and the short-term loudness chart in a wizard's Audio fieldset
+- `src/audio-map-matrix.js`: the channel mapping grid, one row per source channel and its lanes wrapped six to a line
 - `src/base.css`: the shared stylesheet
 - `rust/`: the `guikit` crate, holding the native side of the preview
 - `startup/`: the `guikit-startup` crate, the process setup every desktop app runs first. `prefer_shared_memory_webkit_frames_on_nvidia` sets `WEBKIT_DMABUF_RENDERER_FORCE_SHM=1` on a Linux box with an NVIDIA GPU unless one of WebKit's renderer variables is already set, and `fork_terminal_guard` keeps the terminal usable after the app exits. It depends on libc alone, so an app that links neither the preview nor tauri's unstable features can take it
@@ -633,6 +635,23 @@ dates in local time without seconds, the fit as `valid`, `not yet valid`,
 and a Remove button (`btn-remove`) calling `actions.remove(kdm)`. The "No KDMs"
 placeholder spans all six. `ingestButton` calls `actions.ingest()`, which opens
 the app's own file dialog. Both are followed by `refreshKeys()`, also exported.
+
+## Loudness panel
+
+`initLoudnessPanel({ measureSound, soundMissing })` from `loudness-panel.js`
+reads these elements by id: `prop-loudness` (the target, `lufs=-23` or
+`leqm=85`), `prop-measure-sound`, `prop-gain-to-target`, `prop-audio-gain`,
+`prop-loudness-source`, `prop-loudness-delivered`, `prop-loudness-steps`,
+`prop-loudness-chart` and `prop-loudness-curves`. `measureSound` is an async
+function returning postkit's `SoundMeasurement`. `soundMissing` returns the
+sentence to show when there is no sound to measure, or null.
+
+The chart draws the mix's short-term loudness in the text colour and, under
+it, a checkbox for Mix and one for each channel that is not silent all the way
+through. A ticked channel draws its own curve in `--channel-colour-1` to
+`--channel-colour-8`, given out in channel order to the channels with sound.
+A ninth channel with sound gets no checkbox and is named in a line under the
+others. The ticks are kept by channel name across measurements.
 
 ## Project files
 
