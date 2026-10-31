@@ -1,4 +1,4 @@
-import { loudnessChartSvg } from "./loudness-chart.js";
+import { CHART_WIDTH, chartReadout, chartXAtSeconds, loudnessChartSvg, secondsAtChartX } from "./loudness-chart.js";
 import { escapeHtml } from "./html.js";
 
 const DECIBEL_STEPS = 10;
@@ -73,9 +73,10 @@ function curveCheckbox({ value, label, checked, swatch }) {
     + `${swatch}${escapeHtml(label)}</label>`;
 }
 
-// shownCurves is { mix, labels }, labels holding the channel names ticked
+// shownCurves is { mix, peaks, labels }, labels holding the channel names ticked
 export function curvePickerHtml(choices, shownCurves) {
   const mix = curveCheckbox({ value: "mix", label: "Mix", checked: shownCurves.mix, swatch: '<span class="loudness-curve-swatch loudness-curve-swatch-mix"></span>' });
+  const peaks = curveCheckbox({ value: "peaks", label: "Channel peaks", checked: shownCurves.peaks, swatch: '<span class="loudness-curve-swatch loudness-curve-swatch-peaks"></span>' });
   const channels = choices.filter(({ colourSlot }) => colourSlot !== null).map(({ label, colourSlot }) => curveCheckbox({
     value: label,
     label,
@@ -86,13 +87,24 @@ export function curvePickerHtml(choices, shownCurves) {
   const note = withoutCurve.length
     ? `<span class="loudness-curve-note">No curve for ${escapeHtml(withoutCurve.join(", "))}: eight channels at most.</span>`
     : "";
-  return [mix, ...channels].join("") + note;
+  return [mix, peaks, ...channels].join("") + note;
+}
+
+function drawnCurves(measurement, shownCurves) {
+  return {
+    showMix: shownCurves.mix,
+    showPeaks: shownCurves.peaks,
+    channelCurves: channelChoices(measurement)
+      .filter(({ label, colourSlot }) => colourSlot !== null && shownCurves.labels.has(label)),
+  };
 }
 
 export function deliveredChart(measurement, targetSpec, shownCurves) {
-  const channelCurves = channelChoices(measurement)
-    .filter(({ label, colourSlot }) => colourSlot !== null && shownCurves.labels.has(label));
-  return loudnessChartSvg(measurement.delivered, parseLoudnessTarget(targetSpec), { showMix: shownCurves.mix, channelCurves });
+  return loudnessChartSvg(measurement.delivered, parseLoudnessTarget(targetSpec), drawnCurves(measurement, shownCurves));
+}
+
+export function deliveredReadout(measurement, seconds, shownCurves) {
+  return chartReadout(measurement.delivered, seconds, drawnCurves(measurement, shownCurves));
 }
 
 function loudnessPanelFields() {
@@ -113,7 +125,7 @@ function loudnessPanelFields() {
 export function initLoudnessPanel({ measureSound, soundMissing }) {
   const fields = loudnessPanelFields();
   let lastMeasurement = null;
-  const shownCurves = { mix: true, labels: new Set() };
+  const shownCurves = { mix: true, peaks: false, labels: new Set() };
 
   function refreshGainToTarget() {
     fields.setGain.disabled = gainToReachTarget(fields.target.value, lastMeasurement) === null;
@@ -125,7 +137,32 @@ export function initLoudnessPanel({ measureSound, soundMissing }) {
   }
 
   function drawChart() {
-    fields.chart.innerHTML = deliveredChart(lastMeasurement, fields.target.value, shownCurves);
+    fields.chart.innerHTML = deliveredChart(lastMeasurement, fields.target.value, shownCurves)
+      + '<p class="field-hint loudness-chart-readout"></p>';
+  }
+
+  function showCursor(event) {
+    const svg = fields.chart.querySelector("svg");
+    if (!lastMeasurement || !svg) return;
+    const box = svg.getBoundingClientRect();
+    const seconds = secondsAtChartX(lastMeasurement.delivered, ((event.clientX - box.left) / box.width) * CHART_WIDTH);
+    const cursor = svg.querySelector(".loudness-chart-cursor");
+    const readout = fields.chart.querySelector(".loudness-chart-readout");
+    if (seconds === null) {
+      hideCursor();
+      return;
+    }
+    const x = chartXAtSeconds(lastMeasurement.delivered, seconds);
+    cursor.setAttribute("x1", x);
+    cursor.setAttribute("x2", x);
+    cursor.setAttribute("visibility", "visible");
+    readout.textContent = deliveredReadout(lastMeasurement, seconds, shownCurves);
+  }
+
+  function hideCursor() {
+    fields.chart.querySelector(".loudness-chart-cursor")?.setAttribute("visibility", "hidden");
+    const readout = fields.chart.querySelector(".loudness-chart-readout");
+    if (readout) readout.textContent = "";
   }
 
   fields.measure.addEventListener("click", async () => {
@@ -157,6 +194,7 @@ export function initLoudnessPanel({ measureSound, soundMissing }) {
   fields.curves.addEventListener("change", (event) => {
     const box = event.target;
     if (box.value === "mix") shownCurves.mix = box.checked;
+    else if (box.value === "peaks") shownCurves.peaks = box.checked;
     else if (box.checked) shownCurves.labels.add(box.value);
     else shownCurves.labels.delete(box.value);
     drawChart();
@@ -169,6 +207,8 @@ export function initLoudnessPanel({ measureSound, soundMissing }) {
     markDeliveredStale();
   });
 
+  fields.chart.addEventListener("mousemove", showCursor);
+  fields.chart.addEventListener("mouseleave", hideCursor);
   fields.target.addEventListener("input", refreshGainToTarget);
   fields.gain.addEventListener("input", markDeliveredStale);
 }

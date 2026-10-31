@@ -133,6 +133,7 @@ async function freshEditor(model, reelWord = 'reel', timelinePlayback = { pictur
   const transportKeepingLoads = [];
   const clipSourceLoadsPaused = [];
   const timelineLoadsPaused = [];
+  const pickedSources = [];
   // what the fake preview shows besides the timeline, which the editor tracks itself
   const preview = { showsClipSource: false };
   editor.initTimelineEditor(container, {
@@ -157,6 +158,8 @@ async function freshEditor(model, reelWord = 'reel', timelinePlayback = { pictur
       return timelinePlayback;
     },
     seekTimeline: (seconds) => timelineSeeks.push(seconds),
+    pickClipSource: (assetId) => pickedSources.push(['pick', assetId]),
+    unpickClipSource: (assetId) => pickedSources.push(['unpick', assetId]),
     // the fake preview is paused before every load that keeps the transport
     loadKeepingTransport: async (load) => {
       if (preview.whileReadingPaused) await preview.whileReadingPaused();
@@ -164,7 +167,7 @@ async function freshEditor(model, reelWord = 'reel', timelinePlayback = { pictur
     },
   });
   if (model) editor.setTimeline(model);
-  return { editor, container, changes, seeks, playedTimelines, timelineSeeks, transportKeepingLoads, clipSourceLoadsPaused, timelineLoadsPaused, preview };
+  return { editor, container, changes, seeks, playedTimelines, timelineSeeks, transportKeepingLoads, clipSourceLoadsPaused, timelineLoadsPaused, preview, pickedSources };
 }
 
 function settled() {
@@ -181,8 +184,8 @@ function previewingClipSources({ preview }) {
   preview.showsClipSource = true;
 }
 
-function click(container, target, clientX = 0) {
-  container.handlers.click({ target: fakeTarget(target), clientX });
+function click(container, target, clientX = 0, modifiers = {}) {
+  container.handlers.click({ target: fakeTarget(target), clientX, ...modifiers });
 }
 
 function clickAction(container, action, details = {}) {
@@ -898,4 +901,12 @@ test('a selected still has its In field and Set in button disabled, and Set out 
   editor.setPlayhead(200);
   clickAction(container, 'set-out');
   assert.deepEqual(changes.at(-1).clips[0], stillClip(5, 200, 0));
+});
+
+test('a clip click picks its source for Preview and a ctrl click unpicks it', async () => {
+  const { container, pickedSources } = await freshEditor(twoClipTimeline());
+  click(container, { clipIndex: 1, pictureClip: true });
+  click(container, { clipIndex: 1, pictureClip: true }, 0, { ctrlKey: true });
+  click(container, { clipIndex: 0, pictureClip: true }, 0, { metaKey: true });
+  assert.deepEqual(pickedSources, [['pick', 2], ['unpick', 2], ['unpick', 1]]);
 });

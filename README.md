@@ -16,7 +16,7 @@ Shared code for the PostPerfection wizard GUIs, frontend and native.
 - `src/project.js`: project files (save, save as, open), the unsaved draft, the recent list and the window title
 - `src/properties-layout.js`: the project view's Properties width handle, and the preview docked above the assets while that view shows
 - `src/preview-resize.js`: the drag handle that sets the preview's picture height
-- `src/loudness-panel.js` and `src/loudness-chart.js`: the Measure button, the levels it reads and the short-term loudness chart in a wizard's Audio fieldset
+- `src/loudness-panel.js` and `src/loudness-chart.js`: the Measure button, the levels it reads and the short-term loudness and true peak chart in a wizard's Audio fieldset
 - `src/audio-map-matrix.js`: the channel mapping grid, one row per source channel and its lanes wrapped six to a line
 - `src/base.css`: the shared stylesheet
 - `rust/`: the `guikit` crate, holding the native side of the preview
@@ -415,6 +415,9 @@ supplies. The options are all required:
 - `seekTimeline(seconds)`, a seek in the loaded timeline, awaited after the
   load, `previewSeekOnceLoaded` in both wizards.
 - `loadKeepingTransport(load)`, the export of `preview.js`.
+- `pickClipSource(assetId)` and `unpickClipSource(assetId)`, called with the
+  picture of a clicked clip, the second on a Ctrl or Cmd click, so the app's
+  Preview button can play that source.
 
 `setTimeline(model)` replaces the model and re-renders, for project open and
 restore, and reports nothing. `getTimeline()` returns a copy.
@@ -651,7 +654,11 @@ it, a checkbox for Mix and one for each channel that is not silent all the way
 through. A ticked channel draws its own curve in `--channel-colour-1` to
 `--channel-colour-8`, given out in channel order to the channels with sound.
 A ninth channel with sound gets no checkbox and is named in a line under the
-others. The ticks are kept by channel name across measurements.
+others. The ticks are kept by channel name across measurements. Ticking Channel
+peaks adds a dashed line per ticked channel with its true peak in dBTP for each
+100 ms, on the same axis, which shows a transient or the LFE that loudness
+weighting hides. Pointing at the chart draws a cursor and writes the time and
+the value of every drawn curve under the chart.
 
 ## Project files
 

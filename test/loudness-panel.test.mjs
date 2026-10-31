@@ -100,9 +100,11 @@ test('a silent channel gets no choice and the colours follow the channels with s
 test('channels past the eighth with sound are named as having no curve', () => {
   const choices = channelChoices(measuredChannels([]));
   assert.deepEqual(choices.slice(8).map(({ label, colourSlot }) => [label, colourSlot]), [['BsL', null], ['BsR', null], ['HI', null], ['VI', null]]);
-  const html = curvePickerHtml(choices, { mix: true, labels: new Set(['C']) });
-  assert.equal((html.match(/type="checkbox"/g) ?? []).length, 9);
+  const html = curvePickerHtml(choices, { mix: true, peaks: false, labels: new Set(['C']) });
+  // Mix, Channel peaks and the eight coloured channels
+  assert.equal((html.match(/type="checkbox"/g) ?? []).length, 10);
   assert.match(html, /value="mix" checked/);
+  assert.match(html, /value="peaks">/);
   assert.match(html, /value="C" checked/);
   assert.doesNotMatch(html, /value="L" checked/);
   assert.match(html, /No curve for BsL, BsR, HI, VI: eight channels at most\./);

@@ -1907,6 +1907,22 @@ body.preview-fullscreen-hud-hidden * {
   flex-basis: 100%;
   color: var(--text-muted);
 }
+.loudness-chart-channel-peak {
+  fill: none;
+  stroke-width: 1.2;
+  stroke-dasharray: 3 2;
+}
+.loudness-curve-swatch-peaks {
+  background: repeating-linear-gradient(90deg, var(--text-muted) 0 3px, transparent 3px 5px);
+}
+.loudness-chart-cursor {
+  stroke: var(--text-muted);
+  stroke-width: 0.5;
+}
+/* empty until the pointer is over the chart */
+.loudness-chart-readout {
+  min-height: 1.4em;
+}
 .loudness-chart-integrated {
   stroke: var(--text);
   stroke-width: 1;

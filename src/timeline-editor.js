@@ -691,6 +691,8 @@ function seekToPlayhead() {
 function selectClip(clipElement, event) {
   selectedIndex = Number(clipElement.dataset.clipIndex);
   const clip = timeline.clips[selectedIndex];
+  if (event.ctrlKey || event.metaKey) editorOptions.unpickClipSource(clip.picture);
+  else editorOptions.pickClipSource(clip.picture);
   playheadFrame = frameAtPointer(clipElement, event, clip.start, keptFrames(clip));
   render();
   seekToPlayhead();

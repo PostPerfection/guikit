@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loudnessChartSvg } from '../src/loudness-chart.js';
+import { chartReadout, loudnessChartSvg, secondsAtChartX } from '../src/loudness-chart.js';
 import { parseLoudnessTarget } from '../src/loudness-panel.js';
 
 // 31 values from 3.0 s to 6.0 s, so 3.0 s sits half way along the time axis
@@ -13,6 +13,7 @@ function levels(overrides = {}) {
     truePeakDbtp: -1.234,
     truePeakAtSeconds: 1.5,
     channelShortTermLufs: [Array(31).fill(-20), Array(31).fill(-40)],
+    channelTruePeakDbtp: [Array(60).fill(-6), Array(60).fill(null)],
     ...overrides,
   };
 }
@@ -81,4 +82,38 @@ test('a channel curve draws in its colour slot and the mix can be hidden', () =>
   assert.ok(channel, svg);
   // -40 LUFS sits two thirds of the way down the plot
   assert.match(channel[1], /^M130 86 L/);
+});
+
+test('channel peaks are drawn from 0 s only while ticked', () => {
+  const channelCurves = [{ channel: 0, colourSlot: 1, label: 'L' }];
+  const without = loudnessChartSvg(levels(), null, { showMix: true, channelCurves, showPeaks: false });
+  assert.doesNotMatch(without, /loudness-chart-channel-peak/);
+  const peaks = loudnessChartSvg(levels(), null, { showMix: true, channelCurves, showPeaks: true });
+  assert.match(peaks, /class="loudness-chart-channel-peak" data-channel="0" style="stroke: var\(--channel-colour-1\)" d="M26 24\.8 L/);
+});
+
+test('the pointer position maps to a time only inside the plot', () => {
+  assert.equal(secondsAtChartX(levels(), 130), 3);
+  assert.equal(secondsAtChartX(levels(), 20), null);
+  assert.equal(secondsAtChartX(levels(), 240), null);
+});
+
+test('the readout lists every drawn curve at that time', () => {
+  const channelCurves = [{ channel: 0, colourSlot: 1, label: 'L' }, { channel: 1, colourSlot: 2, label: 'R' }];
+  assert.equal(
+    chartReadout(levels(), 3.04, { showMix: true, channelCurves, showPeaks: true }),
+    '00:03.0: Mix -30.0 LUFS, L -20.0 LUFS, L peak -6.0 dBTP, R -40.0 LUFS, R peak silent',
+  );
+  assert.equal(
+    chartReadout(levels(), 3.04, { showMix: false, channelCurves: channelCurves.slice(0, 1), showPeaks: false }),
+    '00:03.0: L -20.0 LUFS',
+  );
+});
+
+test('before the first short term window the readout has the peaks only', () => {
+  const channelCurves = [{ channel: 0, colourSlot: 1, label: 'L' }];
+  assert.equal(
+    chartReadout(levels(), 1.25, { showMix: true, channelCurves, showPeaks: true }),
+    '00:01.3: L peak -6.0 dBTP',
+  );
 });
