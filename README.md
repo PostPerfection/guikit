@@ -16,6 +16,7 @@ Shared code for the PostPerfection wizard GUIs, frontend and native.
 - `src/project.js`: project files (save, save as, open), the unsaved draft, the recent list and the window title
 - `src/properties-layout.js`: the project view's Properties width handle, and the preview docked above the assets while that view shows
 - `src/preview-resize.js`: the drag handle that sets the preview's picture height
+- `src/preview-target.js`: what the Preview button plays, the asset or package last picked, else the package the last build wrote, and whether the button is on
 - `src/loudness-panel.js` and `src/loudness-chart.js`: the Measure button, the levels it reads and the short-term loudness and true peak chart in a wizard's Audio fieldset
 - `src/audio-map-matrix.js`: the channel mapping grid, one row per source channel and its lanes wrapped six to a line
 - `src/base.css`: the shared stylesheet
