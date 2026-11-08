@@ -684,12 +684,12 @@ body {
 }
 
 /* the open panel takes its room from the picture, so the transport under it stays on screen */
-.preview-panel:has(> .player-controls[open]) {
+.preview-panel:not(.preview-docked):has(> .player-controls[open]) {
   flex-shrink: 1;
   min-height: 0;
 }
 
-.preview-panel:has(> .player-controls[open]) > .preview-surface {
+.preview-panel:not(.preview-docked):has(> .player-controls[open]) > .preview-surface {
   flex-shrink: 1;
   min-height: var(--preview-surface-min-height);
 }
