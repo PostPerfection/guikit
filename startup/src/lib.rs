@@ -108,6 +108,12 @@ const EGL_VENDOR_DIRECTORIES: [&str; 2] =
     ["/etc/glvnd/egl_vendor.d", "/usr/share/glvnd/egl_vendor.d"];
 #[cfg(target_os = "linux")]
 const MESA_EGL_VENDOR_FILE: &str = "50_mesa.json";
+#[cfg(target_os = "linux")]
+const WAYLAND_DISPLAY_VARIABLE: &str = "WAYLAND_DISPLAY";
+#[cfg(target_os = "linux")]
+const GDK_BACKEND_VARIABLE: &str = "GDK_BACKEND";
+#[cfg(target_os = "linux")]
+const X11_GDK_BACKEND: &str = "x11";
 
 // NVIDIA's EGL leaks a sync file per WebKit frame until the page runs out of files and hangs
 #[cfg(target_os = "linux")]
@@ -131,9 +137,13 @@ fn mesa_egl_vendor_file_for_webkit(
 ) -> Option<std::path::PathBuf> {
     let display_on_another_gpu =
         display_gpu_vendor(drm_directory).is_some_and(|vendor| vendor != NVIDIA_PCI_VENDOR_ID);
+    // gtk3 draws its gl areas through glx on x11, so only webkit's page reads the egl vendor
+    let gtk_on_x11 = environment_variable(WAYLAND_DISPLAY_VARIABLE).is_none()
+        || environment_variable(GDK_BACKEND_VARIABLE)
+            .is_some_and(|backend| backend == X11_GDK_BACKEND);
     let applies = environment_variable(EGL_VENDOR_FILES_VARIABLE).is_none()
         && nvidia_gpu_present(drm_directory)
-        && display_on_another_gpu;
+        && (display_on_another_gpu || gtk_on_x11);
     if !applies {
         return None;
     }
@@ -216,18 +226,38 @@ mod tests {
     }
 
     #[test]
-    fn an_nvidia_display_keeps_nvidia_egl() {
+    fn an_nvidia_display_under_wayland_keeps_nvidia_egl() {
         let drm_directory = hybrid_drm_directory(NVIDIA_PCI_VENDOR_ID);
         let vendors = vendor_directory_with_mesa();
+        let environment = HashMap::from([(WAYLAND_DISPLAY_VARIABLE, OsString::from("wayland-0"))]);
 
-        assert_eq!(
-            mesa_egl_vendor_file_for_webkit(
+        let chosen =
+            mesa_egl_vendor_file_for_webkit(drm_directory.path(), &[vendors.path()], |lookup| {
+                environment.get(lookup).cloned()
+            });
+
+        assert_eq!(chosen, None);
+    }
+
+    #[test]
+    fn an_nvidia_display_on_x11_puts_webkit_on_mesa() {
+        let drm_directory = hybrid_drm_directory(NVIDIA_PCI_VENDOR_ID);
+        let vendors = vendor_directory_with_mesa();
+        let mesa = Some(vendors.path().join(MESA_EGL_VENDOR_FILE));
+        let x11_session = HashMap::new();
+        let x11_backend_under_wayland = HashMap::from([
+            (WAYLAND_DISPLAY_VARIABLE, OsString::from("wayland-0")),
+            (GDK_BACKEND_VARIABLE, OsString::from(X11_GDK_BACKEND)),
+        ]);
+
+        for environment in [x11_session, x11_backend_under_wayland] {
+            let chosen = mesa_egl_vendor_file_for_webkit(
                 drm_directory.path(),
                 &[vendors.path()],
-                no_environment
-            ),
-            None
-        );
+                |lookup| environment.get(lookup).cloned(),
+            );
+            assert_eq!(chosen, mesa, "{environment:?}");
+        }
     }
 
     #[test]
