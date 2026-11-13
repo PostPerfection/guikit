@@ -1,7 +1,5 @@
 use std::sync::Mutex;
 
-const AUTOMATIC_ENCODE_THREADS: u32 = 0;
-
 pub struct AcceleratorStatus {
     pub requested: bool,
     pub active: bool,
@@ -44,7 +42,7 @@ pub fn set_gpu(
     registration_url: Option<String>,
     encode_threads: Option<u32>,
 ) -> Result<bool, String> {
-    let encode_threads = encode_threads.unwrap_or(AUTOMATIC_ENCODE_THREADS);
+    let encode_threads = encode_threads.unwrap_or(postkit::grok_encoder::AUTOMATIC_ENCODE_THREADS);
     postkit::grok_encoder::initialize(encode_threads);
     let outcome = if enabled {
         postkit::grok_encoder::use_gpu_with_authentication(
