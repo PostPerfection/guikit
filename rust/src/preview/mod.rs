@@ -84,8 +84,6 @@ const HARDWARE_DECODING_OFF: &str = "no";
 const HARDWARE_DECODING_COPY: &str = "auto-copy-safe";
 #[cfg(feature = "g2g")]
 const NO_DECODE_SCALE_ON_G2G: &str = "the g2g player decodes at full resolution only";
-#[cfg(feature = "g2g")]
-const NO_SUBTITLES_ON_G2G: &str = "the g2g player shows no subtitle files yet";
 const NO_PICTURE_FILTERS_ON_GROK: &str = "the grok player has no picture filter chain";
 /// How many tracks the loaded file has, all types counted together.
 const TRACK_COUNT_PROPERTY: &str = "track-list/count";
@@ -521,15 +519,15 @@ fn load_mpv_timeline(
         state.forget_loaded_file(player.mpv())?;
         let file_options = {
             let mut tracks = state.subtitle_tracks.lock().unwrap();
-            tracks.subtitle.file_path = subtitle.map(|path| path.display().to_string());
+            tracks.subtitle.file_path = subtitle.as_ref().map(|path| path.display().to_string());
             reload_file_options(play_state.is_paused(), None, &tracks)
         };
         #[cfg(feature = "g2g")]
-        if player.chosen_g2g().is_some() {
-            if file_options.contains(SUBTITLE_FILES_OPTION) {
-                eprintln!("[preview] g2g plays the timeline without its subtitles");
-            }
+        if let Some(g2g) = player.chosen_g2g() {
             player.load_g2g(&uri, play_state)?;
+            if let Some(subtitle) = &subtitle {
+                g2g.set_subtitle_file(SubtitleTrackSlot::Subtitle, Some(subtitle))?;
+            }
         } else {
             player.load_mpv_uri(&uri, &file_options)?;
         }
@@ -1079,6 +1077,14 @@ impl SubtitleTrackSlot {
             SubtitleTrackSlot::Caption => GrokSubtitleSlot::Caption,
         }
     }
+
+    #[cfg(feature = "g2g")]
+    fn g2g_slot(self) -> g2g_player::SubtitleSlot {
+        match self {
+            SubtitleTrackSlot::Subtitle => g2g_player::SubtitleSlot::Subtitle,
+            SubtitleTrackSlot::Caption => g2g_player::SubtitleSlot::Caption,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -1112,8 +1118,13 @@ pub fn preview_set_subtitle_file(
             .set_subtitle_file(track.grok_slot(), file_path.as_deref().map(Path::new));
     }
     #[cfg(feature = "g2g")]
-    if player.active_g2g().is_some() {
-        return Err(NO_SUBTITLES_ON_G2G.to_string());
+    if let Some(g2g) = player.active_g2g() {
+        g2g.set_subtitle_file(track, file_path.as_deref().map(Path::new))?;
+        // a file loaded into a slot toggled off earlier shows nothing
+        if file_path.is_some() {
+            g2g.set_subtitle_visibility(track, true);
+        }
+        return Ok(());
     }
     let mpv = player.mpv();
     let mut tracks = state.subtitle_tracks.lock().unwrap();
@@ -1142,8 +1153,9 @@ pub fn preview_set_subtitle_visibility(
         return Ok(());
     }
     #[cfg(feature = "g2g")]
-    if player.active_g2g().is_some() {
-        return Err(NO_SUBTITLES_ON_G2G.to_string());
+    if let Some(g2g) = player.active_g2g() {
+        g2g.set_subtitle_visibility(track, visible);
+        return Ok(());
     }
     set_track_visibility(player.mpv(), track, visible)
 }

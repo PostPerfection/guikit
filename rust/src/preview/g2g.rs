@@ -14,7 +14,7 @@ use postkit::grok_player::GetProcAddressFn;
 
 use super::{
     audio_levels_json, json_bool, json_number, overlay_rectangles, with_extra_fields,
-    OverlayRectangle, PreviewPlayer, SourceSize, AUDIO_LEVELS_FIELD, EOF_FIELD,
+    OverlayRectangle, PreviewPlayer, SourceSize, SubtitleTrackSlot, AUDIO_LEVELS_FIELD, EOF_FIELD,
     HUD_COUNTER_PROPERTIES, SHOWN_FRAME_SIZE_PROPERTIES,
 };
 
@@ -208,6 +208,24 @@ impl G2gPlayer {
         Ok(())
     }
 
+    pub fn set_subtitle_file(
+        &self,
+        track: SubtitleTrackSlot,
+        path: Option<&Path>,
+    ) -> Result<(), String> {
+        self.player
+            .set_subtitle_file(track.g2g_slot(), path)
+            .map_err(|error| {
+                let path = path.expect("only reading a subtitle file fails");
+                format!("cannot read {}: {error}", path.display())
+            })
+    }
+
+    pub fn set_subtitle_visibility(&self, track: SubtitleTrackSlot, visible: bool) {
+        self.player
+            .set_subtitle_visibility(track.g2g_slot(), visible);
+    }
+
     pub fn set_level_meter(&self, enabled: bool) {
         self.player
             .set_level_meter(enabled.then(|| Duration::from_secs_f64(RMS_WINDOW_SECONDS)));
@@ -230,7 +248,8 @@ impl G2gPlayer {
 
     // the speaker names mpv's audio-params/channels gives, numbered when the stream names none
     fn channel_labels(&self, channel_count: usize) -> Vec<String> {
-        let PropertyChange::AudioParams(params) = self.player.property(Property::AudioParams) else {
+        let PropertyChange::AudioParams(params) = self.player.property(Property::AudioParams)
+        else {
             unreachable!("the player answers a property with its own variant");
         };
         let speakers: Vec<_> = params
