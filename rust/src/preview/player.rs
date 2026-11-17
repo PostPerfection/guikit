@@ -7,6 +7,8 @@ use postkit::grok_player::{GetProcAddressFn, GrokPlayer, SourceOptions};
 use postkit::mpv_render::{MpvRenderPlayer, NativeDisplay};
 use serde::Deserialize;
 
+#[cfg(feature = "g2g")]
+use super::g2g::{g2g_chosen, G2gPlayer};
 use super::{yes_or_no, FRAME_BACK_STEP, FRAME_STEP, PAUSE_PROPERTY};
 
 const FORCED_TITLE_PROPERTY: &str = "force-media-title";
@@ -15,6 +17,8 @@ const FORCED_TITLE_PROPERTY: &str = "force-media-title";
 pub enum Backend {
     Mpv,
     Grok,
+    #[cfg(feature = "g2g")]
+    G2g,
 }
 
 impl Backend {
@@ -22,6 +26,8 @@ impl Backend {
         match self {
             Backend::Mpv => "mpv",
             Backend::Grok => "grok",
+            #[cfg(feature = "g2g")]
+            Backend::G2g => "g2g",
         }
     }
 }
@@ -43,6 +49,9 @@ impl PlayState {
 pub struct Player {
     mpv: MpvRenderPlayer,
     grok: GrokPlayer,
+    // plays what mpv would when GUIKIT_PLAYER=g2g
+    #[cfg(feature = "g2g")]
+    g2g: Option<G2gPlayer>,
     backend: Mutex<Backend>,
 }
 
@@ -52,6 +61,8 @@ impl Player {
         Ok(Player {
             mpv: MpvRenderPlayer::new()?,
             grok: GrokPlayer::new(),
+            #[cfg(feature = "g2g")]
+            g2g: g2g_chosen().then(G2gPlayer::new),
             backend: Mutex::new(Backend::Mpv),
         })
     }
@@ -66,6 +77,23 @@ impl Player {
 
     pub fn active(&self) -> Backend {
         *self.backend.lock().unwrap()
+    }
+
+    #[cfg(feature = "g2g")]
+    pub fn active_g2g(&self) -> Option<&G2gPlayer> {
+        self.g2g.as_ref().filter(|_| self.active() == Backend::G2g)
+    }
+
+    #[cfg(feature = "g2g")]
+    pub fn chosen_g2g(&self) -> Option<&G2gPlayer> {
+        self.g2g.as_ref()
+    }
+
+    #[cfg(feature = "g2g")]
+    fn g2g_player(&self) -> &G2gPlayer {
+        self.g2g
+            .as_ref()
+            .expect("the g2g backend is only taken over when g2g was chosen")
     }
 
     // ─── render backends ───────────────────────────────────────────────────
@@ -84,6 +112,10 @@ impl Player {
     ) -> Result<(), String> {
         self.mpv
             .init_opengl(get_proc_address, get_proc_address_ctx, native_display)?;
+        #[cfg(feature = "g2g")]
+        if let Some(g2g) = &self.g2g {
+            g2g.init_opengl(get_proc_address, get_proc_address_ctx);
+        }
         self.grok
             .init_opengl(get_proc_address, get_proc_address_ctx, deep_colour)
     }
@@ -97,12 +129,21 @@ impl Player {
         let callback = Arc::new(callback);
         let for_mpv = Arc::clone(&callback);
         self.mpv.set_update_callback(move || for_mpv());
+        #[cfg(feature = "g2g")]
+        if let Some(g2g) = &self.g2g {
+            let for_g2g = Arc::clone(&callback);
+            g2g.set_update_callback(move || for_g2g());
+        }
         self.grok.set_update_callback(move || callback());
     }
 
     // mpv's half runs whichever backend is on screen, or its core blocks
     pub fn wants_redraw(&self) -> bool {
         let mpv = self.mpv.wants_redraw();
+        #[cfg(feature = "g2g")]
+        if self.g2g.as_ref().is_some_and(G2gPlayer::wants_redraw) {
+            return true;
+        }
         self.grok.wants_redraw() || mpv
     }
 
@@ -122,6 +163,10 @@ impl Player {
                 self.grok
                     .render_opengl(framebuffer, width, height, flip_y, deep_colour)
             }
+            #[cfg(feature = "g2g")]
+            Backend::G2g => self
+                .g2g_player()
+                .render_opengl(framebuffer, width, height, flip_y),
         }
     }
 
@@ -134,6 +179,8 @@ impl Player {
         match self.active() {
             Backend::Mpv => self.mpv.render_software(width, height, target),
             Backend::Grok => self.grok.render_software(width, height, target),
+            #[cfg(feature = "g2g")]
+            Backend::G2g => Err("the g2g player renders through OpenGL only".to_string()),
         }
     }
 
@@ -176,6 +223,10 @@ impl Player {
         if !Path::new(path).exists() {
             return Err(format!("File not found: {path}"));
         }
+        #[cfg(feature = "g2g")]
+        if self.g2g.is_some() {
+            return self.load_g2g(path, play_state);
+        }
         let pause_option = format!("{PAUSE_PROPERTY}={}", yes_or_no(play_state.is_paused()));
         self.load_mpv_uri(path, &pause_option)
     }
@@ -201,6 +252,28 @@ impl Player {
             .command(&["loadfile", uri, "replace", "0", file_options])
     }
 
+    // a timeline's edl:// uri, which mpv takes with its subtitle files in file_options
+    pub fn load_timeline_uri(
+        &self,
+        uri: &str,
+        file_options: &str,
+        play_state: PlayState,
+    ) -> Result<(), String> {
+        #[cfg(feature = "g2g")]
+        if self.g2g.is_some() {
+            return self.load_g2g(uri, play_state);
+        }
+        self.load_mpv_uri(uri, file_options)
+    }
+
+    #[cfg(feature = "g2g")]
+    fn load_g2g(&self, source: &str, play_state: PlayState) -> Result<(), String> {
+        self.take_over(Backend::G2g, source);
+        self.mpv.stop()?;
+        self.grok.stop();
+        self.g2g_player().load(source, play_state.is_paused())
+    }
+
     fn start_grok(
         &self,
         path: &str,
@@ -208,6 +281,7 @@ impl Player {
         play_state: PlayState,
     ) -> Result<(), String> {
         self.take_over(Backend::Grok, path);
+        self.stop_g2g();
         self.mpv.stop()?;
         self.grok.load_with_options(Path::new(path), options)?;
         self.grok.set_paused(play_state.is_paused());
@@ -216,7 +290,15 @@ impl Player {
 
     fn start_mpv(&self, path: &str) {
         self.take_over(Backend::Mpv, path);
+        self.stop_g2g();
         self.grok.stop();
+    }
+
+    fn stop_g2g(&self) {
+        #[cfg(feature = "g2g")]
+        if let Some(g2g) = &self.g2g {
+            g2g.stop();
+        }
     }
 
     fn take_over(&self, backend: Backend, path: &str) {
@@ -226,6 +308,7 @@ impl Player {
 
     pub fn stop(&self) -> Result<(), String> {
         self.grok.stop();
+        self.stop_g2g();
         self.mpv.stop()
     }
 
@@ -238,6 +321,11 @@ impl Player {
                 self.grok.play_pause();
                 Ok(())
             }
+            #[cfg(feature = "g2g")]
+            Backend::G2g => {
+                self.g2g_player().play_pause();
+                Ok(())
+            }
         }
     }
 
@@ -248,6 +336,8 @@ impl Player {
                 self.grok.seek(seconds);
                 Ok(())
             }
+            #[cfg(feature = "g2g")]
+            Backend::G2g => self.g2g_player().seek(seconds),
         }
     }
 
@@ -258,6 +348,8 @@ impl Player {
                 self.grok.seek_absolute(seconds);
                 Ok(())
             }
+            #[cfg(feature = "g2g")]
+            Backend::G2g => self.g2g_player().seek_absolute(seconds),
         }
     }
 
@@ -268,6 +360,8 @@ impl Player {
                 self.grok.frame_step();
                 Ok(())
             }
+            #[cfg(feature = "g2g")]
+            Backend::G2g => self.g2g_player().frame_step(),
         }
     }
 
@@ -278,6 +372,8 @@ impl Player {
                 self.grok.frame_back_step();
                 Ok(())
             }
+            #[cfg(feature = "g2g")]
+            Backend::G2g => self.g2g_player().frame_back_step(),
         }
     }
 
@@ -288,6 +384,11 @@ impl Player {
                 .grok
                 .position()
                 .ok_or_else(|| "nothing is loaded".to_string()),
+            #[cfg(feature = "g2g")]
+            Backend::G2g => self
+                .g2g_player()
+                .position()
+                .ok_or_else(|| "nothing is loaded".to_string()),
         }
     }
 
@@ -296,6 +397,11 @@ impl Player {
             Backend::Mpv => self.mpv.get_duration(),
             Backend::Grok => self
                 .grok
+                .duration()
+                .ok_or_else(|| "nothing is loaded".to_string()),
+            #[cfg(feature = "g2g")]
+            Backend::G2g => self
+                .g2g_player()
                 .duration()
                 .ok_or_else(|| "nothing is loaded".to_string()),
         }

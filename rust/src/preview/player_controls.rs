@@ -296,6 +296,13 @@ pub fn preview_set_display_profile(
 }
 
 pub(super) fn loaded_picture(player: &Player) -> Result<LoadedPicture, String> {
+    #[cfg(feature = "g2g")]
+    if let Some(g2g) = player.active_g2g() {
+        return Ok(match g2g.is_loaded() {
+            true => LoadedPicture::MpvFile,
+            false => LoadedPicture::Nothing,
+        });
+    }
     if player.active() == Backend::Mpv {
         let loaded = player.mpv().get_property_string(MPV_PATH_PROPERTY).is_ok();
         return Ok(if loaded {
@@ -332,6 +339,10 @@ pub fn preview_sound_devices() -> Result<Vec<String>, String> {
 // set on both players, so whichever plays the next load is metered
 pub(super) fn set_level_meter(player: &Player, enabled: bool) -> Result<(), String> {
     player.grok().set_level_meter(enabled);
+    #[cfg(feature = "g2g")]
+    if let Some(g2g) = player.chosen_g2g() {
+        g2g.set_level_meter(enabled);
+    }
     player.mpv().set_level_meter(enabled)
 }
 

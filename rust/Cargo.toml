@@ -20,6 +20,13 @@ postkit = { git = "https://github.com/PostPerfection/postkit.git", features = [
     "icc",
     "libmpv",
 ] }
+g2g-player = { git = "https://github.com/Glass2GlassHQ/glass2glass.git", optional = true, features = [
+    "ffmpeg",
+] }
+
+[features]
+# GUIKIT_PLAYER=g2g then plays what mpv would on g2g-player
+g2g = ["dep:g2g-player"]
 
 [dev-dependencies]
 # the backend selection test writes the J2K MXF the grok player is picked for
@@ -29,6 +36,9 @@ tempfile = "3"
 lcms2 = "6"
 
 [target.'cfg(target_os = "linux")'.dependencies]
+g2g-player = { git = "https://github.com/Glass2GlassHQ/glass2glass.git", optional = true, features = [
+    "alsa",
+] }
 gtk = "0.18"
 async-channel = "2"
 libc = "0.2"

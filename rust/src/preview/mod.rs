@@ -32,6 +32,9 @@ pub use overlays::{
     SourceSize,
 };
 
+#[cfg(feature = "g2g")]
+mod g2g;
+
 mod player;
 pub use player::{Backend, PlayState, Player};
 
@@ -79,6 +82,10 @@ const PICTURE_FILTERS_LABEL: &str = "@picturefilters";
 const HARDWARE_DECODING_PROPERTY: &str = "hwdec";
 const HARDWARE_DECODING_OFF: &str = "no";
 const HARDWARE_DECODING_COPY: &str = "auto-copy-safe";
+#[cfg(feature = "g2g")]
+const NO_DECODE_SCALE_ON_G2G: &str = "the g2g player decodes at full resolution only";
+#[cfg(feature = "g2g")]
+const NO_SUBTITLES_ON_G2G: &str = "the g2g player shows no subtitle files yet";
 const NO_PICTURE_FILTERS_ON_GROK: &str = "the grok player has no picture filter chain";
 /// How many tracks the loaded file has, all types counted together.
 const TRACK_COUNT_PROPERTY: &str = "track-list/count";
@@ -408,6 +415,8 @@ fn load_timeline(
     let used_stretches = options.map(|_| match backend {
         Backend::Grok => TIMELINE_GROK_STRETCHES_DIRECTORY,
         Backend::Mpv => TIMELINE_MPV_STRETCHES_DIRECTORY,
+        #[cfg(feature = "g2g")]
+        Backend::G2g => unreachable!("timeline_backend picks grok or mpv"),
     });
     for stretches in [
         TIMELINE_MPV_STRETCHES_DIRECTORY,
@@ -515,7 +524,11 @@ fn load_mpv_timeline(
             tracks.subtitle.file_path = subtitle.map(|path| path.display().to_string());
             reload_file_options(play_state.is_paused(), None, &tracks)
         };
-        player.load_mpv_uri(&uri, &file_options)?;
+        #[cfg(feature = "g2g")]
+        if player.chosen_g2g().is_some() && file_options.contains(SUBTITLE_FILES_OPTION) {
+            eprintln!("[preview] g2g plays the timeline without its subtitles");
+        }
+        player.load_timeline_uri(&uri, &file_options, play_state)?;
         state.install_timeline(
             TimelinePlayback::Mpv(TimelineFrames::of(timeline)),
             vec![sound_file, subtitle_file, black_file],
@@ -631,6 +644,11 @@ fn poll_metadata(player: &Player, state: &PreviewPlayer) -> Result<String, Strin
 }
 
 fn backend_metadata(player: &Player, state: &PreviewPlayer) -> Result<String, String> {
+    #[cfg(feature = "g2g")]
+    if let Some(g2g) = player.active_g2g() {
+        g2g.apply_overlays(state);
+        return g2g.metadata_json();
+    }
     if player.active() == Backend::Grok {
         apply_grok_overlays(player.grok(), state);
         let levels = audio_levels_json(player.grok().audio_levels())?;
@@ -698,6 +716,11 @@ fn install_overlays(
     state: &PreviewPlayer,
 ) -> Result<(), String> {
     *state.overlays.lock().unwrap() = overlays;
+    #[cfg(feature = "g2g")]
+    if let Some(g2g) = player.active_g2g() {
+        g2g.apply_overlays(state);
+        return Ok(());
+    }
     if player.active() == Backend::Grok {
         apply_grok_overlays(player.grok(), state);
         return Ok(());
@@ -774,6 +797,12 @@ pub fn preview_set_picture_filters(
             Some(_) => Err(NO_PICTURE_FILTERS_ON_GROK.to_string()),
             None => Ok(()),
         };
+    }
+    #[cfg(feature = "g2g")]
+    if let Some(g2g) = player.active_g2g() {
+        g2g.set_picture_filters(filters.as_deref())?;
+        g2g.apply_overlays(&state);
+        return Ok(());
     }
     set_picture_filters(player.mpv(), &state, filters)?;
     apply_overlays(player.mpv(), &state)
@@ -943,6 +972,10 @@ pub fn preview_set_decode_scale(
         player.grok().set_decode_scale(scale.grok_decode_scale());
         return Ok(());
     }
+    #[cfg(feature = "g2g")]
+    if player.active_g2g().is_some() {
+        return Err(NO_DECODE_SCALE_ON_G2G.to_string());
+    }
     let mpv = player.mpv();
     mpv.set_property(DECODER_OPTIONS_PROPERTY, &scale.decoder_option_value())?;
     // lowres is read when the decoder opens, so the file has to be loaded again
@@ -1072,6 +1105,10 @@ pub fn preview_set_subtitle_file(
             .grok()
             .set_subtitle_file(track.grok_slot(), file_path.as_deref().map(Path::new));
     }
+    #[cfg(feature = "g2g")]
+    if player.active_g2g().is_some() {
+        return Err(NO_SUBTITLES_ON_G2G.to_string());
+    }
     let mpv = player.mpv();
     let mut tracks = state.subtitle_tracks.lock().unwrap();
     track.state_in_mut(&mut tracks).file_path = file_path.clone();
@@ -1097,6 +1134,10 @@ pub fn preview_set_subtitle_visibility(
             .grok()
             .set_subtitle_visibility(track.grok_slot(), visible);
         return Ok(());
+    }
+    #[cfg(feature = "g2g")]
+    if player.active_g2g().is_some() {
+        return Err(NO_SUBTITLES_ON_G2G.to_string());
     }
     set_track_visibility(player.mpv(), track, visible)
 }

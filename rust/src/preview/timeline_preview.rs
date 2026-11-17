@@ -638,7 +638,7 @@ impl PreviewPlayer {
         };
         Ok(Some(match &loaded.playback {
             TimelinePlayback::Mpv(frames) => {
-                let seconds = player.mpv().get_position().ok();
+                let seconds = player.position().ok();
                 TimelinePosition {
                     seconds,
                     clip_index: seconds
