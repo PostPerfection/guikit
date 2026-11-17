@@ -215,16 +215,34 @@ impl G2gPlayer {
 
     fn audio_levels(&self) -> Option<Vec<ChannelLevel>> {
         let levels = self.player.audio_levels()?;
-        let channels = levels.peak_db.iter().zip(&levels.rms_db).enumerate();
+        let labels = self.channel_labels(levels.peak_db.len());
+        let channels = levels.peak_db.iter().zip(&levels.rms_db).zip(labels);
         Some(
             channels
-                .map(|(index, (&peak, &rms))| ChannelLevel {
-                    label: numbered_channel_label(index),
+                .map(|((&peak, &rms), label)| ChannelLevel {
+                    label,
                     peak_dbfs: at_least_the_floor(peak),
                     rms_dbfs: at_least_the_floor(rms),
                 })
                 .collect(),
         )
+    }
+
+    // the speaker names mpv's audio-params/channels gives, numbered when the stream names none
+    fn channel_labels(&self, channel_count: usize) -> Vec<String> {
+        let PropertyChange::AudioParams(params) = self.player.property(Property::AudioParams) else {
+            unreachable!("the player answers a property with its own variant");
+        };
+        let speakers: Vec<_> = params
+            .map(|params| params.channel_layout.positions().collect())
+            .unwrap_or_default();
+        if speakers.len() != channel_count {
+            return (0..channel_count).map(numbered_channel_label).collect();
+        }
+        speakers
+            .into_iter()
+            .map(|speaker| speaker.ffmpeg_name().to_string())
+            .collect()
     }
 
     pub(super) fn apply_overlays(&self, state: &PreviewPlayer) {
