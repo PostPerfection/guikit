@@ -525,7 +525,7 @@ fn load_mpv_timeline(
         };
         #[cfg(feature = "g2g")]
         if let Some(g2g) = player.chosen_g2g() {
-            player.load_g2g(&uri, play_state)?;
+            player.load_g2g(&uri, None, play_state)?;
             if let Some(subtitle) = &subtitle {
                 g2g.set_subtitle_file(SubtitleTrackSlot::Subtitle, Some(subtitle))?;
             }

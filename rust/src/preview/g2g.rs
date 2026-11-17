@@ -31,11 +31,17 @@ struct RenderOnGlThread(GlRenderContext);
 // SAFETY: the hosts create the render context and render it on their GL thread, and no other thread touches it
 unsafe impl Send for RenderOnGlThread {}
 
+struct LoadedSource {
+    // a path or an edl:// uri
+    source: String,
+    // mpv shows a forced composition title in place of the filename
+    title: Option<String>,
+}
+
 pub struct G2gPlayer {
     player: Player,
     render: Mutex<Option<RenderOnGlThread>>,
-    // the path or edl:// uri playing, None after a stop
-    loaded: Mutex<Option<String>>,
+    loaded: Mutex<Option<LoadedSource>>,
     sent_overlay: Mutex<Vec<OverlayRectangle>>,
     picture_filters_set: Mutex<bool>,
 }
@@ -93,7 +99,7 @@ impl G2gPlayer {
         unsafe { render.0.render(target) }.map_err(|error| format!("{error:?}"))
     }
 
-    pub fn load(&self, source: &str, paused: bool) -> Result<(), String> {
+    pub fn load(&self, source: &str, title: Option<&str>, paused: bool) -> Result<(), String> {
         let uri = match source.starts_with(EDL_SCHEME) {
             true => source.to_string(),
             false => {
@@ -110,7 +116,10 @@ impl G2gPlayer {
         self.player
             .load(Media::Uri(&uri), options)
             .map_err(|error| error.to_string())?;
-        *self.loaded.lock().unwrap() = Some(source.to_string());
+        *self.loaded.lock().unwrap() = Some(LoadedSource {
+            source: source.to_string(),
+            title: title.map(str::to_string),
+        });
         Ok(())
     }
 
@@ -314,14 +323,15 @@ impl G2gPlayer {
 
     pub(super) fn metadata_json(&self) -> Result<String, String> {
         self.print_failures();
-        let filename = self
-            .loaded
-            .lock()
-            .unwrap()
-            .as_deref()
-            .filter(|source| !source.starts_with(EDL_SCHEME))
-            .and_then(|path| Path::new(path).file_name())
-            .map(|name| name.to_string_lossy().into_owned());
+        let filename = self.loaded.lock().unwrap().as_ref().and_then(|loaded| {
+            let file_name = || {
+                Some(&loaded.source)
+                    .filter(|source| !source.starts_with(EDL_SCHEME))
+                    .and_then(|path| Path::new(path).file_name())
+                    .map(|name| name.to_string_lossy().into_owned())
+            };
+            loaded.title.clone().or_else(file_name)
+        });
         let base = serde_json::json!({
             "position": self.position(),
             "duration": self.duration(),

@@ -225,7 +225,7 @@ impl Player {
         }
         #[cfg(feature = "g2g")]
         if self.g2g.is_some() {
-            return self.load_g2g(path, play_state);
+            return self.load_g2g(path, None, play_state);
         }
         let pause_option = format!("{PAUSE_PROPERTY}={}", yes_or_no(play_state.is_paused()));
         self.load_mpv_uri(path, &pause_option)
@@ -240,6 +240,11 @@ impl Player {
             return self.start_grok(path, options, PlayState::Playing);
         }
         refuse_options_for_mpv(path, &options)?;
+        #[cfg(feature = "g2g")]
+        if self.g2g.is_some() {
+            let source = postkit::mpv::package_source(Path::new(path))?;
+            return self.load_g2g(&source.uri, source.title.as_deref(), PlayState::Playing);
+        }
         self.start_mpv(path);
         self.mpv.load_package_dir(path)
     }
@@ -253,11 +258,17 @@ impl Player {
     }
 
     #[cfg(feature = "g2g")]
-    pub fn load_g2g(&self, source: &str, play_state: PlayState) -> Result<(), String> {
+    pub fn load_g2g(
+        &self,
+        source: &str,
+        title: Option<&str>,
+        play_state: PlayState,
+    ) -> Result<(), String> {
         self.take_over(Backend::G2g, source);
         self.mpv.stop()?;
         self.grok.stop();
-        self.g2g_player().load(source, play_state.is_paused())
+        self.g2g_player()
+            .load(source, title, play_state.is_paused())
     }
 
     fn start_grok(
