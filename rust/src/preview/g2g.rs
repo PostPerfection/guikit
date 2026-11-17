@@ -14,8 +14,8 @@ use postkit::grok_player::GetProcAddressFn;
 
 use super::{
     audio_levels_json, json_bool, json_number, overlay_rectangles, with_extra_fields,
-    OverlayRectangle, PreviewPlayer, SourceSize, SubtitleTrackSlot, AUDIO_LEVELS_FIELD, EOF_FIELD,
-    HUD_COUNTER_PROPERTIES, SHOWN_FRAME_SIZE_PROPERTIES,
+    OverlayRectangle, PreviewPlayer, SourceSize, SubtitleTrackSlot, AUDIO_LEVELS_FIELD,
+    CONTAINER_FPS_FIELD, EOF_FIELD, HUD_COUNTER_PROPERTIES, SHOWN_FRAME_SIZE_PROPERTIES,
 };
 
 const PLAYER_CHOICE_VARIABLE: &str = "GUIKIT_PLAYER";
@@ -187,6 +187,13 @@ impl G2gPlayer {
         reached
     }
 
+    fn container_fps(&self) -> Option<f64> {
+        let PropertyChange::ContainerFps(fps) = self.player.property(Property::ContainerFps) else {
+            unreachable!("g2g-player answers ContainerFps with ContainerFps");
+        };
+        fps
+    }
+
     fn shown_picture_size(&self) -> Option<VideoSize> {
         let PropertyChange::VideoOutParams(size) = self.player.property(Property::VideoOutParams)
         else {
@@ -307,7 +314,6 @@ impl G2gPlayer {
 
     pub(super) fn metadata_json(&self) -> Result<String, String> {
         self.print_failures();
-        // g2g-player counts none of mpv's HUD counters
         let filename = self
             .loaded
             .lock()
@@ -323,9 +329,14 @@ impl G2gPlayer {
             "filename": filename,
         })
         .to_string();
+        // g2g-player reports the frame rate and none of mpv's other HUD counters
+        let container_fps = self.container_fps();
         let mut fields: Vec<(&str, String)> = HUD_COUNTER_PROPERTIES
             .iter()
-            .map(|(field, _)| (*field, json_number(None)))
+            .map(|(field, _)| {
+                let value = container_fps.filter(|_| *field == CONTAINER_FPS_FIELD);
+                (*field, json_number(value))
+            })
             .collect();
         let shown = self.shown_picture_size();
         let [(width_field, _), (height_field, _)] = SHOWN_FRAME_SIZE_PROPERTIES;

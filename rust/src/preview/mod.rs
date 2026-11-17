@@ -98,13 +98,14 @@ const SUBTITLE_FILE_SEPARATOR: &str = ":";
 /// the slot chosen for it rather than in whichever one mpv prefers.
 const ADD_TRACK_UNSELECTED: &str = "auto";
 
+const CONTAINER_FPS_FIELD: &str = "container_fps";
 /// The HUD fields added to the metadata poll, and the mpv property behind each.
 const HUD_COUNTER_PROPERTIES: [(&str, &str); 5] = [
     ("dropped_frames", "frame-drop-count"),
     ("delayed_frames", "vo-delayed-frame-count"),
     ("cache_seconds", "demuxer-cache-duration"),
     ("decoder_fps", "estimated-vf-fps"),
-    ("container_fps", "container-fps"),
+    (CONTAINER_FPS_FIELD, "container-fps"),
 ];
 
 /// The metadata field the page's playlist advances on, and the mpv property
