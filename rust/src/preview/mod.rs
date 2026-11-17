@@ -525,10 +525,16 @@ fn load_mpv_timeline(
             reload_file_options(play_state.is_paused(), None, &tracks)
         };
         #[cfg(feature = "g2g")]
-        if player.chosen_g2g().is_some() && file_options.contains(SUBTITLE_FILES_OPTION) {
-            eprintln!("[preview] g2g plays the timeline without its subtitles");
+        if player.chosen_g2g().is_some() {
+            if file_options.contains(SUBTITLE_FILES_OPTION) {
+                eprintln!("[preview] g2g plays the timeline without its subtitles");
+            }
+            player.load_g2g(&uri, play_state)?;
+        } else {
+            player.load_mpv_uri(&uri, &file_options)?;
         }
-        player.load_timeline_uri(&uri, &file_options, play_state)?;
+        #[cfg(not(feature = "g2g"))]
+        player.load_mpv_uri(&uri, &file_options)?;
         state.install_timeline(
             TimelinePlayback::Mpv(TimelineFrames::of(timeline)),
             vec![sound_file, subtitle_file, black_file],

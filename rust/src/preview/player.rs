@@ -252,22 +252,8 @@ impl Player {
             .command(&["loadfile", uri, "replace", "0", file_options])
     }
 
-    // a timeline's edl:// uri, which mpv takes with its subtitle files in file_options
-    pub fn load_timeline_uri(
-        &self,
-        uri: &str,
-        file_options: &str,
-        play_state: PlayState,
-    ) -> Result<(), String> {
-        #[cfg(feature = "g2g")]
-        if self.g2g.is_some() {
-            return self.load_g2g(uri, play_state);
-        }
-        self.load_mpv_uri(uri, file_options)
-    }
-
     #[cfg(feature = "g2g")]
-    fn load_g2g(&self, source: &str, play_state: PlayState) -> Result<(), String> {
+    pub fn load_g2g(&self, source: &str, play_state: PlayState) -> Result<(), String> {
         self.take_over(Backend::G2g, source);
         self.mpv.stop()?;
         self.grok.stop();
