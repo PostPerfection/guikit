@@ -82,8 +82,6 @@ const PICTURE_FILTERS_LABEL: &str = "@picturefilters";
 const HARDWARE_DECODING_PROPERTY: &str = "hwdec";
 const HARDWARE_DECODING_OFF: &str = "no";
 const HARDWARE_DECODING_COPY: &str = "auto-copy-safe";
-#[cfg(feature = "g2g")]
-const NO_DECODE_SCALE_ON_G2G: &str = "the g2g player decodes at full resolution only";
 const NO_PICTURE_FILTERS_ON_GROK: &str = "the grok player has no picture filter chain";
 /// How many tracks the loaded file has, all types counted together.
 const TRACK_COUNT_PROPERTY: &str = "track-list/count";
@@ -956,6 +954,15 @@ impl DecodeScale {
         f64::from(1u32 << self.lowres_level())
     }
 
+    #[cfg(feature = "g2g")]
+    fn g2g_lowres(self) -> g2g_player::Lowres {
+        match self {
+            DecodeScale::Full => g2g_player::Lowres::Full,
+            DecodeScale::Half => g2g_player::Lowres::Half,
+            DecodeScale::Quarter => g2g_player::Lowres::Quarter,
+        }
+    }
+
     // grok drops the same number of DWT levels lowres names
     fn grok_decode_scale(self) -> GrokDecodeScale {
         match self {
@@ -978,8 +985,8 @@ pub fn preview_set_decode_scale(
         return Ok(());
     }
     #[cfg(feature = "g2g")]
-    if player.active_g2g().is_some() {
-        return Err(NO_DECODE_SCALE_ON_G2G.to_string());
+    if let Some(g2g) = player.active_g2g() {
+        return g2g.set_decode_scale(scale.g2g_lowres());
     }
     let mpv = player.mpv();
     mpv.set_property(DECODER_OPTIONS_PROPERTY, &scale.decoder_option_value())?;

@@ -4,7 +4,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use g2g_player::{
-    EndFile, Event, GlRenderContext, GlTarget, LoadOptions, Media,
+    EndFile, Event, GlRenderContext, GlTarget, LoadOptions, Lowres, Media,
     OverlayRectangle as G2gOverlayRectangle, Player, Property, PropertyChange, VideoSize,
 };
 use postkit::audio_levels::{
@@ -14,8 +14,9 @@ use postkit::grok_player::GetProcAddressFn;
 
 use super::{
     audio_levels_json, json_bool, json_number, overlay_rectangles, with_extra_fields,
-    OverlayRectangle, PreviewPlayer, SourceSize, SubtitleTrackSlot, AUDIO_LEVELS_FIELD,
-    CONTAINER_FPS_FIELD, EOF_FIELD, HUD_COUNTER_PROPERTIES, SHOWN_FRAME_SIZE_PROPERTIES,
+    OverlayRectangle, PreviewPlayer, SourceSize, SubtitleTrackSlot, SubtitleTracks,
+    AUDIO_LEVELS_FIELD, CONTAINER_FPS_FIELD, EOF_FIELD, HUD_COUNTER_PROPERTIES,
+    SHOWN_FRAME_SIZE_PROPERTIES, SUBTITLE_TRACK_SLOTS,
 };
 
 const PLAYER_CHOICE_VARIABLE: &str = "GUIKIT_PLAYER";
@@ -44,6 +45,36 @@ pub struct G2gPlayer {
     loaded: Mutex<Option<LoadedSource>>,
     sent_overlay: Mutex<Vec<OverlayRectangle>>,
     picture_filters_set: Mutex<bool>,
+    // g2g-player drops its subtitle files on every load, as mpv does
+    subtitle_files: Mutex<SubtitleTracks>,
+}
+
+fn source_uri(source: &str) -> Result<String, String> {
+    if source.starts_with(EDL_SCHEME) {
+        return Ok(source.to_string());
+    }
+    let path = std::path::absolute(source).map_err(|error| error.to_string())?;
+    Ok(format!("file://{}", path.display()))
+}
+
+// a picture measured as `measured` and shown at `shown` pixels
+fn shown_rectangle(
+    rectangle: &OverlayRectangle,
+    measured: VideoSize,
+    shown: VideoSize,
+) -> OverlayRectangle {
+    let horizontal = f64::from(shown.width) / f64::from(measured.width);
+    let vertical = f64::from(shown.height) / f64::from(measured.height);
+    let scaled = |value: i64, scale: f64| (value as f64 * scale).round() as i64;
+    let x = scaled(rectangle.x, horizontal);
+    let y = scaled(rectangle.y, vertical);
+    OverlayRectangle {
+        x,
+        y,
+        width: scaled(rectangle.x + rectangle.width, horizontal) - x,
+        height: scaled(rectangle.y + rectangle.height, vertical) - y,
+        ..*rectangle
+    }
 }
 
 impl G2gPlayer {
@@ -54,6 +85,7 @@ impl G2gPlayer {
             loaded: Mutex::new(None),
             sent_overlay: Mutex::new(Vec::new()),
             picture_filters_set: Mutex::new(false),
+            subtitle_files: Mutex::new(SubtitleTracks::default()),
         }
     }
 
@@ -106,13 +138,7 @@ impl G2gPlayer {
     }
 
     pub fn load(&self, source: &str, title: Option<&str>, paused: bool) -> Result<(), String> {
-        let uri = match source.starts_with(EDL_SCHEME) {
-            true => source.to_string(),
-            false => {
-                let path = std::path::absolute(source).map_err(|error| error.to_string())?;
-                format!("file://{}", path.display())
-            }
-        };
+        let uri = source_uri(source)?;
         // guikit takes mpv's filters off before every load
         self.set_picture_filters(None)?;
         let options = LoadOptions {
@@ -122,6 +148,7 @@ impl G2gPlayer {
         self.player
             .load(Media::Uri(&uri), options)
             .map_err(|error| error.to_string())?;
+        *self.subtitle_files.lock().unwrap() = SubtitleTracks::default();
         *self.loaded.lock().unwrap() = Some(LoadedSource {
             source: source.to_string(),
             title: title.map(str::to_string),
@@ -129,8 +156,36 @@ impl G2gPlayer {
         Ok(())
     }
 
+    // the file loads again at its position, as mpv's lowres is read when the decoder opens
+    pub fn set_decode_scale(&self, lowres: Lowres) -> Result<(), String> {
+        self.player.set_lowres(lowres);
+        let loaded = self.loaded.lock().unwrap();
+        let Some(loaded) = loaded.as_ref() else {
+            return Ok(());
+        };
+        // g2g-player decodes a timeline's clips inside edlsrc, which lowres does not reach
+        if loaded.source.starts_with(EDL_SCHEME) {
+            return Ok(());
+        }
+        let options = LoadOptions {
+            start: self.position().map(Duration::from_secs_f64),
+            pause: Some(self.paused()),
+        };
+        self.player
+            .load(Media::Uri(&source_uri(&loaded.source)?), options)
+            .map_err(|error| error.to_string())?;
+        let subtitle_files = std::mem::take(&mut *self.subtitle_files.lock().unwrap());
+        for track in SUBTITLE_TRACK_SLOTS {
+            if let Some(path) = &track.state_in(&subtitle_files).file_path {
+                self.set_subtitle_file(track, Some(Path::new(path)))?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn stop(&self) {
         self.player.stop();
+        *self.subtitle_files.lock().unwrap() = SubtitleTracks::default();
         *self.loaded.lock().unwrap() = None;
         self.set_picture_filters(None)
             .expect("an empty filter chain is always accepted");
@@ -209,6 +264,13 @@ impl G2gPlayer {
         fps
     }
 
+    fn demux_size(&self) -> Option<VideoSize> {
+        let PropertyChange::DemuxSize(size) = self.player.property(Property::DemuxSize) else {
+            unreachable!("g2g-player answers DemuxSize with DemuxSize");
+        };
+        size
+    }
+
     fn shown_picture_size(&self) -> Option<VideoSize> {
         let PropertyChange::VideoOutParams(size) = self.player.property(Property::VideoOutParams)
         else {
@@ -240,7 +302,11 @@ impl G2gPlayer {
             .map_err(|error| {
                 let path = path.expect("only reading a subtitle file fails");
                 format!("cannot read {}: {error}", path.display())
-            })
+            })?;
+        track
+            .state_in_mut(&mut self.subtitle_files.lock().unwrap())
+            .file_path = path.map(|path| path.display().to_string());
+        Ok(())
     }
 
     pub fn set_subtitle_visibility(&self, track: SubtitleTrackSlot, visible: bool) {
@@ -292,13 +358,22 @@ impl G2gPlayer {
         if *self.picture_filters_set.lock().unwrap() {
             overlays.crop_visible = false;
         }
-        let Some(size) = self.shown_picture_size() else {
+        let Some(shown) = self.shown_picture_size() else {
             return;
         };
-        let Some(source) = SourceSize::new(f64::from(size.width), f64::from(size.height)) else {
+        // overlays name source pixels, which a decode scale shrinks only in the unfiltered frame
+        let measured = match *self.picture_filters_set.lock().unwrap() {
+            true => shown,
+            false => self.demux_size().unwrap_or(shown),
+        };
+        let Some(source) = SourceSize::new(f64::from(measured.width), f64::from(measured.height))
+        else {
             return;
         };
-        let wanted = overlay_rectangles(&overlays, source);
+        let wanted: Vec<OverlayRectangle> = overlay_rectangles(&overlays, source)
+            .iter()
+            .map(|rectangle| shown_rectangle(rectangle, measured, shown))
+            .collect();
         let mut sent = self.sent_overlay.lock().unwrap();
         if *sent == wanted {
             return;
@@ -367,5 +442,73 @@ impl G2gPlayer {
         fields.push((EOF_FIELD, json_bool(Some(self.end_of_file()))));
         fields.push((AUDIO_LEVELS_FIELD, audio_levels_json(self.audio_levels())?));
         with_extra_fields(&base, &fields)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::end_of_file_tests::overlay_state;
+    use super::super::grok_fixture::wait_until;
+    use super::super::{ContentRectangle, DecodeScale, PreviewOverlays};
+    use super::*;
+
+    const CLIP_WIDTH: u32 = 320;
+    const CLIP_HEIGHT: u32 = 180;
+
+    // libavcodec's MPEG-2 decoder implements lowres
+    fn write_mpeg2_clip(path: &Path) {
+        let out = std::process::Command::new("ffmpeg")
+            .args(["-v", "error", "-y", "-f", "lavfi", "-i"])
+            .arg(format!(
+                "color=c=black:size={CLIP_WIDTH}x{CLIP_HEIGHT}:rate=24:duration=2"
+            ))
+            .args(["-c:v", "mpeg2video"])
+            .arg(path)
+            .output()
+            .expect("ffmpeg");
+        assert!(
+            out.status.success(),
+            "ffmpeg failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    #[test]
+    fn a_half_decode_scale_keeps_a_source_pixel_outline_on_the_shown_picture() {
+        let directory = tempfile::tempdir().unwrap();
+        let clip = directory.path().join("black.mpg");
+        write_mpeg2_clip(&clip);
+        let player = G2gPlayer::new();
+        player.discard_sound();
+        player.load(&clip.to_string_lossy(), None, true).unwrap();
+        player
+            .set_decode_scale(DecodeScale::Half.g2g_lowres())
+            .unwrap();
+        let half = VideoSize {
+            width: CLIP_WIDTH / 2,
+            height: CLIP_HEIGHT / 2,
+        };
+        wait_until("the picture shown at half size", || {
+            player.shown_picture_size() == Some(half)
+        });
+
+        // the whole picture, named in source pixels
+        let state = overlay_state(PreviewOverlays {
+            content_outline: Some(ContentRectangle {
+                x: 0,
+                y: 0,
+                width: CLIP_WIDTH,
+                height: CLIP_HEIGHT,
+            }),
+            ..Default::default()
+        });
+        player.apply_overlays(&state);
+        let sent = player.sent_overlay.lock().unwrap();
+        let right = sent.iter().map(|r| r.x + r.width).max().unwrap();
+        let bottom = sent.iter().map(|r| r.y + r.height).max().unwrap();
+        assert_eq!(
+            (right, bottom),
+            (i64::from(half.width), i64::from(half.height))
+        );
     }
 }
