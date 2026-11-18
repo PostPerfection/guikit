@@ -57,6 +57,12 @@ impl G2gPlayer {
         }
     }
 
+    #[cfg(test)]
+    pub(super) fn discard_sound(&self) {
+        self.player
+            .set_sound_output(g2g_player::SoundOutput::Discard);
+    }
+
     pub fn init_opengl(&self, get_proc_address: GetProcAddressFn, context: *mut c_void) {
         let resolve = move |name: &str| {
             let name = CString::new(name).expect("GL entry point names hold no NUL");

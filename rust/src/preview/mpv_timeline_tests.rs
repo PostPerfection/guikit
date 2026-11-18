@@ -21,16 +21,16 @@ const CLIP_FPS: u32 = 24;
 // half a second of the first clip, then all of the second
 const FIRST_CLIP_FRAMES: (u64, u64) = (6, 18);
 const SECOND_CLIP_FRAMES: (u64, u64) = (0, 24);
-const TIMELINE_SECONDS: f64 = 1.5;
-const FRAME_SECONDS: f64 = 1.0 / CLIP_FPS as f64;
-const INTO_THE_SECOND_CLIP_SECONDS: f64 = 0.6;
+pub(super) const TIMELINE_SECONDS: f64 = 1.5;
+pub(super) const FRAME_SECONDS: f64 = 1.0 / CLIP_FPS as f64;
+pub(super) const INTO_THE_SECOND_CLIP_SECONDS: f64 = 0.6;
 const PICTURE_AND_SOUND_TRACKS: i64 = 2;
 const CLIP_SUBTITLES: &str = "1\n00:00:00,000 --> 00:00:01,000\nhello\n";
 // a quarter second of the first clip, two seconds of black, then all of the second
 const GAPPED_FIRST_CLIP_FRAMES: (u64, u64) = (0, 6);
 const GAPPED_SECOND_CLIP_START: u64 = 54;
-const GAPPED_TIMELINE_SECONDS: f64 = 3.25;
-const INTO_THE_GAP_SECONDS: f64 = 0.5;
+pub(super) const GAPPED_TIMELINE_SECONDS: f64 = 3.25;
+pub(super) const INTO_THE_GAP_SECONDS: f64 = 0.5;
 
 fn clip(picture: PathBuf, start: u64, (in_frame, out_frame): (u64, u64)) -> Clip {
     Clip {
@@ -47,7 +47,7 @@ fn clip(picture: PathBuf, start: u64, (in_frame, out_frame): (u64, u64)) -> Clip
     }
 }
 
-fn tone(directory: &Path) -> PathBuf {
+pub(super) fn tone(directory: &Path) -> PathBuf {
     let sound = directory.join("tone.wav");
     let output = std::process::Command::new("ffmpeg")
         .args(["-v", "error", "-y", "-f", "lavfi", "-i"])
@@ -63,28 +63,52 @@ fn tone(directory: &Path) -> PathBuf {
     sound
 }
 
-#[test]
-fn an_mpv_timeline_lasts_as_long_as_its_clips_and_reports_the_clip_it_plays() {
-    let directory = tempfile::tempdir().unwrap();
-    let first = directory.path().join("first.mov");
-    let second = directory.path().join("second.mov");
+pub(super) fn two_clips(directory: &Path, sound: SoundTrack) -> Timeline {
+    let first = directory.join("first.mov");
+    let second = directory.join("second.mov");
     write_clip(&first, 1);
     write_clip(&second, 1);
-    let timeline = Timeline {
-        version: TIMELINE_FORMAT_VERSION,
-        fps: FrameRate::whole(CLIP_FPS),
-        clips: vec![
+    Timeline {
+        sound,
+        ..timeline_of(vec![
             clip(first, 0, FIRST_CLIP_FRAMES),
             clip(
                 second,
                 FIRST_CLIP_FRAMES.1 - FIRST_CLIP_FRAMES.0,
                 SECOND_CLIP_FRAMES,
             ),
-        ],
-        sound: SoundTrack::Override(tone(directory.path())),
-        subtitle: None,
-        reel_starts: Vec::new(),
-    };
+        ])
+    }
+}
+
+pub(super) fn gapped_clips(directory: &Path) -> Timeline {
+    let first = directory.join("first.mov");
+    let second = directory.join("second.mov");
+    write_clip(&first, 1);
+    write_clip(&second, 1);
+    timeline_of(vec![
+        clip(first, 0, GAPPED_FIRST_CLIP_FRAMES),
+        clip(second, GAPPED_SECOND_CLIP_START, SECOND_CLIP_FRAMES),
+    ])
+}
+
+pub(super) fn held_still_then_clip(directory: &Path) -> Timeline {
+    let clip_after = directory.join("after.mov");
+    write_clip(&clip_after, 1);
+    let card = write_card(directory);
+    timeline_of(vec![
+        clip(card, 0, (0, HELD_FRAMES)),
+        clip(clip_after, HELD_FRAMES, SECOND_CLIP_FRAMES),
+    ])
+}
+
+#[test]
+fn an_mpv_timeline_lasts_as_long_as_its_clips_and_reports_the_clip_it_plays() {
+    let directory = tempfile::tempdir().unwrap();
+    let timeline = two_clips(
+        directory.path(),
+        SoundTrack::Override(tone(directory.path())),
+    );
     let player = Player::new().unwrap();
     // never the real sound device
     player.mpv().set_property("ao", "null").unwrap();
@@ -188,21 +212,7 @@ fn clearing_an_mpv_timeline_removes_the_sound_and_subtitles_rendered_for_it() {
 #[test]
 fn an_mpv_timeline_plays_black_through_a_gap_and_reports_no_clip_there() {
     let directory = tempfile::tempdir().unwrap();
-    let first = directory.path().join("first.mov");
-    let second = directory.path().join("second.mov");
-    write_clip(&first, 1);
-    write_clip(&second, 1);
-    let timeline = Timeline {
-        version: TIMELINE_FORMAT_VERSION,
-        fps: FrameRate::whole(CLIP_FPS),
-        clips: vec![
-            clip(first, 0, GAPPED_FIRST_CLIP_FRAMES),
-            clip(second, GAPPED_SECOND_CLIP_START, SECOND_CLIP_FRAMES),
-        ],
-        sound: SoundTrack::PerClip,
-        subtitle: None,
-        reel_starts: Vec::new(),
-    };
+    let timeline = gapped_clips(directory.path());
     let work_dir = directory.path().join("work");
     let black_file = work_dir.join(TIMELINE_BLACK_FILE);
     let player = Player::new().unwrap();
@@ -251,7 +261,7 @@ const CLIP_WIDTH: u32 = 320;
 const CLIP_HEIGHT: u32 = 180;
 
 // half a second covers twelve frames of a timeline that plays
-const PAUSED_WATCH: Duration = Duration::from_millis(500);
+pub(super) const PAUSED_WATCH: Duration = Duration::from_millis(500);
 
 // pumps for PAUSED_WATCH once the load is read, and returns the furthest position seen
 fn furthest_position_once_loaded(player: &Player) -> f64 {
@@ -267,7 +277,7 @@ fn furthest_position_once_loaded(player: &Player) -> f64 {
     furthest
 }
 
-fn reports_paused(player: &Player, state: &PreviewPlayer) -> bool {
+pub(super) fn reports_paused(player: &Player, state: &PreviewPlayer) -> bool {
     let metadata: serde_json::Value =
         serde_json::from_str(&poll_metadata(player, state).unwrap()).unwrap();
     metadata["paused"] == true
@@ -276,25 +286,8 @@ fn reports_paused(player: &Player, state: &PreviewPlayer) -> bool {
 #[test]
 fn a_clip_source_and_a_timeline_loaded_paused_on_mpv_stay_on_their_first_frame() {
     let directory = tempfile::tempdir().unwrap();
-    let first = directory.path().join("first.mov");
-    let second = directory.path().join("second.mov");
-    write_clip(&first, 1);
-    write_clip(&second, 1);
-    let timeline = Timeline {
-        version: TIMELINE_FORMAT_VERSION,
-        fps: FrameRate::whole(CLIP_FPS),
-        clips: vec![
-            clip(first.clone(), 0, FIRST_CLIP_FRAMES),
-            clip(
-                second,
-                FIRST_CLIP_FRAMES.1 - FIRST_CLIP_FRAMES.0,
-                SECOND_CLIP_FRAMES,
-            ),
-        ],
-        sound: SoundTrack::PerClip,
-        subtitle: None,
-        reel_starts: Vec::new(),
-    };
+    let timeline = two_clips(directory.path(), SoundTrack::PerClip);
+    let first = timeline.clips[0].picture.clone();
     let player = software_player();
     let state = overlay_state(PreviewOverlays::default());
 
@@ -335,7 +328,7 @@ fn write_card(directory: &Path) -> PathBuf {
     card
 }
 
-fn fitted_to_the_clips() -> EncodeRunOptions {
+pub(super) fn fitted_to_the_clips() -> EncodeRunOptions {
     EncodeRunOptions {
         fps: FrameRate::whole(CLIP_FPS),
         source_colour: SourceColour::KeepRgb,
@@ -372,21 +365,15 @@ fn software_player() -> Player {
     player
 }
 
-const HELD_FRAMES: u64 = 24;
-const INTO_THE_STILL_SECONDS: f64 = 0.1;
-const INTO_THE_CLIP_AFTER_SECONDS: f64 = 1.1;
-const HELD_STILL_TIMELINE_SECONDS: f64 = 2.0;
+pub(super) const HELD_FRAMES: u64 = 24;
+pub(super) const INTO_THE_STILL_SECONDS: f64 = 0.1;
+pub(super) const INTO_THE_CLIP_AFTER_SECONDS: f64 = 1.1;
+pub(super) const HELD_STILL_TIMELINE_SECONDS: f64 = 2.0;
 
 #[test]
 fn a_held_still_on_layer_0_renders_and_plays_on_mpv_before_the_clip_after_it() {
     let directory = tempfile::tempdir().unwrap();
-    let clip_after = directory.path().join("after.mov");
-    write_clip(&clip_after, 1);
-    let card = write_card(directory.path());
-    let timeline = timeline_of(vec![
-        clip(card, 0, (0, HELD_FRAMES)),
-        clip(clip_after, HELD_FRAMES, SECOND_CLIP_FRAMES),
-    ]);
+    let timeline = held_still_then_clip(directory.path());
     let work_dir = directory.path().join("work");
     let player = software_player();
     let state = overlay_state(PreviewOverlays::default());

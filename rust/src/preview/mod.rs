@@ -1267,6 +1267,9 @@ mod end_of_file_tests;
 #[cfg(test)]
 mod mpv_timeline_tests;
 
+#[cfg(all(test, feature = "g2g"))]
+mod g2g_timeline_tests;
+
 #[cfg(test)]
 mod content_keys_tests;
 

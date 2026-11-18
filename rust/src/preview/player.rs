@@ -67,6 +67,20 @@ impl Player {
         })
     }
 
+    #[cfg(all(test, feature = "g2g"))]
+    pub(super) fn new_on_g2g() -> Result<Self, String> {
+        let g2g = G2gPlayer::new();
+        // never the real sound device
+        g2g.discard_sound();
+        let player = Player {
+            g2g: Some(g2g),
+            ..Player::new()?
+        };
+        // the loads stop mpv first, which needs its core
+        player.init_software()?;
+        Ok(player)
+    }
+
     pub fn mpv(&self) -> &MpvRenderPlayer {
         &self.mpv
     }
