@@ -1,8 +1,8 @@
 //! Hosts the preview players' OpenGL output in an `NSOpenGLView` subclass over the
 //! webview.
 //!
-//! The GL view is a sibling of tauri's WKWebView inside the window's content
-//! view, added last so it sits above it, and positioned from the page: the
+//! The GL view sits in a clipping view, a sibling of tauri's WKWebView inside the
+//! window's content view, added last so it sits above it, and positioned from the page: the
 //! frontend reports where its placeholder element is and the view is moved to
 //! match. Drawing happens in `drawRect:` rather than straight off mpv's update
 //! callback, so a resize or an expose repaints the last frame even while
@@ -91,6 +91,7 @@ struct SurfaceRect {
     y: i32,
     width: i32,
     height: i32,
+    clip: super::SurfaceClip,
     visible: bool,
 }
 
@@ -143,6 +144,31 @@ define_class!(
     }
 );
 
+define_class!(
+    // SAFETY:
+    // - NSView asks nothing of a subclass beyond calling a designated
+    //   initializer, which `PreviewClipView::new` does.
+    // - PreviewClipView does not implement Drop.
+    #[unsafe(super(NSView))]
+    struct PreviewClipView;
+
+    impl PreviewClipView {
+        // SAFETY: The signature matches NSView's hitTest:.
+        #[unsafe(method_id(hitTest:))]
+        fn hit_test(&self, _point: NSPoint) -> Option<Retained<NSView>> {
+            None
+        }
+    }
+);
+
+impl PreviewClipView {
+    fn new(mtm: MainThreadMarker) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(());
+        // SAFETY: initWithFrame: is NSView's designated initializer.
+        unsafe { msg_send![super(this), initWithFrame: HIDDEN_SURFACE] }
+    }
+}
+
 impl PreviewView {
     fn new(
         mtm: MainThreadMarker,
@@ -166,6 +192,7 @@ impl PreviewView {
 /// closures below, all of which run on the main thread.
 struct PreviewSurface {
     container: *mut NSView,
+    clip_view: *mut PreviewClipView,
     gl_view: *mut PreviewView,
     context: *mut NSOpenGLContext,
 }
@@ -193,7 +220,7 @@ impl EmbeddedPreview {
         y: i32,
         width: i32,
         height: i32,
-        _clip: super::SurfaceClip,
+        clip: super::SurfaceClip,
         visible: bool,
     ) {
         *self.rect.lock().unwrap() = SurfaceRect {
@@ -201,6 +228,7 @@ impl EmbeddedPreview {
             y,
             width,
             height,
+            clip,
             visible,
         };
         let surface = Arc::clone(&self.surface);
@@ -233,8 +261,15 @@ pub fn attach(window: &tauri::Window) -> Result<EmbeddedPreview, String> {
     let gl_view = PreviewView::new(mtm, &pixel_format, &player, deep_colour)
         .ok_or("the OpenGL view could not be created")?;
     gl_view.setWantsBestResolutionOpenGLSurface(true);
+    let clip_view = PreviewClipView::new(mtm);
+    // NSView only has clipsToBounds from macOS 14, a layer clips on every version
+    clip_view.setWantsLayer(true);
+    if let Some(layer) = clip_view.layer() {
+        layer.setMasksToBounds(true);
+    }
     // Last subview is topmost, which is what puts the video over the webview.
-    container.addSubview(&gl_view);
+    container.addSubview(&clip_view);
+    clip_view.addSubview(&gl_view);
     if deep_colour {
         // Core Animation keeps 8 bit layer contents unless told otherwise
         match gl_view.layer() {
@@ -269,6 +304,7 @@ pub fn attach(window: &tauri::Window) -> Result<EmbeddedPreview, String> {
 
     let surface = Arc::new(PreviewSurface {
         container: Retained::into_raw(container.retain()),
+        clip_view: Retained::into_raw(clip_view),
         gl_view: Retained::into_raw(gl_view),
         context: Retained::into_raw(context),
     });
@@ -342,14 +378,16 @@ fn request_redraw(surface: &PreviewSurface, player: &Player) {
 
 fn apply_rect(surface: &PreviewSurface, rect: SurfaceRect) {
     let container = unsafe { &*surface.container };
+    let clip_view = unsafe { &*surface.clip_view };
     let gl_view = unsafe { &*surface.gl_view };
-    let active = rect.visible && rect.width > 0 && rect.height > 0;
-    let frame = if active {
-        placed_frame(container, rect)
+    let clip = rect.clip;
+    if rect.visible && clip.width > 0 && clip.height > 0 {
+        clip_view.setFrame(placed_frame(container, clip));
+        gl_view.setFrame(frame_in_clip(rect));
     } else {
-        HIDDEN_SURFACE
-    };
-    gl_view.setFrame(frame);
+        clip_view.setFrame(HIDDEN_SURFACE);
+        gl_view.setFrame(HIDDEN_SURFACE);
+    }
     gl_view.update();
     gl_view.setNeedsDisplay(true);
 }
@@ -357,17 +395,36 @@ fn apply_rect(surface: &PreviewSurface, rect: SurfaceRect) {
 /// The page measures its placeholder down from the top of the webview, so the y
 /// coordinate has to be flipped unless the container counts down from the top
 /// as well.
-fn placed_frame(container: &NSView, rect: SurfaceRect) -> NSRect {
-    let top = f64::from(rect.y);
-    let height = f64::from(rect.height);
+fn placed_frame(container: &NSView, page_box: super::SurfaceClip) -> NSRect {
+    let top = page_top(container) + f64::from(page_box.y);
+    let height = f64::from(page_box.height);
     let y = if container.isFlipped() {
         top
     } else {
         container.bounds().size.height - top - height
     };
     NSRect::new(
-        NSPoint::new(f64::from(rect.x), y),
-        NSSize::new(f64::from(rect.width), height),
+        NSPoint::new(f64::from(page_box.x), y),
+        NSSize::new(f64::from(page_box.width), height),
+    )
+}
+
+// WKWebView lays the page out below the title bar, which overlaps the top of a full size content view
+fn page_top(container: &NSView) -> f64 {
+    let window = container
+        .window()
+        .expect("the content view is placed only while it is in its window");
+    let layout = window.contentLayoutRect();
+    container.bounds().size.height - (layout.origin.y + layout.size.height)
+}
+
+// the clip view counts up from its bottom edge, and the page counts down from the top
+fn frame_in_clip(rect: SurfaceRect) -> NSRect {
+    let clip = rect.clip;
+    let y = (clip.y + clip.height) - (rect.y + rect.height);
+    NSRect::new(
+        NSPoint::new(f64::from(rect.x - clip.x), f64::from(y)),
+        NSSize::new(f64::from(rect.width), f64::from(rect.height)),
     )
 }
 
