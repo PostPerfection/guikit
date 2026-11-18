@@ -178,9 +178,10 @@ impl Player {
                     .render_opengl(framebuffer, width, height, flip_y, deep_colour)
             }
             #[cfg(feature = "g2g")]
-            Backend::G2g => self
-                .g2g_player()
-                .render_opengl(framebuffer, width, height, flip_y),
+            Backend::G2g => {
+                self.g2g_player()
+                    .render_opengl(framebuffer, width, height, flip_y, deep_colour)
+            }
         }
     }
 

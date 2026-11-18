@@ -23,6 +23,9 @@ use super::{
 const PLAYER_CHOICE_VARIABLE: &str = "GUIKIT_PLAYER";
 const G2G_CHOICE: &str = "g2g";
 const EDL_SCHEME: &str = "edl://";
+// a deep colour host framebuffer holds at least 10 bits a channel, the others 8
+const DEEP_COLOUR_BITS_PER_CHANNEL: u32 = 10;
+const EIGHT_BITS_PER_CHANNEL: u32 = 8;
 
 pub(super) fn g2g_chosen() -> bool {
     std::env::var(PLAYER_CHOICE_VARIABLE).is_ok_and(|choice| choice == G2G_CHOICE)
@@ -122,6 +125,7 @@ impl G2gPlayer {
         width: i32,
         height: i32,
         flip_y: bool,
+        deep_colour: bool,
     ) -> Result<(), String> {
         let mut render = self.render.lock().unwrap();
         let render = render
@@ -133,6 +137,10 @@ impl G2gPlayer {
             width: unsigned(width)?,
             height: unsigned(height)?,
             flip_y,
+            bits_per_channel: match deep_colour {
+                true => DEEP_COLOUR_BITS_PER_CHANNEL,
+                false => EIGHT_BITS_PER_CHANNEL,
+            },
         };
         // SAFETY: the hosts render with their GL context current and the framebuffer belonging to it
         unsafe { render.0.render(target) }.map_err(|error| format!("{error:?}"))
