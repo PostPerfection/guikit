@@ -1,10 +1,12 @@
-//! Hosts the preview players' OpenGL output in a child window over the webview.
+//! Hosts the preview players' OpenGL output in a window over the webview.
 //!
-//! WebView2 owns a child window covering tauri's whole client area, so the
-//! preview is a sibling child window raised above it and positioned from the
-//! page: the frontend reports where its placeholder element sits and the window
-//! is moved to match. A window and its GL context belong to the thread that
-//! created them, so everything that touches either runs on the main thread.
+//! WebView2 presents through DirectComposition, which DWM draws above anything
+//! a sibling child window paints, so the preview is a popup owned by tauri's
+//! window and positioned from the page: the frontend reports where its
+//! placeholder element sits and the popup is moved to match, in screen
+//! coordinates, again whenever the owner moves. A window and its GL context
+//! belong to the thread that created them, so everything that touches either
+//! runs on the main thread.
 
 use std::ffi::{c_char, c_void, CStr};
 use std::mem::size_of;
@@ -12,10 +14,12 @@ use std::ptr;
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use super::player::Player;
-use tauri::Manager;
+use tauri::{Manager, WindowEvent};
 use windows::core::{s, w, Error, PCSTR, PCWSTR};
-use windows::Win32::Foundation::{HINSTANCE, HMODULE, HWND, LPARAM, LRESULT, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::{BeginPaint, EndPaint, GetDC, HDC, PAINTSTRUCT};
+use windows::Win32::Foundation::{HINSTANCE, HMODULE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
+use windows::Win32::Graphics::Gdi::{
+    BeginPaint, ClientToScreen, EndPaint, GetDC, HDC, PAINTSTRUCT,
+};
 use windows::Win32::Graphics::OpenGL::{
     glGetString, wglCreateContext, wglDeleteContext, wglGetProcAddress, wglMakeCurrent,
     ChoosePixelFormat, DescribePixelFormat, SetPixelFormat, SwapBuffers, GL_RENDERER, GL_VERSION,
@@ -25,12 +29,14 @@ use windows::Win32::Graphics::OpenGL::{
 use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress, LoadLibraryW};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, GetWindowLongPtrW, LoadCursorW,
-    RegisterClassExW, SetWindowLongPtrW, SetWindowPos, CS_OWNDC, GWLP_USERDATA, HTTRANSPARENT,
-    HWND_TOP, IDC_ARROW, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_SHOWWINDOW, WINDOW_EX_STYLE,
-    WM_ERASEBKGND, WM_NCDESTROY, WM_NCHITTEST, WM_PAINT, WNDCLASSEXW, WS_CHILD, WS_CLIPSIBLINGS,
+    PostMessageW, RegisterClassExW, SetWindowLongPtrW, SetWindowPos, CS_OWNDC, GWLP_USERDATA,
+    HTTRANSPARENT, HWND_TOP, IDC_ARROW, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_SHOWWINDOW, WM_APP,
+    WM_ERASEBKGND, WM_NCDESTROY, WM_NCHITTEST, WM_PAINT, WNDCLASSEXW, WS_EX_NOACTIVATE,
+    WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
 const PREVIEW_WINDOW_CLASS: PCWSTR = w!("PostPerfectionEmbeddedPreview");
+const REDRAW_MESSAGE: u32 = WM_APP;
 const OPENGL_LIBRARY: PCWSTR = w!("opengl32.dll");
 
 /// A WGL window context draws into the default framebuffer rather than into one
@@ -106,6 +112,8 @@ const POINTER_PASSES_THROUGH: LRESULT = LRESULT(HTTRANSPARENT as isize);
 /// destroyed together.
 struct GlSurface {
     window: HWND,
+    // tauri's window, whose client area the page's coordinates are measured from
+    owner: HWND,
     device_context: HDC,
     gl_context: HGLRC,
     // the pixel format holds 10 bits or more per channel
@@ -221,7 +229,7 @@ impl EmbeddedPreview {
     }
 }
 
-/// Put a GL child window over the window's webview and hand back the player
+/// Put a GL popup over the window's webview and hand back the player
 /// driving it. The window and its context stay on the calling thread, which is
 /// the main thread the app is set up on.
 pub fn attach(window: &tauri::Window) -> Result<EmbeddedPreview, String> {
@@ -246,32 +254,36 @@ pub fn attach(window: &tauri::Window) -> Result<EmbeddedPreview, String> {
 
     install_paint_target(&surface, &player);
 
+    let rect = Arc::new(Mutex::new(SurfaceRect::default()));
+    let moved_surface = Arc::clone(&surface);
+    let moved_rect = Arc::clone(&rect);
+    window.on_window_event(move |event| {
+        if matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_)) {
+            apply_rect(&moved_surface, *moved_rect.lock().unwrap(), scale_factor);
+        }
+    });
+
     let app = window.app_handle().clone();
-    // A weak player keeps the update callback, which the player itself owns,
-    // from holding the player alive forever.
-    let weak_player = Arc::downgrade(&player);
-    let redraw_surface = Arc::clone(&surface);
-    let redraw_app = app.clone();
+    let preview_window = surface.window.0 as isize;
     player.set_update_callback(move || {
-        let surface = Arc::clone(&redraw_surface);
-        let weak_player = weak_player.clone();
-        let _ = redraw_app.run_on_main_thread(move || {
-            let Some(player) = weak_player.upgrade() else {
-                return;
-            };
-            if !make_current(&surface) {
-                return;
-            }
-            if player.wants_redraw() {
-                draw(&surface, &player);
-            }
-        });
+        // mpv calls this inline from set_update_callback while holding its render lock
+        let posted = unsafe {
+            PostMessageW(
+                Some(HWND(preview_window as *mut c_void)),
+                REDRAW_MESSAGE,
+                WPARAM(0),
+                LPARAM(0),
+            )
+        };
+        if let Err(error) = posted {
+            eprintln!("[preview] posting a redraw failed: {error}");
+        }
     });
 
     Ok(EmbeddedPreview {
         player,
         surface,
-        rect: Arc::new(Mutex::new(SurfaceRect::default())),
+        rect,
         app,
         scale_factor,
     })
@@ -283,6 +295,7 @@ fn create_gl_surface(parent: HWND) -> Result<GlSurface, String> {
     match create_gl_context(window, deep_pixel_format) {
         Ok((device_context, gl_context, deep_colour)) => Ok(GlSurface {
             window,
+            owner: parent,
             device_context,
             gl_context,
             deep_colour,
@@ -294,22 +307,20 @@ fn create_gl_surface(parent: HWND) -> Result<GlSurface, String> {
     }
 }
 
-fn create_preview_window(parent: HWND) -> Result<HWND, String> {
+fn create_preview_window(owner: HWND) -> Result<HWND, String> {
     register_window_class()?;
     let instance = module_handle()?;
     unsafe {
         CreateWindowExW(
-            WINDOW_EX_STYLE::default(),
+            WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
             PREVIEW_WINDOW_CLASS,
             PCWSTR::null(),
-            // Clipping siblings is what stops WebView2, which covers the same
-            // rectangle, from painting over the video.
-            WS_CHILD | WS_CLIPSIBLINGS,
+            WS_POPUP,
             0,
             0,
             HIDDEN_SURFACE_SIZE,
             HIDDEN_SURFACE_SIZE,
-            Some(parent),
+            Some(owner),
             None,
             Some(HINSTANCE::from(instance)),
             None,
@@ -494,6 +505,10 @@ unsafe extern "system" fn preview_window_procedure(
             repaint(window);
             MESSAGE_HANDLED
         }
+        REDRAW_MESSAGE => {
+            redraw_if_wanted(window);
+            MESSAGE_HANDLED
+        }
         WM_ERASEBKGND => BACKGROUND_ERASED,
         WM_NCHITTEST => POINTER_PASSES_THROUGH,
         WM_NCDESTROY => {
@@ -518,16 +533,33 @@ fn repaint(window: HWND) {
     let _ = unsafe { EndPaint(window, &paint) };
 }
 
+fn redraw_if_wanted(window: HWND) {
+    let Some((surface, player)) = paint_target(window) else {
+        return;
+    };
+    if make_current(&surface) && player.wants_redraw() {
+        draw(&surface, &player);
+    }
+}
+
 /// Move the surface to the page's placeholder, converting the CSS pixels the
 /// page reports into the physical pixels Win32 wants, and raise it above the
 /// WebView2 child that shares the rectangle.
 fn apply_rect(surface: &GlSurface, rect: SurfaceRect, scale_factor: f64) {
     let active = rect.visible && rect.width > 0 && rect.height > 0;
     let physical = |value: i32| (f64::from(value) * scale_factor).round() as i32;
+    let mut origin = POINT {
+        x: physical(rect.x),
+        y: physical(rect.y),
+    };
+    // the page measures from the webview, which fills tauri's client area
+    if let Err(error) = unsafe { ClientToScreen(surface.owner, &mut origin) }.ok() {
+        eprintln!("[preview] ClientToScreen failed: {error}");
+    }
     let (x, y, width, height, visibility) = if active {
         (
-            physical(rect.x),
-            physical(rect.y),
+            origin.x,
+            origin.y,
             physical(rect.width),
             physical(rect.height),
             SWP_SHOWWINDOW,
