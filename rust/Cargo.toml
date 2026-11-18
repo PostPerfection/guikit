@@ -46,6 +46,9 @@ libc = "0.2"
 # versions match what tauri already links on each platform, so the app keeps a
 # single native stack rather than two copies of objc2 or windows
 [target.'cfg(target_os = "macos")'.dependencies]
+g2g-player = { git = "https://github.com/Glass2GlassHQ/glass2glass.git", optional = true, features = [
+    "coreaudio",
+] }
 dispatch2 = "0.3"
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = [
@@ -67,6 +70,9 @@ objc2-quartz-core = { version = "0.3", default-features = false, features = [
 libc = "0.2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
+g2g-player = { git = "https://github.com/Glass2GlassHQ/glass2glass.git", optional = true, features = [
+    "wasapi",
+] }
 windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
