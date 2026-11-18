@@ -96,13 +96,17 @@ const SUBTITLE_FILE_SEPARATOR: &str = ":";
 /// the slot chosen for it rather than in whichever one mpv prefers.
 const ADD_TRACK_UNSELECTED: &str = "auto";
 
+const DROPPED_FRAMES_FIELD: &str = "dropped_frames";
+const DELAYED_FRAMES_FIELD: &str = "delayed_frames";
+const CACHE_SECONDS_FIELD: &str = "cache_seconds";
+const DECODER_FPS_FIELD: &str = "decoder_fps";
 const CONTAINER_FPS_FIELD: &str = "container_fps";
 /// The HUD fields added to the metadata poll, and the mpv property behind each.
 const HUD_COUNTER_PROPERTIES: [(&str, &str); 5] = [
-    ("dropped_frames", "frame-drop-count"),
-    ("delayed_frames", "vo-delayed-frame-count"),
-    ("cache_seconds", "demuxer-cache-duration"),
-    ("decoder_fps", "estimated-vf-fps"),
+    (DROPPED_FRAMES_FIELD, "frame-drop-count"),
+    (DELAYED_FRAMES_FIELD, "vo-delayed-frame-count"),
+    (CACHE_SECONDS_FIELD, "demuxer-cache-duration"),
+    (DECODER_FPS_FIELD, "estimated-vf-fps"),
     (CONTAINER_FPS_FIELD, "container-fps"),
 ];
 

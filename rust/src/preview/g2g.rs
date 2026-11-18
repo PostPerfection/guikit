@@ -15,8 +15,9 @@ use postkit::grok_player::GetProcAddressFn;
 use super::{
     audio_levels_json, json_bool, json_number, overlay_rectangles, with_extra_fields,
     OverlayRectangle, PreviewPlayer, SourceSize, SubtitleTrackSlot, SubtitleTracks,
-    AUDIO_LEVELS_FIELD, CONTAINER_FPS_FIELD, EOF_FIELD, HUD_COUNTER_PROPERTIES,
-    SHOWN_FRAME_SIZE_PROPERTIES, SUBTITLE_TRACK_SLOTS,
+    AUDIO_LEVELS_FIELD, CACHE_SECONDS_FIELD, CONTAINER_FPS_FIELD, DECODER_FPS_FIELD,
+    DELAYED_FRAMES_FIELD, DROPPED_FRAMES_FIELD, EOF_FIELD, SHOWN_FRAME_SIZE_PROPERTIES,
+    SUBTITLE_TRACK_SLOTS,
 };
 
 const PLAYER_CHOICE_VARIABLE: &str = "GUIKIT_PLAYER";
@@ -257,11 +258,25 @@ impl G2gPlayer {
         reached
     }
 
-    fn container_fps(&self) -> Option<f64> {
-        let PropertyChange::ContainerFps(fps) = self.player.property(Property::ContainerFps) else {
-            unreachable!("g2g-player answers ContainerFps with ContainerFps");
+    // the HUD fields of the metadata poll, from the g2g-player properties named as mpv's
+    fn hud_counters(&self) -> [(&'static str, Option<f64>); 5] {
+        let counter = |property| match self.player.property(property) {
+            PropertyChange::FrameDropCount(count) | PropertyChange::DelayedFrameCount(count) => {
+                Some(count as f64)
+            }
+            PropertyChange::DemuxerCacheDuration(cached) => {
+                cached.map(|cached| cached.as_secs_f64())
+            }
+            PropertyChange::EstimatedVfFps(fps) | PropertyChange::ContainerFps(fps) => fps,
+            other => unreachable!("g2g-player answers {property:?} with {other:?}"),
         };
-        fps
+        [
+            (DROPPED_FRAMES_FIELD, counter(Property::FrameDropCount)),
+            (DELAYED_FRAMES_FIELD, counter(Property::DelayedFrameCount)),
+            (CACHE_SECONDS_FIELD, counter(Property::DemuxerCacheDuration)),
+            (DECODER_FPS_FIELD, counter(Property::EstimatedVfFps)),
+            (CONTAINER_FPS_FIELD, counter(Property::ContainerFps)),
+        ]
     }
 
     fn demux_size(&self) -> Option<VideoSize> {
@@ -420,14 +435,10 @@ impl G2gPlayer {
             "filename": filename,
         })
         .to_string();
-        // g2g-player reports the frame rate and none of mpv's other HUD counters
-        let container_fps = self.container_fps();
-        let mut fields: Vec<(&str, String)> = HUD_COUNTER_PROPERTIES
-            .iter()
-            .map(|(field, _)| {
-                let value = container_fps.filter(|_| *field == CONTAINER_FPS_FIELD);
-                (*field, json_number(value))
-            })
+        let mut fields: Vec<(&str, String)> = self
+            .hud_counters()
+            .into_iter()
+            .map(|(field, value)| (field, json_number(value)))
             .collect();
         let shown = self.shown_picture_size();
         let [(width_field, _), (height_field, _)] = SHOWN_FRAME_SIZE_PROPERTIES;
@@ -454,13 +465,14 @@ mod tests {
 
     const CLIP_WIDTH: u32 = 320;
     const CLIP_HEIGHT: u32 = 180;
+    const CLIP_FRAMES_PER_SECOND: u32 = 24;
 
     // libavcodec's MPEG-2 decoder implements lowres
     fn write_mpeg2_clip(path: &Path) {
         let out = std::process::Command::new("ffmpeg")
             .args(["-v", "error", "-y", "-f", "lavfi", "-i"])
             .arg(format!(
-                "color=c=black:size={CLIP_WIDTH}x{CLIP_HEIGHT}:rate=24:duration=2"
+                "color=c=black:size={CLIP_WIDTH}x{CLIP_HEIGHT}:rate={CLIP_FRAMES_PER_SECOND}:duration=2"
             ))
             .args(["-c:v", "mpeg2video"])
             .arg(path)
@@ -509,6 +521,28 @@ mod tests {
         assert_eq!(
             (right, bottom),
             (i64::from(half.width), i64::from(half.height))
+        );
+    }
+
+    #[test]
+    fn the_hud_reports_the_frame_rate_the_filters_put_out() {
+        let directory = tempfile::tempdir().unwrap();
+        let clip = directory.path().join("black.mpg");
+        write_mpeg2_clip(&clip);
+        let player = G2gPlayer::new();
+        player.discard_sound();
+        player.load(&clip.to_string_lossy(), None, false).unwrap();
+        let decoder_fps = || {
+            let metadata: serde_json::Value =
+                serde_json::from_str(&player.metadata_json().unwrap()).unwrap();
+            metadata[DECODER_FPS_FIELD].as_f64()
+        };
+        wait_until("the HUD reporting a frame rate", || decoder_fps().is_some());
+        // whole-nanosecond timestamps put 1/24 s a fraction of a nanosecond off
+        let fps = decoder_fps().unwrap();
+        assert!(
+            (fps - f64::from(CLIP_FRAMES_PER_SECOND)).abs() < 1e-6,
+            "the HUD reports {fps} fps"
         );
     }
 }
