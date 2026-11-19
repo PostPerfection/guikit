@@ -49,7 +49,7 @@ impl PlayState {
 pub struct Player {
     mpv: MpvRenderPlayer,
     grok: GrokPlayer,
-    // plays what mpv would when GUIKIT_PLAYER=g2g
+    // general-purpose playback unless GUIKIT_PLAYER=mpv is set
     #[cfg(feature = "g2g")]
     g2g: Option<G2gPlayer>,
     backend: Mutex<Backend>,
@@ -57,14 +57,29 @@ pub struct Player {
 
 impl Player {
     pub fn new() -> Result<Self, String> {
+        Self::with_g2g(
+            #[cfg(feature = "g2g")]
+            g2g_chosen().then(G2gPlayer::new),
+        )
+    }
+
+    fn with_g2g(#[cfg(feature = "g2g")] g2g: Option<G2gPlayer>) -> Result<Self, String> {
         load_cuda_kernels_eagerly();
         Ok(Player {
             mpv: MpvRenderPlayer::new()?,
             grok: GrokPlayer::new(),
             #[cfg(feature = "g2g")]
-            g2g: g2g_chosen().then(G2gPlayer::new),
+            g2g,
             backend: Mutex::new(Backend::Mpv),
         })
+    }
+
+    #[cfg(test)]
+    pub(super) fn new_on_mpv() -> Result<Self, String> {
+        Self::with_g2g(
+            #[cfg(feature = "g2g")]
+            None,
+        )
     }
 
     #[cfg(all(test, feature = "g2g"))]
@@ -72,10 +87,7 @@ impl Player {
         let g2g = G2gPlayer::new();
         // never the real sound device
         g2g.discard_sound();
-        let player = Player {
-            g2g: Some(g2g),
-            ..Player::new()?
-        };
+        let player = Self::with_g2g(Some(g2g))?;
         // the loads stop mpv first, which needs its core
         player.init_software()?;
         Ok(player)

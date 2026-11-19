@@ -19,7 +19,7 @@ fn the_backend_follows_what_the_source_is() {
     let clip = directory.path().join("clip.mp4");
     write_clip(&clip, CLIP_SECONDS);
 
-    let player = Player::new().unwrap();
+    let player = Player::new_on_mpv().unwrap();
     player.init_software().unwrap();
 
     player.load_source(&clip.to_string_lossy(), None).unwrap();

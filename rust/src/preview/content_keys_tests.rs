@@ -79,7 +79,7 @@ fn content_keys_for_an_mpv_source_are_refused() {
     let clip = directory.path().join("clip.mp4");
     write_clip(&clip, CLIP_SECONDS);
 
-    let player = Player::new().unwrap();
+    let player = Player::new_on_mpv().unwrap();
     player.init_software().unwrap();
 
     let error = player

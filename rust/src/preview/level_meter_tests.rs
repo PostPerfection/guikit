@@ -44,7 +44,7 @@ fn audio_levels(player: &Player) -> serde_json::Value {
 fn the_poll_carries_each_channel_level_while_the_meter_is_on() {
     let directory = tempfile::tempdir().unwrap();
     let sound = stereo_tone(directory.path());
-    let player = Player::new().unwrap();
+    let player = Player::new_on_mpv().unwrap();
     // never the real sound device
     player.mpv().set_property("ao", "null").unwrap();
     player.init_software().unwrap();

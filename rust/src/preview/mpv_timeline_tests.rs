@@ -109,7 +109,7 @@ fn an_mpv_timeline_lasts_as_long_as_its_clips_and_reports_the_clip_it_plays() {
         directory.path(),
         SoundTrack::Override(tone(directory.path())),
     );
-    let player = Player::new().unwrap();
+    let player = Player::new_on_mpv().unwrap();
     // never the real sound device
     player.mpv().set_property("ao", "null").unwrap();
     player.init_software().unwrap();
@@ -176,7 +176,7 @@ fn clearing_an_mpv_timeline_removes_the_sound_and_subtitles_rendered_for_it() {
     let work_dir = directory.path().join("work");
     let sound_file = work_dir.join(TIMELINE_SOUND_FILE);
     let subtitle_file = work_dir.join(TIMELINE_SUBTITLE_FILE);
-    let player = Player::new().unwrap();
+    let player = Player::new_on_mpv().unwrap();
     // never the real sound device
     player.mpv().set_property("ao", "null").unwrap();
     player.init_software().unwrap();
@@ -215,7 +215,7 @@ fn an_mpv_timeline_plays_black_through_a_gap_and_reports_no_clip_there() {
     let timeline = gapped_clips(directory.path());
     let work_dir = directory.path().join("work");
     let black_file = work_dir.join(TIMELINE_BLACK_FILE);
-    let player = Player::new().unwrap();
+    let player = Player::new_on_mpv().unwrap();
     // never the real sound device
     player.mpv().set_property("ao", "null").unwrap();
     player.init_software().unwrap();
@@ -358,7 +358,7 @@ fn timeline_of(clips: Vec<Clip>) -> Timeline {
 }
 
 fn software_player() -> Player {
-    let player = Player::new().unwrap();
+    let player = Player::new_on_mpv().unwrap();
     // never the real sound device
     player.mpv().set_property("ao", "null").unwrap();
     player.init_software().unwrap();

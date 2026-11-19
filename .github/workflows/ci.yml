@@ -175,12 +175,12 @@ jobs:
 
       - name: Build without g2g
         working-directory: rust
-        run: cargo build
+        run: cargo build --no-default-features
 
       - name: Test with g2g and coverage (Linux)
         if: runner.os == 'Linux'
         working-directory: rust
-        run: xvfb-run -a cargo llvm-cov --features g2g --lcov --output-path lcov.info
+        run: xvfb-run -a cargo llvm-cov --lcov --output-path lcov.info
 
       - name: Coverage summary (Linux)
         if: runner.os == 'Linux'
@@ -197,11 +197,11 @@ jobs:
       - name: Test with g2g
         if: runner.os != 'Linux'
         working-directory: rust
-        run: cargo test --features g2g
+        run: cargo test
 
       - name: Clippy with g2g
         working-directory: rust
-        run: cargo clippy --features g2g --all-targets -- -D warnings
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: Format check
         working-directory: rust

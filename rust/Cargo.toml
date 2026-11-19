@@ -25,7 +25,7 @@ g2g-player = { git = "https://github.com/Glass2GlassHQ/glass2glass.git", optiona
 ] }
 
 [features]
-# GUIKIT_PLAYER=g2g then plays what mpv would on g2g-player
+default = ["g2g"]
 g2g = ["dep:g2g-player"]
 
 [dev-dependencies]

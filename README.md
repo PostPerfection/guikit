@@ -62,12 +62,15 @@ build compiles postkit once.
 
 ## Preview backends
 
-Two players sit behind the surface and each load picks one. postkit's
-`GrokPlayer` takes JPEG 2000 sources: a picture track MXF, a CPL, a package
-directory, or a directory of codestreams. Everything else goes to libmpv.
-`preview_load` and `preview_load_dcp` both choose, and print the choice as
-`[preview] backend: grok|mpv for <path>`. Every other command follows the
-backend the load picked, so the page drives one player either way.
+postkit's `GrokPlayer` takes supported JPEG 2000 sources such as picture
+track MXFs, CPLs, packages and directories of codestreams. Other sources go
+to `g2g-player` by default. Set `GUIKIT_PLAYER=mpv` before launching the app
+to use libmpv for those sources, or disable guikit's default Cargo features
+when building with libmpv and Grok.
+
+`preview_load` and `preview_load_dcp` log the choice as
+`[preview] backend: grok|g2g|mpv for <path>`. Every other command follows the
+backend the load picked.
 
 An encrypted package plays on grok when its load is given the content keys.
 `previewDcp(dirPath, contentKeys)` and `previewFile(filePath, contentKeys)` take
@@ -75,7 +78,7 @@ An encrypted package plays on grok when its load is given the content keys.
 key or to a dcpwizard KEYS.json, or null for none, and both resolve to whether
 the load worked. `previewNeedsContentKeys(path)` is true for an encrypted DCP
 directory, CPL or picture MXF, so an app can ask for the keys before it loads.
-Keys given with a source mpv plays fail the load. An app registers
+Keys given with a source played by g2g or libmpv fail the load. An app registers
 `preview_needs_content_keys` beside the other commands.
 
 A version file CPL takes some of its assets from its original version.
@@ -87,7 +90,7 @@ playing, on either backend.
 
 grok decodes with the JPEG 2000 codec rather than through libavcodec, draws the
 QC overlays and the subtitles into the frame it composes, and starts playing on
-load the way mpv's `loadfile` does. Both players render into the same GL
+load the way mpv's `loadfile` does. All three players render into the same GL
 framebuffer, and the surface renders whichever one is loaded.
 
 ## Timeline preview
