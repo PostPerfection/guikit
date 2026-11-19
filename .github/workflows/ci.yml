@@ -78,6 +78,7 @@ jobs:
             libxml2-dev \
             libxerces-c-dev \
             libasound2-dev \
+            libclang-dev \
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev \
@@ -110,6 +111,7 @@ jobs:
       - name: Set vcpkg env (Windows)
         if: runner.os == 'Windows'
         run: |
+          echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
           echo "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
           echo "CMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" >> $env:GITHUB_ENV
           # ahead of the runner's other openssl dlls, which lack the exports vcpkg's link against
@@ -171,14 +173,14 @@ jobs:
             pkg-config --modversion libgrokj2k
           fi
 
-      - name: Build
+      - name: Build without g2g
         working-directory: rust
         run: cargo build
 
-      - name: Test with coverage (Linux)
+      - name: Test with g2g and coverage (Linux)
         if: runner.os == 'Linux'
         working-directory: rust
-        run: xvfb-run -a cargo llvm-cov --lcov --output-path lcov.info
+        run: xvfb-run -a cargo llvm-cov --features g2g --lcov --output-path lcov.info
 
       - name: Coverage summary (Linux)
         if: runner.os == 'Linux'
@@ -192,14 +194,14 @@ jobs:
           name: lcov
           path: rust/lcov.info
 
-      - name: Test
+      - name: Test with g2g
         if: runner.os != 'Linux'
         working-directory: rust
-        run: cargo test
+        run: cargo test --features g2g
 
-      - name: Clippy
+      - name: Clippy with g2g
         working-directory: rust
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --features g2g --all-targets -- -D warnings
 
       - name: Format check
         working-directory: rust
